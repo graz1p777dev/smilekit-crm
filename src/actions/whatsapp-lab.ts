@@ -14,11 +14,13 @@
 import { randomUUID } from 'crypto'
 import { createAdminClient } from '@/lib/supabase/admin'
 import { processInboundGreenApiMessage } from '@/lib/greenapi/bot-reply'
+import { DEFAULT_DOUBT_RESULT_REPLY, DEFAULT_FIRST_USE_EFFECT } from '@/lib/greenapi/default-templates'
 
 export interface WhatsappLabMessage {
   sender: 'client' | 'bot'
   text: string
   createdAt: string
+  isVoice: boolean
 }
 
 function newLabChatId(): string {
@@ -31,17 +33,24 @@ async function loadHistory(chatId: string): Promise<WhatsappLabMessage[]> {
   const supabase = createAdminClient()
   const { data } = await supabase
     .from('amocrm_messages')
-    .select('sender, text, created_at')
+    .select('amo_message_id, sender, text, created_at')
     .eq('chat_id', chatId)
     .order('created_at', { ascending: true })
     .limit(200)
   return (data ?? [])
-    .map((row) => row as { sender: string; text: string; created_at: string })
+    .map((row) => row as { amo_message_id: string; sender: string; text: string; created_at: string })
     .filter((row) => row.sender === 'client' || row.sender === 'bot')
+    // ga:claim:* — служебные строки-защёлки (одноразовый захват блока
+    // результата, follow-up-якорь), их защищённая функция — не дать боту
+    // повторить блок дважды. Клиенту они никогда не уходят, поэтому в
+    // истории теста показывать их не нужно — иначе кажется, что бот
+    // отправил лишнее фото, которого на самом деле не было.
+    .filter((row) => !row.amo_message_id.startsWith('ga:claim:'))
     .map((row) => ({
       sender: row.sender as 'client' | 'bot',
       text: row.text,
       createdAt: row.created_at,
+      isVoice: row.text === DEFAULT_FIRST_USE_EFFECT || row.text === DEFAULT_DOUBT_RESULT_REPLY,
     }))
 }
 

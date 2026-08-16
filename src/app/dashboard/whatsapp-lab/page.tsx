@@ -11,12 +11,12 @@
 
 import { useEffect, useRef, useState } from 'react'
 import { toast } from 'sonner'
-import { FlaskConical, RotateCcw, Send, ShieldAlert, User, Bot as BotIcon, Image as ImageIcon } from 'lucide-react'
+import { FlaskConical, Mic, RotateCcw, Send, ShieldAlert, User, Bot as BotIcon, Image as ImageIcon } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Textarea } from '@/components/ui/textarea'
 import { sendWhatsappLabMessage, type WhatsappLabMessage } from '@/actions/whatsapp-lab'
 
-const MEDIA_MARKERS = new Set(['[QR оплаты]', '[фото до/после]', '[фото результата]', '[ожидание оформления]'])
+const MEDIA_MARKERS = new Set(['[QR оплаты]', '[фото результата]'])
 
 function isMediaMarker(text: string): boolean {
   return MEDIA_MARKERS.has(text)
@@ -40,7 +40,7 @@ export default function WhatsappLabPage() {
     setLoading(true)
     // Оптимистично добавляем сообщение клиента — бот отвечает не мгновенно
     // (те же паузы между репликами и фото, что в реальном WhatsApp).
-    setHistory((prev) => [...prev, { sender: 'client', text, createdAt: new Date().toISOString() }])
+    setHistory((prev) => [...prev, { sender: 'client', text, createdAt: new Date().toISOString(), isVoice: false }])
     try {
       const result = await sendWhatsappLabMessage(chatId, text)
       if (!result.success) {
@@ -158,6 +158,13 @@ function ChatBubble({ message }: { message: WhatsappLabMessage }) {
         {media ? (
           <span className="flex items-center gap-1.5" style={{ color: 'var(--ink-3)' }}>
             <ImageIcon size={14} /> {message.text}
+          </span>
+        ) : message.isVoice ? (
+          <span className="flex flex-col gap-1">
+            <span className="flex items-center gap-1.5 text-xs font-medium" style={{ color: 'var(--brand-ink)' }}>
+              <Mic size={13} /> голосовое сообщение
+            </span>
+            <span style={{ color: 'var(--ink-3)' }}>{message.text}</span>
           </span>
         ) : (
           message.text
