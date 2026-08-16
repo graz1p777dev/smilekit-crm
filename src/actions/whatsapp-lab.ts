@@ -13,7 +13,11 @@
 
 import { randomUUID } from 'crypto'
 import { createAdminClient } from '@/lib/supabase/admin'
-import { processInboundGreenApiMessage } from '@/lib/greenapi/bot-reply'
+import {
+  FOLLOWUP_ANCHOR_TEXT,
+  ORDER_CTA_FOLLOWUP_TEXT,
+  processInboundGreenApiMessage,
+} from '@/lib/greenapi/bot-reply'
 import { DEFAULT_DOUBT_RESULT_REPLY, DEFAULT_FIRST_USE_EFFECT } from '@/lib/greenapi/default-templates'
 
 export interface WhatsappLabMessage {
@@ -85,4 +89,39 @@ export async function sendWhatsappLabMessage(
 
   const history = await loadHistory(effectiveChatId)
   return { success: true, chatId: effectiveChatId, history }
+}
+
+/**
+ * В реальном WhatsApp этот вопрос уходит только через 5 минут молчания
+ * клиента — followup-scheduler.ts проверяет это раз в минуту фоном (см.
+ * bot-reply.ts: needsFollowupAnchor/FOLLOWUP_ANCHOR_TEXT). В песочнице
+ * ждать реальные 5 минут негде, поэтому кнопка «промотать» повторяет ту же
+ * проверку по требованию для одного тестового чата, без порога по времени.
+ */
+export async function triggerWhatsappLabFollowup(chatId: string): Promise<SendWhatsappLabMessageResult> {
+  const supabase = createAdminClient()
+  const { data: last } = await supabase
+    .from('amocrm_messages')
+    .select('id, sender, text')
+    .eq('chat_id', chatId)
+    .order('created_at', { ascending: false })
+    .limit(1)
+    .maybeSingle()
+  const lastRow = last as { id: number; sender: string; text: string } | null
+  if (!lastRow || lastRow.sender !== 'bot' || lastRow.text !== FOLLOWUP_ANCHOR_TEXT) {
+    return {
+      success: false,
+      error: 'Follow-up сейчас не сработает: бот ждёт ответа клиента или ещё не показывал блок результата.',
+    }
+  }
+  await supabase.from('amocrm_messages').upsert({
+    amo_message_id: `ga:bot:followup:lab:${lastRow.id}`,
+    chat_id: chatId,
+    direction: 'out',
+    sender: 'bot',
+    text: ORDER_CTA_FOLLOWUP_TEXT,
+  }, { onConflict: 'amo_message_id', ignoreDuplicates: true })
+
+  const history = await loadHistory(chatId)
+  return { success: true, chatId, history }
 }

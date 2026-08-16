@@ -11,10 +11,10 @@
 
 import { useEffect, useRef, useState } from 'react'
 import { toast } from 'sonner'
-import { FlaskConical, Mic, RotateCcw, Send, ShieldAlert, User, Bot as BotIcon, Image as ImageIcon } from 'lucide-react'
+import { Clock, FlaskConical, Mic, RotateCcw, Send, ShieldAlert, User, Bot as BotIcon, Image as ImageIcon } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Textarea } from '@/components/ui/textarea'
-import { sendWhatsappLabMessage, type WhatsappLabMessage } from '@/actions/whatsapp-lab'
+import { sendWhatsappLabMessage, triggerWhatsappLabFollowup, type WhatsappLabMessage } from '@/actions/whatsapp-lab'
 
 const MEDIA_MARKERS = new Set(['[QR оплаты]', '[фото результата]'])
 
@@ -61,6 +61,21 @@ export default function WhatsappLabPage() {
     setInput('')
   }
 
+  async function skipToFollowup() {
+    if (!chatId || loading) return
+    setLoading(true)
+    try {
+      const result = await triggerWhatsappLabFollowup(chatId)
+      if (!result.success) {
+        toast.error(result.error)
+        return
+      }
+      setHistory(result.history)
+    } finally {
+      setLoading(false)
+    }
+  }
+
   return (
     <div className="flex flex-col gap-5 p-4 md:p-8" style={{ maxWidth: 780 }}>
       <div>
@@ -79,7 +94,8 @@ export default function WhatsappLabPage() {
           Работает тот же код, что отвечает настоящим клиентам в WhatsApp — включая блок результата с фото, доставку
           по городу, QR оплаты и правила из настроек. Отличие только в изоляции: тестовый номер не пересекается с
           реальными, сделка в воронке не создаётся, реальный Green API не дёргается — можно тестировать, даже когда
-          общий выключатель бота выключен для настоящих клиентов.
+          общий выключатель бота выключен для настоящих клиентов. Вопрос «вам оформить?» после блока результата в
+          реальном WhatsApp приходит только через 5 минут молчания — кнопка «Промотать 5 минут» показывает его сразу.
         </p>
       </div>
 
@@ -91,10 +107,16 @@ export default function WhatsappLabPage() {
             </div>
             <h2 className="text-sm font-semibold" style={{ color: 'var(--ink)' }}>Тестовый чат</h2>
           </div>
-          <Button variant="ghost" size="sm" className="gap-1.5" disabled={history.length === 0 || loading} onClick={reset}>
-            <RotateCcw size={14} />
-            Сбросить
-          </Button>
+          <div className="flex items-center gap-1.5">
+            <Button variant="ghost" size="sm" className="gap-1.5" disabled={!chatId || loading} onClick={() => void skipToFollowup()}>
+              <Clock size={14} />
+              Промотать 5 минут
+            </Button>
+            <Button variant="ghost" size="sm" className="gap-1.5" disabled={history.length === 0 || loading} onClick={reset}>
+              <RotateCcw size={14} />
+              Сбросить
+            </Button>
+          </div>
         </div>
 
         <div className="flex flex-col gap-3 px-5 py-5" style={{ minHeight: 320, maxHeight: 560, overflowY: 'auto' }}>
