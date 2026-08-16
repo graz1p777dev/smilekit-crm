@@ -165,6 +165,12 @@ const COMPLAINT_PROMPT = DEFAULT_COMPLAINT_PROMPT
 
 const COOPERATION_REPLY = DEFAULT_COOPERATION_REPLY
 
+// Тот же сценарий "effect_duration", что в Telegram-боте (templates.py) —
+// «на сколько хватает коробки» отвечаем только стойкостью результата,
+// без пересказа цены/состава/количества применений.
+const EFFECT_DURATION_QUESTION = /на\s*сколько\s*хватает|сколько\s*(?:держится|длится|хватит)|как\s*долго\s*(?:держится|длится|хватает)/i
+const EFFECT_DURATION_REPLY = 'До 3 месяцев 😊'
+
 // Регионы Кыргызстана/Казахстана вне Бишкека/Токмока едут одной и той же
 // «Ылдам Экспресс» — этот же текст служит и явным совпадением по городу,
 // и запасным вариантом для сёл/малых населённых пунктов, которых нет и не
@@ -233,11 +239,14 @@ export const ORDER_CTA_FOLLOWUP_TEXT = 'Вам оформить? Пока ест
 // ушёл), якорь перестаёт быть последней записью и больше не триггерит.
 export const FOLLOWUP_ANCHOR_TEXT = '[ожидание оформления]'
 
-// Дожим через 24 часа, если клиент не ответил и на вопрос из
-// ORDER_CTA_FOLLOWUP_TEXT (followup-scheduler.ts проверяет оба порога:
-// 5 минут для вопроса, 24 часа для дожима). Тот же принцип «последняя
-// запись в чате» — ответ клиента или уже отправленный дожим снимает триггер.
-export const NUDGE_24H_TEXT = 'Ещё актуально? 😊 Обычно долго не бронируем — оформляем, пока есть в наличии?'
+// Общий дожим: клиент молчит 1 час после ЛЮБОГО последнего ответа бота
+// (не только после ORDER_CTA_FOLLOWUP_TEXT — на любом этапе диалога), как
+// idle_nudge в Telegram-боте (__main__.py), только порог 1 час вместо 30
+// минут. followup-scheduler.ts проверяет последнюю реальную запись в
+// чате — сам дожим, как только уходит, становится новой последней записью
+// и второй раз не сработает, пока клиент не напишет и не получит новый
+// ответ бота.
+export const IDLE_NUDGE_TEXT = 'Вы ещё здесь? 😊 Если остались вопросы — с радостью отвечу, можем оформить, когда будете готовы.'
 
 // Тот же набор, что уходит альбомом в Telegram (media.result_photo_group).
 // WhatsApp альбомов не поддерживает — шлём по одному; подписи «До»/«После»
@@ -837,6 +846,8 @@ async function processInboundGreenApiMessageNow(
     voiceReplies.add(T.doubtResult)
   } else if (SAFETY_COMPOSITION_DOUBT.test(input.text)) {
     replies.push(DEFAULT_SAFETY_COMPOSITION)
+  } else if (EFFECT_DURATION_QUESTION.test(input.text)) {
+    replies.push(EFFECT_DURATION_REPLY)
   } else if (COMPLAINT.test(input.text)) {
     replies.push(T.complaintPrompt)
   } else if (COOPERATION.test(input.text)) {

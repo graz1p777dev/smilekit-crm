@@ -15,7 +15,7 @@ import { randomUUID } from 'crypto'
 import { createAdminClient } from '@/lib/supabase/admin'
 import {
   FOLLOWUP_ANCHOR_TEXT,
-  NUDGE_24H_TEXT,
+  IDLE_NUDGE_TEXT,
   ORDER_CTA_FOLLOWUP_TEXT,
   processInboundGreenApiMessage,
 } from '@/lib/greenapi/bot-reply'
@@ -141,15 +141,34 @@ export async function triggerWhatsappLabFollowup(chatId: string): Promise<SendWh
 }
 
 /**
- * Дожим через 24 часа, если клиент не ответил на follow-up-вопрос — тоже
- * фон (followup-scheduler.ts), в песочнице реальные сутки ждать негде.
+ * Общий дожим — клиент молчит 1 час после ЛЮБОГО последнего ответа бота,
+ * на любом этапе диалога (не только после follow-up). Тоже фон
+ * (followup-scheduler.ts), в песочнице реальный час ждать негде.
  */
-export async function triggerWhatsappLabNudge24h(chatId: string): Promise<SendWhatsappLabMessageResult> {
-  return triggerStage(
-    chatId,
-    ORDER_CTA_FOLLOWUP_TEXT,
-    NUDGE_24H_TEXT,
-    'ga:bot:nudge24h:lab',
-    'Дожим сейчас не сработает: сначала промотайте 5 минут — дожим идёт вторым шагом, после вопроса «вам оформить?».'
-  )
+export async function triggerWhatsappLabIdleNudge(chatId: string): Promise<SendWhatsappLabMessageResult> {
+  const supabase = createAdminClient()
+  const { data: last } = await supabase
+    .from('amocrm_messages')
+    .select('id, sender, amo_message_id')
+    .eq('chat_id', chatId)
+    .order('created_at', { ascending: false })
+    .limit(1)
+    .maybeSingle()
+  const lastRow = last as { id: number; sender: string; amo_message_id: string } | null
+  if (!lastRow || lastRow.sender !== 'bot' || lastRow.amo_message_id.startsWith('ga:claim:')) {
+    return {
+      success: false,
+      error: 'Дожим сейчас не сработает: бот ждёт ответа клиента или ещё ничего не отвечал.',
+    }
+  }
+  await supabase.from('amocrm_messages').upsert({
+    amo_message_id: `ga:bot:idle-nudge:lab:${lastRow.id}`,
+    chat_id: chatId,
+    direction: 'out',
+    sender: 'bot',
+    text: IDLE_NUDGE_TEXT,
+  }, { onConflict: 'amo_message_id', ignoreDuplicates: true })
+
+  const history = await loadHistory(chatId)
+  return { success: true, chatId, history }
 }

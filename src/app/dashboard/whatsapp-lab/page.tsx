@@ -17,7 +17,7 @@ import { Textarea } from '@/components/ui/textarea'
 import {
   sendWhatsappLabMessage,
   triggerWhatsappLabFollowup,
-  triggerWhatsappLabNudge24h,
+  triggerWhatsappLabIdleNudge,
   type WhatsappLabMessage,
 } from '@/actions/whatsapp-lab'
 
@@ -81,11 +81,11 @@ export default function WhatsappLabPage() {
     }
   }
 
-  async function skipToNudge24h() {
+  async function skipToIdleNudge() {
     if (!chatId || loading) return
     setLoading(true)
     try {
-      const result = await triggerWhatsappLabNudge24h(chatId)
+      const result = await triggerWhatsappLabIdleNudge(chatId)
       if (!result.success) {
         toast.error(result.error)
         return
@@ -115,8 +115,9 @@ export default function WhatsappLabPage() {
           по городу, QR оплаты и правила из настроек. Отличие только в изоляции: тестовый номер не пересекается с
           реальными, сделка в воронке не создаётся, реальный Green API не дёргается — можно тестировать, даже когда
           общий выключатель бота выключен для настоящих клиентов. Вопрос «вам оформить?» после блока результата в
-          реальном WhatsApp приходит только через 5 минут молчания, а дожим — ещё через 24 часа молчания на этот
-          вопрос. Кнопки «Промотать» показывают оба шага сразу, не дожидаясь реального времени.
+          реальном WhatsApp приходит только через 5 минут молчания, а общий дожим (на любом этапе диалога) — через
+          1 час молчания на последний ответ бота. Кнопки «Промотать» показывают оба шага сразу, не дожидаясь
+          реального времени.
         </p>
       </div>
 
@@ -133,9 +134,9 @@ export default function WhatsappLabPage() {
               <Clock size={14} />
               Промотать 5 минут
             </Button>
-            <Button variant="ghost" size="sm" className="gap-1.5" disabled={!chatId || loading} onClick={() => void skipToNudge24h()}>
+            <Button variant="ghost" size="sm" className="gap-1.5" disabled={!chatId || loading} onClick={() => void skipToIdleNudge()}>
               <Clock size={14} />
-              Промотать 24 часа
+              Промотать 1 час
             </Button>
             <Button variant="ghost" size="sm" className="gap-1.5" disabled={history.length === 0 || loading} onClick={reset}>
               <RotateCcw size={14} />
