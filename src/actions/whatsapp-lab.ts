@@ -14,8 +14,10 @@
 import { randomUUID } from 'crypto'
 import { createAdminClient } from '@/lib/supabase/admin'
 import {
+  DISCOUNT_OFFER_13_TEXT,
   FOLLOWUP_ANCHOR_TEXT,
   IDLE_NUDGE_TEXT,
+  nextDiscountOffer,
   ORDER_CTA_FOLLOWUP_TEXT,
   processInboundGreenApiMessage,
 } from '@/lib/greenapi/bot-reply'
@@ -149,24 +151,29 @@ export async function triggerWhatsappLabIdleNudge(chatId: string): Promise<SendW
   const supabase = createAdminClient()
   const { data: last } = await supabase
     .from('amocrm_messages')
-    .select('id, sender, amo_message_id')
+    .select('id, sender, text, amo_message_id')
     .eq('chat_id', chatId)
     .order('created_at', { ascending: false })
     .limit(1)
     .maybeSingle()
-  const lastRow = last as { id: number; sender: string; amo_message_id: string } | null
+  const lastRow = last as { id: number; sender: string; text: string; amo_message_id: string } | null
   if (!lastRow || lastRow.sender !== 'bot' || lastRow.amo_message_id.startsWith('ga:claim:')) {
     return {
       success: false,
       error: 'Дожим сейчас не сработает: бот ждёт ответа клиента или ещё ничего не отвечал.',
     }
   }
+  // Если последним бот предложил 13% и клиент не купил — эскалируем до
+  // 20% (та же лестница, что nextDiscountOffer), а не общее «вы ещё здесь?».
+  const replyText = lastRow.text === DISCOUNT_OFFER_13_TEXT
+    ? await nextDiscountOffer(supabase, chatId)
+    : IDLE_NUDGE_TEXT
   await supabase.from('amocrm_messages').upsert({
     amo_message_id: `ga:bot:idle-nudge:lab:${lastRow.id}`,
     chat_id: chatId,
     direction: 'out',
     sender: 'bot',
-    text: IDLE_NUDGE_TEXT,
+    text: replyText,
   }, { onConflict: 'amo_message_id', ignoreDuplicates: true })
 
   const history = await loadHistory(chatId)

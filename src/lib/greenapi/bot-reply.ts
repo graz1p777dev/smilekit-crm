@@ -218,9 +218,13 @@ const ORDER_INTENT =
 // вместо чек-листа получал произвольную формулировку.
 const AFFIRMATIVE_ONLY =
   /^\s*(?:да|ага|угу|давай(?:те)?|ок(?:ей)?|хорошо|конечно|согласен|согласна|можно)[\s!.,)😊👍]*$/i
-// Ответ «нет» на follow-up ORDER_CTA_FOLLOWUP_TEXT — единственный триггер
-// скидки 13%: до follow-up скидку не предлагаем вовсе.
+// Ответ «нет» на follow-up ORDER_CTA_FOLLOWUP_TEXT — тоже уходит в лестницу
+// скидок (nextDiscountOffer), как и прямая просьба ниже.
 const NEGATIVE_ONLY = /^\s*(?:нет|неа|не\s+хочу|не\s+буду|не\s+надо|откажусь|подумаю)[\s!.,)😔👎]*$/i
+// Прямая просьба о скидке — та же лестница 13%→20%, что и отказ на
+// follow-up: раньше такого вопроса не было в скрипте вовсе, уходил в ИИ,
+// который мог вообще проигнорировать скидку и отвечать не по теме.
+const DISCOUNT_REQUEST = /скидк|дешевле|подешевле|уступ\w*\s*(?:в\s*цен|цену)|акци[юя]/i
 // ИИ формулирует призыв по-разному: «Оформить вам?», «Вам оформить доставку?»,
 // «Оформить?» — привязка к точному порядку слов не работала, и согласие
 // клиента уходило в ИИ вместо чек-листа.
@@ -247,6 +251,14 @@ export const FOLLOWUP_ANCHOR_TEXT = '[ожидание оформления]'
 // и второй раз не сработает, пока клиент не напишет и не получит новый
 // ответ бота.
 export const IDLE_NUDGE_TEXT = 'Вы ещё здесь? 😊 Если остались вопросы — с радостью отвечу, можем оформить, когда будете готовы.'
+
+// Скидка — та же двухступенчатая лестница, что в Telegram-боте (templates.py
+// DISCOUNT_OFFER/DISCOUNT_OFFER_FINAL): сначала 13%, только при повторном
+// отказе — 20% (максимум), дальше — фиксированный отказ, а не выдумка ИИ.
+// Тексты идентичны Telegram для единообразия между каналами.
+export const DISCOUNT_OFFER_13_TEXT = 'Хорошо, сделаю для вас скидку 13% — 1290 сом вместо 1490 сом. Оформляем?'
+export const DISCOUNT_OFFER_20_TEXT = 'Хорошо, для вас сделаю специальную цену — 1190 сом вместо 1490 сом. Такое предлагаю нечасто. Оформляем?'
+export const DISCOUNT_REJECT_TEXT = 'Дешевле, к сожалению, не могу — 1190 сом уже максимальная скидка. Оформляем по этой цене?'
 
 // Тот же набор, что уходит альбомом в Telegram (media.result_photo_group).
 // WhatsApp альбомов не поддерживает — шлём по одному; подписи «До»/«После»
@@ -396,6 +408,52 @@ async function claimResultsBlock(
     return false
   }
   return Boolean(data?.length)
+}
+
+/**
+ * Атомарный одноразовый захват по ключу — тот же UNIQUE(amo_message_id)
+ * приём, что claimResultsBlock. Используется для лестницы скидок: первый
+ * вызов с key='discount13' захватывает 13%, следующий с 'discount20' — 20%.
+ */
+async function claimOnce(
+  supabase: ReturnType<typeof createAdminClient>,
+  chatId: string,
+  key: string
+): Promise<boolean> {
+  const { data, error } = await supabase
+    .from('amocrm_messages')
+    .upsert(
+      {
+        amo_message_id: `ga:claim:${key}:${chatId}`,
+        chat_id: chatId,
+        direction: 'out',
+        sender: 'bot',
+        text: `[claim:${key}]`,
+      },
+      { onConflict: 'amo_message_id', ignoreDuplicates: true }
+    )
+    .select('id')
+  if (error) {
+    console.error('greenapi bot-reply: claim failed', key, error.message)
+    return false
+  }
+  return Boolean(data?.length)
+}
+
+/**
+ * Скидка — только по лестнице, никогда сама по себе от ИИ: 13% на первую
+ * просьбу, 20% на вторую, дальше — фиксированный отказ. Общее состояние с
+ * followup-scheduler.ts (тот же claimOnce/ключи), чтобы прямой вопрос про
+ * скидку и часовой дожим после 13% не спорили друг с другом за один и тот
+ * же шаг лестницы.
+ */
+export async function nextDiscountOffer(
+  supabase: ReturnType<typeof createAdminClient>,
+  chatId: string
+): Promise<string> {
+  if (await claimOnce(supabase, chatId, 'discount13')) return DISCOUNT_OFFER_13_TEXT
+  if (await claimOnce(supabase, chatId, 'discount20')) return DISCOUNT_OFFER_20_TEXT
+  return DISCOUNT_REJECT_TEXT
 }
 
 /**
@@ -852,10 +910,15 @@ async function processInboundGreenApiMessageNow(
     replies.push(T.complaintPrompt)
   } else if (COOPERATION.test(input.text)) {
     replies.push(T.cooperationReply)
+  } else if (DISCOUNT_REQUEST.test(input.text)) {
+    // Прямая просьба о скидке — сразу лестница 13%→20%, а не пересказ цены
+    // или доставки не по теме (живой баг: спросили скидку, бот втирал про
+    // доставку).
+    replies.push(await nextDiscountOffer(supabase, input.chatId))
   } else if (NEGATIVE_ONLY.test(input.text) && lastBotMessage === ORDER_CTA_FOLLOWUP_TEXT) {
-    // Клиент отказался оформлять на follow-up «вам оформить?» — только
-    // здесь и появляется скидка 13%, сразу после результата её не шлём.
-    replies.push(T.lowStockCta)
+    // Клиент отказался оформлять на follow-up «вам оформить?» — та же
+    // лестница скидок, что и на прямую просьбу выше, общее состояние.
+    replies.push(await nextDiscountOffer(supabase, input.chatId))
   } else if (ORDER_INTENT.test(input.text) || acceptedOrderCta) {
     // QR отправляется сразу вместе с чек-листом (ниже, sendPaymentQr) — раньше
     // WhatsApp не умел слать картинки, поэтому клиента отправляли к менеджеру

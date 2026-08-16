@@ -16,8 +16,10 @@ import { createAdminClient } from '@/lib/supabase/admin'
 import { sendGreenApiMessage } from '@/lib/greenapi/client'
 import {
   canSendGreenApiBotReply,
+  DISCOUNT_OFFER_13_TEXT,
   FOLLOWUP_ANCHOR_TEXT,
   IDLE_NUDGE_TEXT,
+  nextDiscountOffer,
   ORDER_CTA_FOLLOWUP_TEXT,
 } from '@/lib/greenapi/bot-reply'
 
@@ -103,7 +105,10 @@ async function processFollowupStage(supabase: ReturnType<typeof createAdminClien
  * Стадия 2: общий дожим — клиент молчит 1 час после ЛЮБОГО последнего
  * реального ответа бота, на любом этапе диалога (не только после
  * follow-up). Служебные маркеры (ga:claim:*) в счёт не идут — это не
- * реальный ответ клиенту, а внутренняя защёлка.
+ * реальный ответ клиенту, а внутренняя защёлка. Если последним бот
+ * предложил скидку 13% и клиент так и не купил — дожим сразу эскалирует
+ * до 20% (та же лестница, что nextDiscountOffer в bot-reply.ts), а не
+ * шлёт общее «вы ещё здесь?».
  */
 async function processIdleNudgeStage(supabase: ReturnType<typeof createAdminClient>): Promise<void> {
   const cutoff = new Date(Date.now() - IDLE_NUDGE_SILENCE_MS).toISOString()
@@ -121,17 +126,22 @@ async function processIdleNudgeStage(supabase: ReturnType<typeof createAdminClie
   for (const chatId of chatIds) {
     const { data: last } = await supabase
       .from('amocrm_messages')
-      .select('id, sender, amo_message_id, created_at')
+      .select('id, sender, text, amo_message_id, created_at')
       .eq('chat_id', chatId)
       .order('created_at', { ascending: false })
       .limit(1)
       .maybeSingle()
-    const lastRow = last as { id: number; sender: string; amo_message_id: string; created_at: string } | null
+    const lastRow = last as
+      | { id: number; sender: string; text: string; amo_message_id: string; created_at: string }
+      | null
     if (!lastRow || lastRow.sender !== 'bot') continue // клиент уже ответил
     if (lastRow.amo_message_id.startsWith('ga:claim:')) continue // технический маркер, не реальный ответ
     if (new Date(lastRow.created_at).getTime() > Date.now() - IDLE_NUDGE_SILENCE_MS) continue // час ещё не прошёл
 
-    await sendStageReply(supabase, chatId, lastRow.id, IDLE_NUDGE_TEXT, 'ga:bot:idle-nudge')
+    const replyText = lastRow.text === DISCOUNT_OFFER_13_TEXT
+      ? await nextDiscountOffer(supabase, chatId)
+      : IDLE_NUDGE_TEXT
+    await sendStageReply(supabase, chatId, lastRow.id, replyText, 'ga:bot:idle-nudge')
   }
 }
 
