@@ -327,6 +327,14 @@ const COMPLAINT =
 const COOPERATION =
   /сотрудничеств|оптом|\bопт\b|дистрибьютор|дилер|партн[её]р|реселлер|перепродаж|b2b|блогер/i
 
+// Странные/нетипичные вопросы (документы, лицензия, юр. регистрация и
+// т.п., не про безопасность состава — та ветка отдельно, SAFETY_COMPOSITION_
+// DOUBT) — бот молчит полностью и сделка уходит на "нестандартный запрос",
+// как при жалобе/сотрудничестве, вместо того чтобы ИИ пытался сам ответить
+// не по скрипту.
+const SUSPICIOUS_QUESTION =
+  /докумен\w*|лицензи\w*|сертификат\w*\s*(?:компани|организаци|юр)|регистрац\w*\s*(?:компани|ип\b|ооо|бизнес)|огрн|\bинн\b|устав\w*\s*(?:компани|организаци)|юридическ\w*\s*(?:адрес|лицо)|свидетельств\w*\s*(?:о\s*регистрации)/i
+
 const READY_TO_BUY = /оформ(?:ить|ляйте)|заказ(?:ать|ываю)?|беру\b|покупаю\b|заброниру|резервиру/i
 const INTEREST_CONFIRMED = /хочу\b|подходит|устраивает|интересует|готов\s+(?:взять|купить)|давайте/i
 const NEED_IDENTIFIED =
@@ -834,6 +842,19 @@ async function processInboundGreenApiMessageNow(
   // оплатившему клиенту.
   if (botEnabled && IMAGE_TYPES.has(input.messageType ?? '') && input.mediaUrl) {
     await handleGreenApiReceipt(supabase, input, externalKey)
+    return
+  }
+
+  // Странный вопрос (документы/лицензия/регистрация) — бот молчит
+  // полностью, дальше диалог ведёт менеджер. Ранний выход до генерации
+  // ответа: скрипт и ИИ сюда не доходят вовсе.
+  if (SUSPICIOUS_QUESTION.test(input.text)) {
+    if (!opts.dryRun) {
+      const advanced = await advanceDealFromBotAction(externalKey, 'non_standard_request')
+      if (!advanced.ok && advanced.error) {
+        console.error('greenapi bot-reply: stage advance failed', 'non_standard_request', advanced.error)
+      }
+    }
     return
   }
 
