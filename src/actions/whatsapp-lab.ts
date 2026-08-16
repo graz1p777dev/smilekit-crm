@@ -15,6 +15,7 @@ import { randomUUID } from 'crypto'
 import { createAdminClient } from '@/lib/supabase/admin'
 import {
   FOLLOWUP_ANCHOR_TEXT,
+  NUDGE_24H_TEXT,
   ORDER_CTA_FOLLOWUP_TEXT,
   processInboundGreenApiMessage,
 } from '@/lib/greenapi/bot-reply'
@@ -98,7 +99,13 @@ export async function sendWhatsappLabMessage(
  * ждать реальные 5 минут негде, поэтому кнопка «промотать» повторяет ту же
  * проверку по требованию для одного тестового чата, без порога по времени.
  */
-export async function triggerWhatsappLabFollowup(chatId: string): Promise<SendWhatsappLabMessageResult> {
+async function triggerStage(
+  chatId: string,
+  requiredLastText: string,
+  replyText: string,
+  messageIdPrefix: string,
+  notReadyError: string
+): Promise<SendWhatsappLabMessageResult> {
   const supabase = createAdminClient()
   const { data: last } = await supabase
     .from('amocrm_messages')
@@ -108,20 +115,41 @@ export async function triggerWhatsappLabFollowup(chatId: string): Promise<SendWh
     .limit(1)
     .maybeSingle()
   const lastRow = last as { id: number; sender: string; text: string } | null
-  if (!lastRow || lastRow.sender !== 'bot' || lastRow.text !== FOLLOWUP_ANCHOR_TEXT) {
-    return {
-      success: false,
-      error: 'Follow-up сейчас не сработает: бот ждёт ответа клиента или ещё не показывал блок результата.',
-    }
+  if (!lastRow || lastRow.sender !== 'bot' || lastRow.text !== requiredLastText) {
+    return { success: false, error: notReadyError }
   }
   await supabase.from('amocrm_messages').upsert({
-    amo_message_id: `ga:bot:followup:lab:${lastRow.id}`,
+    amo_message_id: `${messageIdPrefix}:${lastRow.id}`,
     chat_id: chatId,
     direction: 'out',
     sender: 'bot',
-    text: ORDER_CTA_FOLLOWUP_TEXT,
+    text: replyText,
   }, { onConflict: 'amo_message_id', ignoreDuplicates: true })
 
   const history = await loadHistory(chatId)
   return { success: true, chatId, history }
+}
+
+export async function triggerWhatsappLabFollowup(chatId: string): Promise<SendWhatsappLabMessageResult> {
+  return triggerStage(
+    chatId,
+    FOLLOWUP_ANCHOR_TEXT,
+    ORDER_CTA_FOLLOWUP_TEXT,
+    'ga:bot:followup:lab',
+    'Follow-up сейчас не сработает: бот ждёт ответа клиента или ещё не показывал блок результата.'
+  )
+}
+
+/**
+ * Дожим через 24 часа, если клиент не ответил на follow-up-вопрос — тоже
+ * фон (followup-scheduler.ts), в песочнице реальные сутки ждать негде.
+ */
+export async function triggerWhatsappLabNudge24h(chatId: string): Promise<SendWhatsappLabMessageResult> {
+  return triggerStage(
+    chatId,
+    ORDER_CTA_FOLLOWUP_TEXT,
+    NUDGE_24H_TEXT,
+    'ga:bot:nudge24h:lab',
+    'Дожим сейчас не сработает: сначала промотайте 5 минут — дожим идёт вторым шагом, после вопроса «вам оформить?».'
+  )
 }

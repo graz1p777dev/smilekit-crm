@@ -14,7 +14,12 @@ import { toast } from 'sonner'
 import { Clock, FlaskConical, Mic, RotateCcw, Send, ShieldAlert, User, Bot as BotIcon, Image as ImageIcon } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Textarea } from '@/components/ui/textarea'
-import { sendWhatsappLabMessage, triggerWhatsappLabFollowup, type WhatsappLabMessage } from '@/actions/whatsapp-lab'
+import {
+  sendWhatsappLabMessage,
+  triggerWhatsappLabFollowup,
+  triggerWhatsappLabNudge24h,
+  type WhatsappLabMessage,
+} from '@/actions/whatsapp-lab'
 
 const MEDIA_MARKERS = new Set(['[QR оплаты]', '[фото результата]'])
 
@@ -76,6 +81,21 @@ export default function WhatsappLabPage() {
     }
   }
 
+  async function skipToNudge24h() {
+    if (!chatId || loading) return
+    setLoading(true)
+    try {
+      const result = await triggerWhatsappLabNudge24h(chatId)
+      if (!result.success) {
+        toast.error(result.error)
+        return
+      }
+      setHistory(result.history)
+    } finally {
+      setLoading(false)
+    }
+  }
+
   return (
     <div className="flex flex-col gap-5 p-4 md:p-8" style={{ maxWidth: 780 }}>
       <div>
@@ -95,7 +115,8 @@ export default function WhatsappLabPage() {
           по городу, QR оплаты и правила из настроек. Отличие только в изоляции: тестовый номер не пересекается с
           реальными, сделка в воронке не создаётся, реальный Green API не дёргается — можно тестировать, даже когда
           общий выключатель бота выключен для настоящих клиентов. Вопрос «вам оформить?» после блока результата в
-          реальном WhatsApp приходит только через 5 минут молчания — кнопка «Промотать 5 минут» показывает его сразу.
+          реальном WhatsApp приходит только через 5 минут молчания, а дожим — ещё через 24 часа молчания на этот
+          вопрос. Кнопки «Промотать» показывают оба шага сразу, не дожидаясь реального времени.
         </p>
       </div>
 
@@ -111,6 +132,10 @@ export default function WhatsappLabPage() {
             <Button variant="ghost" size="sm" className="gap-1.5" disabled={!chatId || loading} onClick={() => void skipToFollowup()}>
               <Clock size={14} />
               Промотать 5 минут
+            </Button>
+            <Button variant="ghost" size="sm" className="gap-1.5" disabled={!chatId || loading} onClick={() => void skipToNudge24h()}>
+              <Clock size={14} />
+              Промотать 24 часа
             </Button>
             <Button variant="ghost" size="sm" className="gap-1.5" disabled={history.length === 0 || loading} onClick={reset}>
               <RotateCcw size={14} />

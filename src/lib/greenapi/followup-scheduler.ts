@@ -1,17 +1,26 @@
-// Follow-up «вам оформить?» через 5 минут молчания клиента после блока
-// результата (see bot-reply.ts: FOLLOWUP_ANCHOR_TEXT). Раньше скидка 13%
-// уходила сразу вместе с фото — теперь только этот вопрос, а скидка (в
-// обычной обработке входящих, bot-reply.ts) — лишь если клиент ответит «нет».
+// Два дожима после блока результата, если клиент молчит:
+// 1. Через 5 минут — вопрос «вам оформить?» (FOLLOWUP_ANCHOR_TEXT).
+// 2. Через 24 часа после ЭТОГО вопроса, если клиент так и не ответил, —
+//    напоминание (see bot-reply.ts: NUDGE_24H_TEXT).
+// Раньше скидка 13% уходила сразу вместе с фото — теперь только вопрос
+// через 5 минут, а скидка (в обычной обработке входящих, bot-reply.ts) —
+// лишь если клиент ответит «нет».
 //
 // Тот же паттерн, что campaigns/scheduler.ts и amocrm/outgoing-poller.ts:
 // in-process setInterval, один инстанс на Railway — дублей нет.
 
 import { createAdminClient } from '@/lib/supabase/admin'
 import { sendGreenApiMessage } from '@/lib/greenapi/client'
-import { canSendGreenApiBotReply, FOLLOWUP_ANCHOR_TEXT, ORDER_CTA_FOLLOWUP_TEXT } from '@/lib/greenapi/bot-reply'
+import {
+  canSendGreenApiBotReply,
+  FOLLOWUP_ANCHOR_TEXT,
+  NUDGE_24H_TEXT,
+  ORDER_CTA_FOLLOWUP_TEXT,
+} from '@/lib/greenapi/bot-reply'
 
 const TICK_INTERVAL_MS = 60_000
-const SILENCE_THRESHOLD_MS = 5 * 60_000
+const FOLLOWUP_SILENCE_MS = 5 * 60_000
+const NUDGE_SILENCE_MS = 24 * 3600_000
 
 let started = false
 
@@ -26,24 +35,32 @@ export function startFollowupScheduler(): void {
   setInterval(tick, TICK_INTERVAL_MS).unref?.()
 }
 
-async function runOnce(): Promise<void> {
-  const supabase = createAdminClient()
-  const cutoff = new Date(Date.now() - SILENCE_THRESHOLD_MS).toISOString()
-
+/**
+ * Общий шаг для обеих стадий: анкер (последняя запись в чате с заданным
+ * текстом и старше порога) -> отправить replyText. Якорь ещё актуален,
+ * только если это ПОСЛЕДНЯЯ запись в чате — любое следующее сообщение
+ * (ответ клиента или уже отправленный шаг) снимает триггер естественным
+ * образом, без отдельного флага «отправлено».
+ */
+async function processStage(
+  supabase: ReturnType<typeof createAdminClient>,
+  anchorText: string,
+  silenceMs: number,
+  replyText: string,
+  messageIdPrefix: string
+): Promise<void> {
+  const cutoff = new Date(Date.now() - silenceMs).toISOString()
   const { data: anchors } = await supabase
     .from('amocrm_messages')
     .select('id, chat_id')
     .eq('sender', 'bot')
-    .eq('text', FOLLOWUP_ANCHOR_TEXT)
+    .eq('text', anchorText)
     .lte('created_at', cutoff)
     .order('created_at', { ascending: true })
     .limit(200)
   if (!anchors?.length) return
 
   for (const anchor of anchors as { id: number; chat_id: string }[]) {
-    // Якорь ещё актуален, только если это ПОСЛЕДНЯЯ запись в чате — любое
-    // следующее сообщение (ответ клиента или уже отправленный follow-up)
-    // снимает триггер естественным образом, без отдельного флага «отправлено».
     const { data: last } = await supabase
       .from('amocrm_messages')
       .select('id')
@@ -55,23 +72,29 @@ async function runOnce(): Promise<void> {
 
     if (!(await canSendGreenApiBotReply(supabase, anchor.chat_id))) continue
 
-    const botMessageId = `ga:bot:followup:${anchor.id}`
+    const botMessageId = `${messageIdPrefix}:${anchor.id}`
     const { error: reserveError } = await supabase.from('amocrm_messages').upsert({
       amo_message_id: botMessageId,
       chat_id: anchor.chat_id,
       direction: 'out',
       sender: 'bot',
-      text: ORDER_CTA_FOLLOWUP_TEXT,
+      text: replyText,
     }, { onConflict: 'amo_message_id', ignoreDuplicates: true })
     if (reserveError) {
       console.error('greenapi followup scheduler: reserve failed', reserveError.message)
       continue
     }
     try {
-      await sendGreenApiMessage(`${anchor.chat_id}@c.us`, ORDER_CTA_FOLLOWUP_TEXT)
+      await sendGreenApiMessage(`${anchor.chat_id}@c.us`, replyText)
     } catch (error) {
       await supabase.from('amocrm_messages').delete().eq('amo_message_id', botMessageId)
       console.error('greenapi followup scheduler: send failed', error)
     }
   }
+}
+
+async function runOnce(): Promise<void> {
+  const supabase = createAdminClient()
+  await processStage(supabase, FOLLOWUP_ANCHOR_TEXT, FOLLOWUP_SILENCE_MS, ORDER_CTA_FOLLOWUP_TEXT, 'ga:bot:followup')
+  await processStage(supabase, ORDER_CTA_FOLLOWUP_TEXT, NUDGE_SILENCE_MS, NUDGE_24H_TEXT, 'ga:bot:nudge24h')
 }
