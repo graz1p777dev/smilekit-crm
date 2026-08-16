@@ -26,6 +26,24 @@ function isMediaMarker(text: string): boolean {
   return MEDIA_MARKERS.has(text)
 }
 
+// Готовые сценарии на каждый скриптовый шаблон — чтобы не печатать вручную
+// и сразу видеть реальный ответ бота. Каждый сценарий стартует с чистого
+// чата (свежий chatId), так результат не зависит от того, что было в
+// диалоге раньше.
+const QUICK_QUESTIONS: { label: string; sequence: string[] }[] = [
+  { label: 'Цена', sequence: ['Здравствуйте, сколько стоит?'] },
+  { label: 'Доставка (Бишкек)', sequence: ['Здравствуйте, сколько стоит?', 'Бишкек'] },
+  { label: 'Вред для эмали', sequence: ['А не вредно ли для эмали?'] },
+  { label: 'Скиньте состав', sequence: ['Скиньте состав'] },
+  { label: 'На сколько хватает', sequence: ['На сколько хватает одной коробки?'] },
+  { label: 'Скидка', sequence: ['Сделаете скидку?'] },
+  { label: 'Не мошенники?', sequence: ['Вы не мошенники?'] },
+  { label: 'Жалоба', sequence: ['Это развод, верните деньги'] },
+  { label: 'Сотрудничество', sequence: ['Хочу сотрудничать оптом'] },
+  { label: 'Документы (молчание)', sequence: ['Пришлите документы о регистрации компании'] },
+  { label: 'Оформить', sequence: ['Здравствуйте, сколько стоит?', 'Ладно давайте оформим'] },
+]
+
 export default function WhatsappLabPage() {
   const [chatId, setChatId] = useState<string | undefined>(undefined)
   const [history, setHistory] = useState<WhatsappLabMessage[]>([])
@@ -37,23 +55,43 @@ export default function WhatsappLabPage() {
     bottomRef.current?.scrollIntoView({ behavior: 'smooth' })
   }, [history, loading])
 
+  async function sendOne(currentChatId: string | undefined, text: string): Promise<string | undefined> {
+    setHistory((prev) => [...prev, { sender: 'client', text, createdAt: new Date().toISOString(), isVoice: false }])
+    const result = await sendWhatsappLabMessage(currentChatId, text)
+    if (!result.success) {
+      toast.error(result.error)
+      setHistory((prev) => prev.slice(0, -1))
+      return currentChatId
+    }
+    setChatId(result.chatId)
+    setHistory(result.history)
+    return result.chatId
+  }
+
   async function send() {
     const text = input.trim()
     if (!text || loading) return
     setInput('')
     setLoading(true)
-    // Оптимистично добавляем сообщение клиента — бот отвечает не мгновенно
-    // (те же паузы между репликами и фото, что в реальном WhatsApp).
-    setHistory((prev) => [...prev, { sender: 'client', text, createdAt: new Date().toISOString(), isVoice: false }])
     try {
-      const result = await sendWhatsappLabMessage(chatId, text)
-      if (!result.success) {
-        toast.error(result.error)
-        setHistory((prev) => prev.slice(0, -1))
-        return
+      // Оптимистично добавляем сообщение клиента — бот отвечает не мгновенно
+      // (те же паузы между репликами и фото, что в реальном WhatsApp).
+      await sendOne(chatId, text)
+    } finally {
+      setLoading(false)
+    }
+  }
+
+  async function runQuickQuestion(sequence: string[]) {
+    if (loading) return
+    setLoading(true)
+    setChatId(undefined)
+    setHistory([])
+    try {
+      let currentChatId: string | undefined
+      for (const text of sequence) {
+        currentChatId = await sendOne(currentChatId, text)
       }
-      setChatId(result.chatId)
-      setHistory(result.history)
     } finally {
       setLoading(false)
     }
@@ -102,6 +140,20 @@ export default function WhatsappLabPage() {
           блока результата, без задержки. Общий дожим (на любом этапе диалога) — через 1 час молчания на последний
           ответ бота; кнопка «Промотать» показывает его сразу, не дожидаясь реального времени.
         </p>
+      </div>
+
+      <div className="flex flex-wrap gap-1.5">
+        {QUICK_QUESTIONS.map((q) => (
+          <Button
+            key={q.label}
+            variant="outline"
+            size="sm"
+            disabled={loading}
+            onClick={() => void runQuickQuestion(q.sequence)}
+          >
+            {q.label}
+          </Button>
+        ))}
       </div>
 
       <div className="overflow-hidden rounded-2xl bg-white" style={{ border: '1px solid var(--line)' }}>
