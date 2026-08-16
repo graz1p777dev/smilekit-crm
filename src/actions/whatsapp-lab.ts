@@ -14,9 +14,8 @@
 import { randomUUID } from 'crypto'
 import { createAdminClient } from '@/lib/supabase/admin'
 import {
-  DISCOUNT_OFFER_13_TEXT,
-  IDLE_NUDGE_TEXT,
-  nextDiscountOffer,
+  IDLE_NUDGE_ID_PREFIX,
+  nextIdleNudgeReply,
   processInboundGreenApiMessage,
 } from '@/lib/greenapi/bot-reply'
 import { DEFAULT_DOUBT_RESULT_REPLY, DEFAULT_FIRST_USE_EFFECT } from '@/lib/greenapi/default-templates'
@@ -93,9 +92,11 @@ export async function sendWhatsappLabMessage(
 }
 
 /**
- * Общий дожим — клиент молчит 1 час после ЛЮБОГО последнего ответа бота,
- * на любом этапе диалога. Тоже фон (followup-scheduler.ts), в песочнице
- * реальный час ждать негде.
+ * Дожим — клиент молчит после ЛЮБОГО последнего ответа бота, на любом
+ * этапе диалога. Тоже фон (followup-scheduler.ts), в песочнице реальные
+ * час/сутки ждать негде. Каждый клик — следующий шаг цепочки: та же
+ * логика, что и в проде (nextIdleNudgeReply) — вариант дожима не
+ * повторяется, а если последним уже был дожим без ответа — сразу скидка.
  */
 export async function triggerWhatsappLabIdleNudge(chatId: string): Promise<SendWhatsappLabMessageResult> {
   const supabase = createAdminClient()
@@ -113,13 +114,9 @@ export async function triggerWhatsappLabIdleNudge(chatId: string): Promise<SendW
       error: 'Дожим сейчас не сработает: бот ждёт ответа клиента или ещё ничего не отвечал.',
     }
   }
-  // Если последним бот предложил 13% и клиент не купил — эскалируем до
-  // 20% (та же лестница, что nextDiscountOffer), а не общее «вы ещё здесь?».
-  const replyText = lastRow.text === DISCOUNT_OFFER_13_TEXT
-    ? await nextDiscountOffer(supabase, chatId)
-    : IDLE_NUDGE_TEXT
+  const replyText = await nextIdleNudgeReply(supabase, chatId, lastRow.text, lastRow.amo_message_id)
   await supabase.from('amocrm_messages').upsert({
-    amo_message_id: `ga:bot:idle-nudge:lab:${lastRow.id}`,
+    amo_message_id: `${IDLE_NUDGE_ID_PREFIX}:lab:${lastRow.id}`,
     chat_id: chatId,
     direction: 'out',
     sender: 'bot',
