@@ -1,13 +1,13 @@
-// Два дожима, если клиент молчит:
-// 1. Через 5 минут после блока результата — вопрос «вам оформить?»
-//    (FOLLOWUP_ANCHOR_TEXT -> ORDER_CTA_FOLLOWUP_TEXT).
-// 2. Через 1 час после ЛЮБОГО последнего ответа бота на любом этапе
-//    диалога, если клиент так и не написал, — общее напоминание
-//    (see bot-reply.ts: IDLE_NUDGE_TEXT). Как idle_nudge в Telegram-боте,
-//    только порог 1 час вместо 30 минут.
-// Раньше скидка 13% уходила сразу вместе с фото — теперь только вопрос
-// через 5 минут, а скидка (в обычной обработке входящих, bot-reply.ts) —
-// лишь если клиент ответит «нет».
+// Общий дожим: клиент молчит 1 час после ЛЮБОГО последнего ответа бота, на
+// любом этапе диалога, — общее напоминание (see bot-reply.ts: IDLE_NUDGE_TEXT).
+// Как idle_nudge в Telegram-боте (__main__.py), только порог 1 час вместо
+// 30 минут. Если последним бот предложил скидку 13% и клиент так и не
+// купил — дожим сразу эскалирует до 20% (та же лестница, что nextDiscountOffer
+// в bot-reply.ts), а не шлёт общее «вы ещё здесь?».
+//
+// CTA «вам оформить доставку?» теперь уходит сразу в конце блока результата
+// (bot-reply.ts), без отдельной 5-минутной задержки — раньше здесь была ещё
+// одна стадия под неё, сейчас не нужна.
 //
 // Тот же паттерн, что campaigns/scheduler.ts и amocrm/outgoing-poller.ts:
 // in-process setInterval, один инстанс на Railway — дублей нет.
@@ -17,14 +17,11 @@ import { sendGreenApiMessage } from '@/lib/greenapi/client'
 import {
   canSendGreenApiBotReply,
   DISCOUNT_OFFER_13_TEXT,
-  FOLLOWUP_ANCHOR_TEXT,
   IDLE_NUDGE_TEXT,
   nextDiscountOffer,
-  ORDER_CTA_FOLLOWUP_TEXT,
 } from '@/lib/greenapi/bot-reply'
 
 const TICK_INTERVAL_MS = 60_000
-const FOLLOWUP_SILENCE_MS = 5 * 60_000
 const IDLE_NUDGE_SILENCE_MS = 60 * 60_000
 
 let started = false
@@ -70,45 +67,9 @@ async function sendStageReply(
 }
 
 /**
- * Стадия 1: FOLLOWUP_ANCHOR_TEXT — якорь-маркер (не отправляется клиенту),
- * ставится ровно один раз сразу после блока результата. Актуален, только
- * если это ПОСЛЕДНЯЯ запись в чате — любое следующее сообщение (ответ
- * клиента или уже отправленный вопрос) снимает триггер естественно, без
- * отдельного флага «отправлено».
- */
-async function processFollowupStage(supabase: ReturnType<typeof createAdminClient>): Promise<void> {
-  const cutoff = new Date(Date.now() - FOLLOWUP_SILENCE_MS).toISOString()
-  const { data: anchors } = await supabase
-    .from('amocrm_messages')
-    .select('id, chat_id')
-    .eq('sender', 'bot')
-    .eq('text', FOLLOWUP_ANCHOR_TEXT)
-    .lte('created_at', cutoff)
-    .order('created_at', { ascending: true })
-    .limit(200)
-  if (!anchors?.length) return
-
-  for (const anchor of anchors as { id: number; chat_id: string }[]) {
-    const { data: last } = await supabase
-      .from('amocrm_messages')
-      .select('id')
-      .eq('chat_id', anchor.chat_id)
-      .order('created_at', { ascending: false })
-      .limit(1)
-      .maybeSingle()
-    if ((last as { id?: number } | null)?.id !== anchor.id) continue
-    await sendStageReply(supabase, anchor.chat_id, anchor.id, ORDER_CTA_FOLLOWUP_TEXT, 'ga:bot:followup')
-  }
-}
-
-/**
- * Стадия 2: общий дожим — клиент молчит 1 час после ЛЮБОГО последнего
- * реального ответа бота, на любом этапе диалога (не только после
- * follow-up). Служебные маркеры (ga:claim:*) в счёт не идут — это не
- * реальный ответ клиенту, а внутренняя защёлка. Если последним бот
- * предложил скидку 13% и клиент так и не купил — дожим сразу эскалирует
- * до 20% (та же лестница, что nextDiscountOffer в bot-reply.ts), а не
- * шлёт общее «вы ещё здесь?».
+ * Клиент молчит 1 час после ЛЮБОГО последнего реального ответа бота, на
+ * любом этапе диалога. Служебные маркеры (ga:claim:*) в счёт не идут —
+ * это не реальный ответ клиенту, а внутренняя защёлка.
  */
 async function processIdleNudgeStage(supabase: ReturnType<typeof createAdminClient>): Promise<void> {
   const cutoff = new Date(Date.now() - IDLE_NUDGE_SILENCE_MS).toISOString()
@@ -147,6 +108,5 @@ async function processIdleNudgeStage(supabase: ReturnType<typeof createAdminClie
 
 async function runOnce(): Promise<void> {
   const supabase = createAdminClient()
-  await processFollowupStage(supabase)
   await processIdleNudgeStage(supabase)
 }

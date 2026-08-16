@@ -15,10 +15,8 @@ import { randomUUID } from 'crypto'
 import { createAdminClient } from '@/lib/supabase/admin'
 import {
   DISCOUNT_OFFER_13_TEXT,
-  FOLLOWUP_ANCHOR_TEXT,
   IDLE_NUDGE_TEXT,
   nextDiscountOffer,
-  ORDER_CTA_FOLLOWUP_TEXT,
   processInboundGreenApiMessage,
 } from '@/lib/greenapi/bot-reply'
 import { DEFAULT_DOUBT_RESULT_REPLY, DEFAULT_FIRST_USE_EFFECT } from '@/lib/greenapi/default-templates'
@@ -48,7 +46,7 @@ async function loadHistory(chatId: string): Promise<WhatsappLabMessage[]> {
     .map((row) => row as { amo_message_id: string; sender: string; text: string; created_at: string })
     .filter((row) => row.sender === 'client' || row.sender === 'bot')
     // ga:claim:* — служебные строки-защёлки (одноразовый захват блока
-    // результата, follow-up-якорь), их защищённая функция — не дать боту
+    // результата, лестница скидок), их защищённая функция — не дать боту
     // повторить блок дважды. Клиенту они никогда не уходят, поэтому в
     // истории теста показывать их не нужно — иначе кажется, что бот
     // отправил лишнее фото, которого на самом деле не было.
@@ -95,57 +93,9 @@ export async function sendWhatsappLabMessage(
 }
 
 /**
- * В реальном WhatsApp этот вопрос уходит только через 5 минут молчания
- * клиента — followup-scheduler.ts проверяет это раз в минуту фоном (см.
- * bot-reply.ts: needsFollowupAnchor/FOLLOWUP_ANCHOR_TEXT). В песочнице
- * ждать реальные 5 минут негде, поэтому кнопка «промотать» повторяет ту же
- * проверку по требованию для одного тестового чата, без порога по времени.
- */
-async function triggerStage(
-  chatId: string,
-  requiredLastText: string,
-  replyText: string,
-  messageIdPrefix: string,
-  notReadyError: string
-): Promise<SendWhatsappLabMessageResult> {
-  const supabase = createAdminClient()
-  const { data: last } = await supabase
-    .from('amocrm_messages')
-    .select('id, sender, text')
-    .eq('chat_id', chatId)
-    .order('created_at', { ascending: false })
-    .limit(1)
-    .maybeSingle()
-  const lastRow = last as { id: number; sender: string; text: string } | null
-  if (!lastRow || lastRow.sender !== 'bot' || lastRow.text !== requiredLastText) {
-    return { success: false, error: notReadyError }
-  }
-  await supabase.from('amocrm_messages').upsert({
-    amo_message_id: `${messageIdPrefix}:${lastRow.id}`,
-    chat_id: chatId,
-    direction: 'out',
-    sender: 'bot',
-    text: replyText,
-  }, { onConflict: 'amo_message_id', ignoreDuplicates: true })
-
-  const history = await loadHistory(chatId)
-  return { success: true, chatId, history }
-}
-
-export async function triggerWhatsappLabFollowup(chatId: string): Promise<SendWhatsappLabMessageResult> {
-  return triggerStage(
-    chatId,
-    FOLLOWUP_ANCHOR_TEXT,
-    ORDER_CTA_FOLLOWUP_TEXT,
-    'ga:bot:followup:lab',
-    'Follow-up сейчас не сработает: бот ждёт ответа клиента или ещё не показывал блок результата.'
-  )
-}
-
-/**
  * Общий дожим — клиент молчит 1 час после ЛЮБОГО последнего ответа бота,
- * на любом этапе диалога (не только после follow-up). Тоже фон
- * (followup-scheduler.ts), в песочнице реальный час ждать негде.
+ * на любом этапе диалога. Тоже фон (followup-scheduler.ts), в песочнице
+ * реальный час ждать негде.
  */
 export async function triggerWhatsappLabIdleNudge(chatId: string): Promise<SendWhatsappLabMessageResult> {
   const supabase = createAdminClient()

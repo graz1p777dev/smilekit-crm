@@ -16,7 +16,6 @@ import { Button } from '@/components/ui/button'
 import { Textarea } from '@/components/ui/textarea'
 import {
   sendWhatsappLabMessage,
-  triggerWhatsappLabFollowup,
   triggerWhatsappLabIdleNudge,
   type WhatsappLabMessage,
 } from '@/actions/whatsapp-lab'
@@ -66,21 +65,6 @@ export default function WhatsappLabPage() {
     setInput('')
   }
 
-  async function skipToFollowup() {
-    if (!chatId || loading) return
-    setLoading(true)
-    try {
-      const result = await triggerWhatsappLabFollowup(chatId)
-      if (!result.success) {
-        toast.error(result.error)
-        return
-      }
-      setHistory(result.history)
-    } finally {
-      setLoading(false)
-    }
-  }
-
   async function skipToIdleNudge() {
     if (!chatId || loading) return
     setLoading(true)
@@ -114,10 +98,9 @@ export default function WhatsappLabPage() {
           Работает тот же код, что отвечает настоящим клиентам в WhatsApp — включая блок результата с фото, доставку
           по городу, QR оплаты и правила из настроек. Отличие только в изоляции: тестовый номер не пересекается с
           реальными, сделка в воронке не создаётся, реальный Green API не дёргается — можно тестировать, даже когда
-          общий выключатель бота выключен для настоящих клиентов. Вопрос «вам оформить?» после блока результата в
-          реальном WhatsApp приходит только через 5 минут молчания, а общий дожим (на любом этапе диалога) — через
-          1 час молчания на последний ответ бота. Кнопки «Промотать» показывают оба шага сразу, не дожидаясь
-          реального времени.
+          общий выключатель бота выключен для настоящих клиентов. Вопрос «вам оформить доставку?» идёт сразу в конце
+          блока результата, без задержки. Общий дожим (на любом этапе диалога) — через 1 час молчания на последний
+          ответ бота; кнопка «Промотать» показывает его сразу, не дожидаясь реального времени.
         </p>
       </div>
 
@@ -130,10 +113,6 @@ export default function WhatsappLabPage() {
             <h2 className="text-sm font-semibold" style={{ color: 'var(--ink)' }}>Тестовый чат</h2>
           </div>
           <div className="flex items-center gap-1.5">
-            <Button variant="ghost" size="sm" className="gap-1.5" disabled={!chatId || loading} onClick={() => void skipToFollowup()}>
-              <Clock size={14} />
-              Промотать 5 минут
-            </Button>
             <Button variant="ghost" size="sm" className="gap-1.5" disabled={!chatId || loading} onClick={() => void skipToIdleNudge()}>
               <Clock size={14} />
               Промотать 1 час
