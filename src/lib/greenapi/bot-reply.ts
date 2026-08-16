@@ -28,6 +28,7 @@ import {
   DEFAULT_LOW_STOCK_CTA,
   DEFAULT_ORDER_CHECKLIST,
   DEFAULT_PRODUCT_INFO,
+  DEFAULT_SAFETY_COMPOSITION,
 } from '@/lib/greenapi/default-templates'
 import {
   sendGreenApiDeliveryGroupFile,
@@ -243,6 +244,13 @@ const DOUBT_RESULT_REPLY = DEFAULT_DOUBT_RESULT_REPLY
 
 const SCAM_DOUBT =
   /(?:вы\s+)?(?:точно\s+)?не\s+мошенник|мошенники\s*\?|(?:это\s+)?(?:точно\s+)?не\s+(?:обман|развод|скам|фейк)|без\s+обмана|(?:это\s+)?(?:все|всё)?\s*реально\s*(?:да|\?)|не\s+кин[её]те|вам\s+можно\s+доверять|можно\s+(?:ли\s+)?вам\s+верить|вы\s+настоящие/i
+
+// Тот же роутер-сценарий "safety_composition", что в Telegram-боте
+// (service.py ROUTE_TOOL): вопрос про состав/безопасность/вред для эмали
+// или дёсен. Раньше в WhatsApp такой ветки не было вовсе — вопрос уходил в
+// ИИ, который сочинял свой ответ вместо утверждённого текста.
+const SAFETY_COMPOSITION_DOUBT =
+  /вред(?:ит|но|ен)?[^.!?]{0,15}(?:эмал|дёсн|десн)|(?:эмал|дёсн|десн)[^.!?]{0,15}вред|опасн\w*[^.!?]{0,15}(?:эмал|дёсн|десн|состав)|(?:безопасн\w*[^.!?]{0,15}состав|состав[^.!?]{0,15}безопасн)/i
 
 const COMPLAINT =
   /развод|обман(?:ули)?|кинул|мошенник|верните\s+деньги|хочу\s+возврат|ужасн(?:о|ый|ая)|отвратительн|никогда\s+(?:больше\s+)?не\s+куплю|не\s+помогл|разочарован/i
@@ -821,6 +829,8 @@ async function processInboundGreenApiMessageNow(
   } else if (SCAM_DOUBT.test(input.text)) {
     replies.push(T.doubtResult)
     voiceReplies.add(T.doubtResult)
+  } else if (SAFETY_COMPOSITION_DOUBT.test(input.text)) {
+    replies.push(DEFAULT_SAFETY_COMPOSITION)
   } else if (COMPLAINT.test(input.text)) {
     replies.push(T.complaintPrompt)
   } else if (COOPERATION.test(input.text)) {
