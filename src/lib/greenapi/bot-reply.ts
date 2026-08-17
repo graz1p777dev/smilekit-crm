@@ -292,6 +292,10 @@ async function countPreviousIdleNudges(
 /**
  * Что слать в качестве дожима, когда клиент молчит после lastBotText/
  * lastBotAmoMessageId (последнее реальное сообщение бота в чате):
+ * - последним уже был дожим, и это был DISCOUNT_REJECT_TEXT (клиенту уже
+ *   сказали максимум и он всё равно не ответил) — null, дальше не пишем:
+ *   больше предложить нечего, повторять отказ бессмысленно (живой баг:
+ *   раньше отказ повторялся на каждый следующий дожим до бесконечности);
  * - последним уже был дожим (клиент не ответил вовсе за отведённое время) —
  *   вторая волна: скидка по лестнице, а не повтор того же текста;
  * - последним было предложение 13% (клиент не ответил) — сразу 20%;
@@ -303,8 +307,11 @@ export async function nextIdleNudgeReply(
   chatId: string,
   lastBotText: string,
   lastBotAmoMessageId: string
-): Promise<string> {
-  if (lastBotAmoMessageId.startsWith(IDLE_NUDGE_ID_PREFIX)) return nextDiscountOffer(supabase, chatId)
+): Promise<string | null> {
+  if (lastBotAmoMessageId.startsWith(IDLE_NUDGE_ID_PREFIX)) {
+    if (lastBotText === DISCOUNT_REJECT_TEXT) return null
+    return nextDiscountOffer(supabase, chatId)
+  }
   if (lastBotText === DISCOUNT_OFFER_13_TEXT) return nextDiscountOffer(supabase, chatId)
   const attempt = await countPreviousIdleNudges(supabase, chatId)
   return IDLE_NUDGE_VARIANTS[attempt % IDLE_NUDGE_VARIANTS.length]

@@ -115,6 +115,12 @@ export async function triggerWhatsappLabIdleNudge(chatId: string): Promise<SendW
     }
   }
   const replyText = await nextIdleNudgeReply(supabase, chatId, lastRow.text, lastRow.amo_message_id)
+  if (!replyText) {
+    return {
+      success: false,
+      error: 'Больше предложить нечего: максимальная скидка уже озвучена, дальше бот молчит.',
+    }
+  }
   await supabase.from('amocrm_messages').upsert({
     amo_message_id: `${IDLE_NUDGE_ID_PREFIX}:lab:${lastRow.id}`,
     chat_id: chatId,

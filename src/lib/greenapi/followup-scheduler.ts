@@ -109,6 +109,7 @@ async function processIdleNudgeStage(supabase: ReturnType<typeof createAdminClie
     if (new Date(lastRow.created_at).getTime() > Date.now() - requiredSilenceMs) continue // порог ещё не прошёл
 
     const replyText = await nextIdleNudgeReply(supabase, chatId, lastRow.text, lastRow.amo_message_id)
+    if (!replyText) continue // больше предложить нечего — не пишем
     await sendStageReply(supabase, chatId, lastRow.id, replyText, IDLE_NUDGE_ID_PREFIX)
   }
 }
