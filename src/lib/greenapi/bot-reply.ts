@@ -271,6 +271,17 @@ export const DISCOUNT_OFFER_13_TEXT = 'Хорошо, сделаю для вас 
 export const DISCOUNT_OFFER_20_TEXT = 'Хорошо, для вас сделаю специальную цену — 1190 сом вместо 1490 сом. Такое предлагаю нечасто. Оформляем?'
 export const DISCOUNT_REJECT_TEXT = 'Дешевле, к сожалению, не могу — 1190 сом уже максимальная скидка. Оформляем по этой цене?'
 
+// Реальный текст уже отправленной и сработавшей рассылки (campaigns.message,
+// «Скидка 13 процентов 🐇», completed) — переиспользуем его же, а не
+// придумываем новый: после того как скидочная лестница исчерпана (клиент
+// не ответил даже на максимум), дальше вместо молчания раз в 24 часа
+// уходит этот же текст, как в обычной email/WhatsApp-рассылке.
+export const POST_DISCOUNT_CAMPAIGN_TEXT =
+  'Кстати, остались 3 пачки, и на них сделаем скидку 13%\n' +
+  'Со скидкой 1290сом\n\n' +
+  'Если давно смущает желтизна зубов на фото или вживую — это можно быстро исправить, результат уже за 30 минут 😍\n\n' +
+  'Оформить вам одну пачку?'
+
 // Префикс id сообщений дожима — по нему followup-scheduler.ts узнаёт, что
 // последнее сообщение чата уже само было дожимом (а не обычным ответом),
 // и переходит ко второй волне (скидка), а не повторяет первую.
@@ -292,10 +303,11 @@ async function countPreviousIdleNudges(
 /**
  * Что слать в качестве дожима, когда клиент молчит после lastBotText/
  * lastBotAmoMessageId (последнее реальное сообщение бота в чате):
- * - последним уже был дожим, и это был DISCOUNT_REJECT_TEXT (клиенту уже
- *   сказали максимум и он всё равно не ответил) — null, дальше не пишем:
- *   больше предложить нечего, повторять отказ бессмысленно (живой баг:
- *   раньше отказ повторялся на каждый следующий дожим до бесконечности);
+ * - последним уже был дожим, и это был DISCOUNT_REJECT_TEXT или сам
+ *   POST_DISCOUNT_CAMPAIGN_TEXT (скидочная лестница исчерпана, клиент
+ *   молчит) — дальше вместо новых уступок раз в 24 часа уходит один и тот
+ *   же текст рассылки (POST_DISCOUNT_CAMPAIGN_TEXT), как обычная
+ *   WhatsApp-рассылка, а не повтор отказа до бесконечности;
  * - последним уже был дожим (клиент не ответил вовсе за отведённое время) —
  *   вторая волна: скидка по лестнице, а не повтор того же текста;
  * - последним было предложение 13% (клиент не ответил) — сразу 20%;
@@ -309,7 +321,9 @@ export async function nextIdleNudgeReply(
   lastBotAmoMessageId: string
 ): Promise<string | null> {
   if (lastBotAmoMessageId.startsWith(IDLE_NUDGE_ID_PREFIX)) {
-    if (lastBotText === DISCOUNT_REJECT_TEXT) return null
+    if (lastBotText === DISCOUNT_REJECT_TEXT || lastBotText === POST_DISCOUNT_CAMPAIGN_TEXT) {
+      return POST_DISCOUNT_CAMPAIGN_TEXT
+    }
     return nextDiscountOffer(supabase, chatId)
   }
   if (lastBotText === DISCOUNT_OFFER_13_TEXT) return nextDiscountOffer(supabase, chatId)
