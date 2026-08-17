@@ -70,6 +70,12 @@ export const NAV_GROUPS: NavGroup[] = [
         roles: ['owner', 'rop'],
       },
       {
+        href: '/dashboard/customers',
+        label: 'Клиенты',
+        icon: Handshake,
+        roles: ['owner', 'rop', 'mp', 'lmai'],
+      },
+      {
         href: '/dashboard/copilot',
         label: 'ИИ-помощник',
         icon: Sparkles,
@@ -143,6 +149,12 @@ export const NAV_GROUPS: NavGroup[] = [
         href: '/dashboard/marketing',
         label: 'Маркетинг',
         icon: Megaphone,
+        roles: ['owner', 'rop'],
+      },
+      {
+        href: '/dashboard/purchase-analytics',
+        label: 'Аналитика покупок',
+        icon: BarChart3,
         roles: ['owner', 'rop'],
       },
     ],
