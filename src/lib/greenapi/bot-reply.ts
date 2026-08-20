@@ -109,6 +109,14 @@ const RECEIPT_ACCEPTED =
 const RECEIPT_REJECTED =
   'Спасибо! Чек ушёл на проверку менеджеру — он свяжется с вами в ближайшее время. 😊'
 
+// Живой баг: клиент прислал фото зубов (не чек оплаты), а бот всё равно
+// завёл его как заказ «не прошёл проверку» — менеджер в группе доставки и на
+// странице «Заказы» видел мусор вместо реальных заявок. Теперь так отвечаем,
+// когда автопроверка УСПЕШНО отработала и уверенно говорит «это не скриншот
+// оплаты» — заказ в этом случае вообще не заводим (см. handleGreenApiReceipt).
+const RECEIPT_NOT_A_RECEIPT =
+  'Кажется, это не скриншот чека оплаты 😊 Пришлите, пожалуйста, скриншот перевода — и я оформлю заказ.'
+
 async function transcribeGreenApiVoice(input: InboundGreenApiMessage): Promise<string | null> {
   if (!VOICE_TYPES.has(input.messageType ?? '') || !input.mediaUrl) return input.text
   const response = await fetch(input.mediaUrl, { signal: AbortSignal.timeout(20_000) })
@@ -131,6 +139,13 @@ async function transcribeGreenApiVoice(input: InboundGreenApiMessage): Promise<s
 
 const PRODUCT_INFO = DEFAULT_PRODUCT_INFO
 
+/** Случайный вариант из массива паттернов одного и того же ответа — чтобы
+ * клиент не видел дословно одинаковый текст при повторном срабатывании
+ * триггера. */
+function pickVariant<T>(variants: readonly T[]): T {
+  return variants[Math.floor(Math.random() * variants.length)]
+}
+
 const KYRGYZ_PRODUCT_INFO =
   'Салам! 😊 Бир кутусу — 1490 сом. Ичинде 14 даана тилке бар — бул толук курс. ' +
   'Таасири биринчи колдонуудан кийин эле байкалат.\n\n' +
@@ -140,15 +155,25 @@ const KYRGYZ_MARKERS =
   /баа|наркы|канча|кайсы|шаар|жеткир|тиш|агарт|колдон|куту|барбы|алам|керек|рахмат|болобу|кантип|эмне/i
 const KYRGYZ_PRICE_INTENT = /баа|наркы|канча\s*(?:сом|турат)/i
 const LINK_IN_MESSAGE = /(?:https?:\/\/|www\.)\S+/i
-const GREETING_ONLY = /^\s*(?:улыбка|здравствуйте|здравствуй|привет|добрый\s+(?:день|вечер|утро))[!,.?\s😊👋]*$/iu
+const GREETING_ONLY = /^\s*(?:улыбка|здра(?:в)?ствуйте|здра(?:в)?ствуй|привет|добрый\s+(?:день|вечер|утро))[!,.?\s😊👋]*$/iu
 
 const CITY_QUESTION = 'Подскажите, пожалуйста, из какого вы города?'
 
+// Отправляется голосовым (.ogg, см. voiceReplies ниже) — клиент текст не
+// видит, поэтому вариации бессмысленны, текст только один.
 const FIRST_USE_EFFECT = DEFAULT_FIRST_USE_EFFECT
 
 const LOW_STOCK_DISCOUNT_CTA = DEFAULT_LOW_STOCK_CTA
 
-const ORDER_CHECKLIST = DEFAULT_ORDER_CHECKLIST
+// Вариации чек-листа оформления — тот же список из трёх пунктов, только
+// другая вводная фраза, чтобы один и тот же клиент не видел дословно
+// одинаковый текст при повторном заказе.
+const ORDER_CHECKLIST_VARIANTS = [
+  DEFAULT_ORDER_CHECKLIST,
+  'Для оформления заказа пришлите, пожалуйста 😊\n\n• чек об оплате;\n\n• адрес доставки;\n\n• номер телефона.',
+  'Чтобы всё оформить, отправьте мне, пожалуйста 😊\n\n• чек об оплате;\n\n• адрес доставки;\n\n• номер телефона.',
+  'Для оформления понадобится 😊\n\n• чек об оплате;\n\n• адрес доставки;\n\n• номер телефона.',
+]
 
 const RETURNING_GREETING_REPLIES = [
   'Здравствуйте! 😊 Рада снова вас видеть. Чем могу помочь?',
@@ -161,15 +186,25 @@ const RETURNING_KYRGYZ_GREETING_REPLIES = [
   'Салам! 😊 Мен байланышта элем. Эмне боюнча жардам керек?',
 ]
 
-const COMPLAINT_PROMPT = DEFAULT_COMPLAINT_PROMPT
+const COMPLAINT_PROMPT_VARIANTS = [
+  DEFAULT_COMPLAINT_PROMPT,
+  'Расскажите, пожалуйста, что именно не понравилось — хотим разобраться и стать лучше.',
+  'Подскажите, что пошло не так? Нам важно исправить это и улучшить сервис.',
+  'Поделитесь, пожалуйста, что вас не устроило — учтём для улучшения работы.',
+]
 
-const COOPERATION_REPLY = DEFAULT_COOPERATION_REPLY
+const COOPERATION_REPLY_VARIANTS = [
+  DEFAULT_COOPERATION_REPLY,
+  'Спасибо за интерес к сотрудничеству! Опт и партнёрство — это к нашему менеджеру, он свяжется с вами в ближайшее время.',
+  'Благодарим за интерес! По вопросам опта и сотрудничества с вами свяжется наш менеджер в ближайшее время.',
+  'Спасибо, что написали! Вопросы опта и сотрудничества ведёт наш менеджер — он скоро с вами свяжется.',
+]
 
 // Тот же сценарий "effect_duration", что в Telegram-боте (templates.py) —
 // «на сколько хватает коробки» отвечаем только стойкостью результата,
 // без пересказа цены/состава/количества применений.
 const EFFECT_DURATION_QUESTION = /на\s*сколько\s*хватает|сколько\s*(?:держится|длится|хватит)|как\s*долго\s*(?:держится|длится|хватает)/i
-const EFFECT_DURATION_REPLY = 'До 3 месяцев 😊'
+const EFFECT_DURATION_VARIANTS = ['До 3 месяцев 😊', 'Эффекта хватает примерно на 3 месяца 😊', 'Держится результат до 3 месяцев 😊', 'Примерно 3 месяца 😊']
 
 // Регионы Кыргызстана/Казахстана вне Бишкека/Токмока едут одной и той же
 // «Ылдам Экспресс» — этот же текст служит и явным совпадением по городу,
@@ -221,9 +256,14 @@ const ORDER_INTENT =
 // Короткое согласие само по себе намерения не выражает («давайте» может
 // относиться к чему угодно) — засчитываем его как заказ, только если прошлое
 // сообщение бота было предложением оформить. Иначе ответ уходил в ИИ и клиент
-// вместо чек-листа получал произвольную формулировку.
+// вместо чек-листа получал произвольную формулировку. Живой баг: «давайте»
+// само по себе не ловилось, если перед ним стояло филлер-слово («Ладно
+// давайте», «Ну давайте», «Хорошо, давайте») — с точки зрения regex это уже
+// не «просто одно слово согласия», и ответ уходил в ИИ, которая иногда не
+// присылала QR и путала чек-лист. Опциональный филлер впереди — то же
+// согласие, тот же смысл.
 const AFFIRMATIVE_ONLY =
-  /^\s*(?:да|ага|угу|давай(?:те)?|ок(?:ей)?|хорошо|конечно|согласен|согласна|можно)[\s!.,)😊👍]*$/i
+  /^\s*(?:ладно|ну|хорошо|окей|ок)?[\s,]*(?:да|ага|угу|давай(?:те)?|ок(?:ей)?|хорошо|конечно|согласен|согласна|можно)[\s!.,)😊👍]*$/i
 // Ответ «нет» на CTA ORDER_CTA_TEXT — тоже уходит в лестницу
 // скидок (nextDiscountOffer), как и прямая просьба ниже.
 const NEGATIVE_ONLY = /^\s*(?:нет|неа|не\s+хочу|не\s+буду|не\s+надо|откажусь|подумаю)[\s!.,)😔👎]*$/i
@@ -247,6 +287,16 @@ const RESULTS_INTRO = 'Вот результат нашего клиента д�
 // -> этот вопрос). Скидку сама по себе не предлагаем — только если клиент
 // на этот вопрос ответит отказом (NEGATIVE_ONLY ниже).
 export const ORDER_CTA_TEXT = 'Вам оформить доставку?'
+// Вариации того же вопроса — используются при отправке (см. ORDER_CTA_VARIANTS
+// ниже); ORDER_CTA_TEXT остаётся как канонический текст для обратной
+// совместимости, но выбор варианта и проверка «это был CTA?» идут по
+// массиву ORDER_CTA_VARIANTS.includes(...), а не по точному совпадению.
+export const ORDER_CTA_VARIANTS = [
+  ORDER_CTA_TEXT,
+  'Оформляем доставку?',
+  'Оформить вам заказ с доставкой?',
+  'Готовы оформить доставку?',
+]
 
 // Дожим, если клиент молчит 1 час после ЛЮБОГО последнего ответа бота (в
 // т.ч. после ORDER_CTA_TEXT — но и на любом другом этапе диалога), как
@@ -338,6 +388,8 @@ const RESULT_PHOTOS: readonly (readonly [string, string])[] = [
   ['before_after.jpg', ''],
 ]
 
+// Отправляется голосовым (.ogg, см. voiceReplies ниже) — клиент текст не
+// видит, поэтому вариации бессмысленны, текст только один.
 const DOUBT_RESULT_REPLY = DEFAULT_DOUBT_RESULT_REPLY
 
 const SCAM_DOUBT =
@@ -349,6 +401,23 @@ const SCAM_DOUBT =
 // ИИ, который сочинял свой ответ вместо утверждённого текста.
 const SAFETY_COMPOSITION_DOUBT =
   /вред(?:ит|но|ен)?[^.!?]{0,15}(?:эмал|дёсн|десн)|(?:эмал|дёсн|десн)[^.!?]{0,15}вред|опасн\w*[^.!?]{0,15}(?:эмал|дёсн|десн|состав)|(?:безопасн\w*[^.!?]{0,15}состав|состав[^.!?]{0,15}безопасн)/i
+
+const SAFETY_COMPOSITION_VARIANTS = [
+  DEFAULT_SAFETY_COMPOSITION,
+  'Состав полностью безопасен и никак не вредит эмали зубов. То фото результата, что я присылала, — это мои собственные зубы 😊 Могу прислать состав, если интересно.',
+  'Не переживайте, состав абсолютно безопасный, эмаль не повреждает. Результат на фото — мои собственные зубы. Хотите — пришлю состав.',
+  'Состав у нас безопасный, эмали не вредит совсем. И фото результата, которое я отправляла, — это мои собственные зубы. Если нужно, отправлю состав.',
+]
+
+// Живой баг: клиент спросил стоимость/платность доставки отдельно от
+// названия города («Имею ввиду доставку») — ИИ-фолбэк выдумал «бесплатно»,
+// хотя в базе знаний доставки такого нет (только «оплата при получении» по
+// Бишкеку/Токмоку или предоплата 400 сом для остальных регионов КР). Теперь
+// это детерминированная ветка — деньги не оставляем на усмотрение ИИ.
+const DELIVERY_COST_QUESTION =
+  /сколько\s*(?:будет|стоит|выйдет)[^?]{0,20}достав|достав\w*[^?]{0,15}(?:плат|бесплат)|(?:плат|бесплат)\w*[^?]{0,15}достав|имею\s*ввиду\s*доставк/i
+const DELIVERY_PAYMENT_BISHKEK = 'Доставка курьером, оплата — при получении 😊'
+const DELIVERY_PAYMENT_REGIONS = 'По регионам — предоплата 400 сом, остальная сумма при получении 😊'
 
 const COMPLAINT =
   /развод|обман(?:ули)?|кинул|мошенник|верните\s+деньги|хочу\s+возврат|ужасн(?:о|ый|ая)|отвратительн|никогда\s+(?:больше\s+)?не\s+куплю|не\s+помогл|разочарован/i
@@ -628,7 +697,11 @@ async function handleGreenApiReceipt(
   const verified = Boolean(
     check?.is_real_receipt_screenshot && check.amount_ok && check.recipient_ok && check.date_ok
   )
-  const reply = verified ? RECEIPT_ACCEPTED : RECEIPT_REJECTED
+  // Автопроверка отработала и уверенно говорит «это не скриншот оплаты»
+  // (например, фото зубов, а не чек) — не заказ и не «чек не прошёл
+  // проверку», а вообще другая картинка. Заказ на такое заводить не нужно.
+  const notAReceipt = check?.is_real_receipt_screenshot === false && checkUnavailable
+  const reply = verified ? RECEIPT_ACCEPTED : notAReceipt ? RECEIPT_NOT_A_RECEIPT : RECEIPT_REJECTED
 
   if (!(await canSendGreenApiBotReply(supabase, input.chatId))) return
   const botMessageId = `ga:bot:${input.providerMessageId}:receipt`
@@ -646,6 +719,11 @@ async function handleGreenApiReceipt(
     console.error('greenapi bot-reply: receipt reply failed', error)
     return
   }
+
+  // Не чек — отвечаем и молча выходим: не заводим заказ, не шлём в группу
+  // доставки, не двигаем сделку на этап «заказ». Ниже — только реальные чеки
+  // (принятые и требующие ручной проверки).
+  if (notAReceipt) return
 
   // Адрес клиент обычно пишет подписью к чеку или соседним сообщением —
   // берём последние свои сообщения, чтобы менеджеру в группе не пришлось
@@ -902,6 +980,50 @@ async function processInboundGreenApiMessageNow(
   // canSendGreenApiBotReply.
   if (!isPhoneAllowedForBot(input.chatId)) return
 
+  scheduleGreenApiReply(input, opts)
+}
+
+const DEBOUNCE_MS = 50_000
+
+interface PendingGreenApiReplyBatch {
+  texts: string[]
+  timer: ReturnType<typeof setTimeout>
+}
+
+// Клиент часто пишет несколько сообщений подряд отдельными пузырями
+// («Здравствуйте» → «Бишкек» → «сколько стоит») — без буфера бот отвечал на
+// каждое сразу и вразнобой, вместо одного связного ответа. Ждём 50 секунд
+// тишины после последнего сообщения и отвечаем на все разом. В «Лаборатории»
+// (dryRun) ждать не нужно — там тестируют по одному сообщению за раз и ждут
+// ответ сразу.
+const pendingGreenApiReplyBatches = new Map<string, PendingGreenApiReplyBatch>()
+
+function scheduleGreenApiReply(input: InboundGreenApiMessage, opts: GreenApiTestOptions): void {
+  if (opts.dryRun) {
+    void globalGreenApiProcessingLimit(() => generateAndSendGreenApiReply(input, 1, opts))
+    return
+  }
+  const existing = pendingGreenApiReplyBatches.get(input.chatId)
+  if (existing) clearTimeout(existing.timer)
+  const texts = existing ? [...existing.texts, input.text] : [input.text]
+  const timer = setTimeout(() => {
+    pendingGreenApiReplyBatches.delete(input.chatId)
+    const batchInput: InboundGreenApiMessage = { ...input, text: texts.join('\n') }
+    void globalGreenApiProcessingLimit(() => generateAndSendGreenApiReply(batchInput, texts.length, opts)).catch(
+      (error) => console.error('greenapi bot-reply: debounced reply failed', error)
+    )
+  }, DEBOUNCE_MS)
+  pendingGreenApiReplyBatches.set(input.chatId, { texts, timer })
+}
+
+async function generateAndSendGreenApiReply(
+  input: InboundGreenApiMessage,
+  batchSize: number,
+  opts: GreenApiTestOptions
+): Promise<void> {
+  const supabase = createAdminClient()
+  const externalKey = await resolveGreenApiExternalKey(supabase, input.chatId)
+
   const { data: rows } = await supabase
     .from('amocrm_messages')
     .select('sender, text, id')
@@ -911,7 +1033,7 @@ async function processInboundGreenApiMessageNow(
     .limit(31)
   const history = (rows ?? [])
     .reverse()
-    .slice(0, -1)
+    .slice(0, -batchSize)
     .filter((row) => !LINK_IN_MESSAGE.test((row as { text: string }).text))
     .map((row) => ({
       role: (row as { sender: string }).sender === 'client' ? 'user' : 'assistant',
@@ -951,12 +1073,12 @@ async function processInboundGreenApiMessageNow(
   const botConfig = await getWhatsappBotConfig()
   const T = {
     productInfo: botConfig.templates.productInfo || PRODUCT_INFO,
-    orderChecklist: botConfig.templates.orderChecklist || ORDER_CHECKLIST,
+    orderChecklist: botConfig.templates.orderChecklist || pickVariant(ORDER_CHECKLIST_VARIANTS),
     doubtResult: botConfig.templates.doubtResult || DOUBT_RESULT_REPLY,
     firstUseEffect: botConfig.templates.firstUseEffect || FIRST_USE_EFFECT,
     lowStockCta: botConfig.templates.lowStockCta || LOW_STOCK_DISCOUNT_CTA,
-    complaintPrompt: botConfig.templates.complaintPrompt || COMPLAINT_PROMPT,
-    cooperationReply: botConfig.templates.cooperationReply || COOPERATION_REPLY,
+    complaintPrompt: botConfig.templates.complaintPrompt || pickVariant(COMPLAINT_PROMPT_VARIANTS),
+    cooperationReply: botConfig.templates.cooperationReply || pickVariant(COOPERATION_REPLY_VARIANTS),
   }
 
   // Свои правила из настроек CRM — проверяются раньше встроенного скрипта:
@@ -994,9 +1116,17 @@ async function processInboundGreenApiMessageNow(
     replies.push(T.doubtResult)
     voiceReplies.add(T.doubtResult)
   } else if (SAFETY_COMPOSITION_DOUBT.test(input.text)) {
-    replies.push(DEFAULT_SAFETY_COMPOSITION)
+    replies.push(pickVariant(SAFETY_COMPOSITION_VARIANTS))
   } else if (EFFECT_DURATION_QUESTION.test(input.text)) {
-    replies.push(EFFECT_DURATION_REPLY)
+    replies.push(pickVariant(EFFECT_DURATION_VARIANTS))
+  } else if (DELIVERY_COST_QUESTION.test(input.text)) {
+    const cityTemplate = deliveryTemplateForCity(input.text) ?? deliveryTemplateForCity(historyText)
+    if (cityTemplate) {
+      const isBishkekOrTokmok = /бишке|токмо/.test(input.text) || /бишке|токмо/.test(historyText)
+      replies.push(cityTemplate, isBishkekOrTokmok ? DELIVERY_PAYMENT_BISHKEK : DELIVERY_PAYMENT_REGIONS)
+    } else {
+      replies.push(CITY_QUESTION)
+    }
   } else if (COMPLAINT.test(input.text)) {
     replies.push(T.complaintPrompt)
   } else if (COOPERATION.test(input.text)) {
@@ -1006,7 +1136,7 @@ async function processInboundGreenApiMessageNow(
     // или доставки не по теме (живой баг: спросили скидку, бот втирал про
     // доставку).
     replies.push(await nextDiscountOffer(supabase, input.chatId))
-  } else if (NEGATIVE_ONLY.test(input.text) && lastBotMessage === ORDER_CTA_TEXT) {
+  } else if (NEGATIVE_ONLY.test(input.text) && ORDER_CTA_VARIANTS.includes(lastBotMessage)) {
     // Клиент отказался оформлять на CTA «вам оформить доставку?» — та же
     // лестница скидок, что и на прямую просьбу выше, общее состояние.
     replies.push(await nextDiscountOffer(supabase, input.chatId))
@@ -1021,7 +1151,7 @@ async function processInboundGreenApiMessageNow(
   } else if (deliveryTemplate && priceKnown && resultsBlockAllowed) {
     // CTA сразу в конце блока — доставка -> фото (в цикле отправки ниже)
     // -> голосовое -> «вам оформить доставку?», без ожидания.
-    replies.push(deliveryTemplate, T.firstUseEffect, ORDER_CTA_TEXT)
+    replies.push(deliveryTemplate, T.firstUseEffect, ORDER_CTA_VARIANTS[Math.floor(Math.random() * ORDER_CTA_VARIANTS.length)])
     voiceReplies.add(T.firstUseEffect)
   }
 
