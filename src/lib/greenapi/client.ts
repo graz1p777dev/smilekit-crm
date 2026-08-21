@@ -31,22 +31,50 @@ export function phoneFromGreenApiChatId(chatId: string): string {
   return chatId.replace(/@c\.us$/, '')
 }
 
-async function callApi<T>(method: string, body?: Record<string, unknown>, base: 'api' | 'media' = 'api'): Promise<T> {
+interface CallApiOptions {
+  base?: 'api' | 'media'
+  timeoutMs?: number
+  /** Сколько раз повторить при сетевой ошибке/таймауте/5xx (не при 4xx). */
+  retries?: number
+}
+
+async function callApi<T>(method: string, body?: Record<string, unknown>, opts: CallApiOptions = {}): Promise<T> {
   const { idInstance, apiTokenInstance, apiUrl } = requireConfig()
-  const host = base === 'media' ? (MEDIA_URL || apiUrl) : apiUrl
+  const host = opts.base === 'media' ? (MEDIA_URL || apiUrl) : apiUrl
   const url = `${host}/waInstance${idInstance}/${method}/${apiTokenInstance}`
-  const res = await fetch(url, {
-    method: body ? 'POST' : 'GET',
-    headers: body ? { 'content-type': 'application/json' } : undefined,
-    body: body ? JSON.stringify(body) : undefined,
-    signal: AbortSignal.timeout(20_000),
-  })
-  if (!res.ok) {
+  const retries = opts.retries ?? 0
+  for (let attempt = 0; ; attempt++) {
+    const canRetry = attempt < retries
+    let res: Response
+    try {
+      res = await fetch(url, {
+        method: body ? 'POST' : 'GET',
+        headers: body ? { 'content-type': 'application/json' } : undefined,
+        body: body ? JSON.stringify(body) : undefined,
+        signal: AbortSignal.timeout(opts.timeoutMs ?? 20_000),
+      })
+    } catch (error) {
+      if (!canRetry) throw error // сеть/таймаут
+      await new Promise((resolve) => setTimeout(resolve, 1_500 * (attempt + 1)))
+      continue
+    }
+    if (res.ok) return res.json()
     const text = await res.text().catch(() => '')
+    if (res.status >= 500 && canRetry) {
+      await new Promise((resolve) => setTimeout(resolve, 1_500 * (attempt + 1)))
+      continue
+    }
     throw new Error(`green-api ${method}: HTTP ${res.status} ${text.slice(0, 300)}`)
   }
-  return res.json()
 }
+
+// Отправка файла по ссылке медленнее текста: Green API сначала скачивает
+// файл с нашего сервера (бот на Railway после простоя отвечает не сразу), а
+// потом грузит его в WhatsApp — по докам 1–20 с только на доставку. С общим
+// таймаутом 20 с голосовое/QR/фото периодически не уходили вовсе
+// («иногда не отправляет QR»). Даём файлам больше времени и один повтор.
+const FILE_SEND_TIMEOUT_MS = 60_000
+const FILE_SEND_RETRIES = 1
 
 export async function getGreenApiState(): Promise<string> {
   const data = await callApi<{ stateInstance: string }>('getStateInstance')
@@ -85,7 +113,7 @@ export interface SendGreenApiFileInput {
 
 /** Отправляет файл (фото/документ) по ссылке. fileName обязателен, с расширением. */
 export async function sendGreenApiFileByUrl(input: SendGreenApiFileInput): Promise<{ idMessage: string }> {
-  return callApi('sendFileByUrl', { ...input })
+  return callApi('sendFileByUrl', { ...input }, { timeoutMs: FILE_SEND_TIMEOUT_MS, retries: FILE_SEND_RETRIES })
 }
 
 /**

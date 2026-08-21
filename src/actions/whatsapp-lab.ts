@@ -14,8 +14,11 @@
 import { randomUUID } from 'crypto'
 import { createAdminClient } from '@/lib/supabase/admin'
 import {
+  FOLLOWUP_ANCHOR_ID_PREFIX,
+  FOLLOWUP_CTA_ID_PREFIX,
   IDLE_NUDGE_ID_PREFIX,
   nextIdleNudgeReply,
+  pickOrderCta,
   processInboundGreenApiMessage,
 } from '@/lib/greenapi/bot-reply'
 import { DEFAULT_DOUBT_RESULT_REPLY, DEFAULT_FIRST_USE_EFFECT } from '@/lib/greenapi/default-templates'
@@ -108,6 +111,18 @@ export async function triggerWhatsappLabIdleNudge(chatId: string): Promise<SendW
     .limit(1)
     .maybeSingle()
   const lastRow = last as { id: number; sender: string; text: string; amo_message_id: string } | null
+  // Якорь после блока результата — в проде через 5 минут молчания уходит
+  // CTA «вам оформить доставку?» (followup-scheduler.ts); здесь — по клику.
+  if (lastRow && lastRow.amo_message_id.startsWith(`${FOLLOWUP_ANCHOR_ID_PREFIX}:`)) {
+    await supabase.from('amocrm_messages').upsert({
+      amo_message_id: `${FOLLOWUP_CTA_ID_PREFIX}:lab:${lastRow.id}`,
+      chat_id: chatId,
+      direction: 'out',
+      sender: 'bot',
+      text: pickOrderCta(),
+    }, { onConflict: 'amo_message_id', ignoreDuplicates: true })
+    return { success: true, chatId, history: await loadHistory(chatId) }
+  }
   if (!lastRow || lastRow.sender !== 'bot' || lastRow.amo_message_id.startsWith('ga:claim:')) {
     return {
       success: false,

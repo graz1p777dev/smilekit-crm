@@ -251,7 +251,7 @@ function shouldSendResultsAfterLocation(text: string, historyText: string): bool
 // живой баг — «давайте оформим» не совпадало ни с одной из перечисленных,
 // уходило в ИИ, который придумывал свой чек-лист без чека/адреса.
 const ORDER_INTENT =
-  /хочу\s+(?:заказать|купить|взять)|(?:как|где)\s+(?:заказать|купить|оформить)|закажу|заказать|\bоформ\w*|\bберу\b|возьму|реквизит|куда\s+(?:скинуть|перевести|оплатить|платить)|как\s+оплатить|способ\s+оплаты|\bqr[\s-]?код/i
+  /хочу\s+(?:заказать|купить|взять|одну|одн[уо]\s+(?:коробк|пачк|упаковк)|сделать\s+заказ)|(?:как|где|можно)\s+(?:заказать|купить|оформить|оплатить|сделать\s+заказ)|закажу|заказать|куплю|\bоформ\w*|\bберу\b|возьму|реквизит|куда\s+(?:скинуть|перевести|оплатить|платить|переводить)|как\s+(?:оплатить|платить|оплачивать)|способ\s+оплаты|оплачу|готов[аы]?\s+(?:оплатить|купить|заказать)|номер\s+карты|скин(?:ь|ьте)\s+(?:номер|реквизит|карту|qr)|\bqr[\s-]?код/i
 
 // Короткое согласие само по себе намерения не выражает («давайте» может
 // относиться к чему угодно) — засчитываем его как заказ, только если прошлое
@@ -264,6 +264,21 @@ const ORDER_INTENT =
 // согласие, тот же смысл.
 const AFFIRMATIVE_ONLY =
   /^\s*(?:ладно|ну|хорошо|окей|ок)?[\s,]*(?:да|ага|угу|давай(?:те)?|ок(?:ей)?|хорошо|конечно|согласен|согласна|можно)[\s!.,)😊👍]*$/i
+// Живой баг: после «Вам оформить доставку?» клиент отвечает не одним словом,
+// а «Да, давайте», «Да хочу», «Да\nБишкек, ул. Ленина 5» (несколько пузырей
+// склеиваются 50-секундным буфером) — строгий AFFIRMATIVE_ONLY не совпадал,
+// сообщение уходило в ИИ, и тот вместо шаблона с чек-листом и QR сочинял
+// свой текст. Мягкая проверка: есть слово согласия, нет отказа и вопроса,
+// сообщение короткое. Применяется ТОЛЬКО если прошлое сообщение бота было
+// предложением оформить (или концом блока результата) — иначе «да» может
+// относиться к чему угодно.
+const AFFIRMATIVE_WORD =
+  /(?:^|[\s,.!(])(?:да|ага|угу|давай(?:те)?|ок(?:ей)?|хорошо|конечно|согласен|согласна|можно|хочу|буду|готов[аы]?|оформляйте|оформите)(?=$|[\s,.!)😊👍\n])/i
+const AFFIRMATIVE_NEGATION = /\bне\b|\bнет\b|потом|позже|подумаю|пока\s+нет|не\s+надо|\?/i
+function isLooseAffirmative(text: string): boolean {
+  const words = text.trim().split(/\s+/).filter(Boolean)
+  return words.length <= 10 && AFFIRMATIVE_WORD.test(text) && !AFFIRMATIVE_NEGATION.test(text)
+}
 // Ответ «нет» на CTA ORDER_CTA_TEXT — тоже уходит в лестницу
 // скидок (nextDiscountOffer), как и прямая просьба ниже.
 const NEGATIVE_ONLY = /^\s*(?:нет|неа|не\s+хочу|не\s+буду|не\s+надо|откажусь|подумаю)[\s!.,)😔👎]*$/i
@@ -280,13 +295,34 @@ const DISCOUNT_REQUEST =
 // клиента уходило в ИИ вместо чек-листа.
 const ORDER_CTA_MARKER = /оформ\w*[^.!?]*\?/i
 
+// Признаки того, что ИИ в свободном ответе сам начал оформление заказа:
+// просит чек/адрес/телефон/реквизиты или описывает оплату. Такой ответ
+// заменяется шаблоном ORDER_CHECKLIST + QR (см. generateAndSendGreenApiReply).
+const AI_IMPROVISED_CHECKLIST =
+  /(?:чек|скриншот)[^.!?\n]{0,40}(?:оплат|перевод)|(?:адрес|номер\s+телефона)[^.!?\n]{0,40}(?:чек|оплат)|реквизит|(?:пришлите|отправьте|напишите|укажите|скиньте)[^.!?\n]{0,40}(?:адрес|чек|номер\s+телефона)|(?:для|чтобы)\s+оформ\w*[^.!?\n]{0,60}(?:нужн|пришлите|отправьте|укажите)/i
+
 // Подводка перед фото — дословно как в Telegram (__main__.py).
 const RESULTS_INTRO = 'Вот результат нашего клиента до и после применения 👇'
 
-// CTA сразу в конце блока результата (доставка -> фото -> голосовое
-// -> этот вопрос). Скидку сама по себе не предлагаем — только если клиент
-// на этот вопрос ответит отказом (NEGATIVE_ONLY ниже).
+// CTA после блока результата (доставка -> фото -> голосовое). Раньше шёл
+// сразу третьим сообщением — клиент не успевал даже дослушать голосовое,
+// как бот уже «оформлял». Теперь CTA уходит через FOLLOWUP_CTA_SILENCE_MS
+// (5 минут) молчания клиента (followup-scheduler.ts): в конце блока в
+// историю пишется служебный якорь FOLLOWUP_ANCHOR_TEXT, и если он так и
+// остался последней записью в чате — планировщик шлёт этот вопрос. Если
+// клиент что-то написал — якорь перестаёт быть последним, CTA не уходит
+// (дальше бот сам предлагает оформить в ходе диалога). Скидку сама по
+// себе не предлагаем — только если клиент на этот вопрос ответит отказом
+// (NEGATIVE_ONLY ниже).
 export const ORDER_CTA_TEXT = 'Вам оформить доставку?'
+// Якорь — тот же приём, что ga:claim:*: сидит в amocrm_messages, клиенту не
+// уходит, в «Лаборатории» и истории для ИИ скрыт (префикс ga:claim:).
+export const FOLLOWUP_ANCHOR_ID_PREFIX = 'ga:claim:followup'
+export const FOLLOWUP_ANCHOR_TEXT = '[ожидание оформления]'
+export const FOLLOWUP_CTA_ID_PREFIX = 'ga:bot:cta-followup'
+export function pickOrderCta(): string {
+  return ORDER_CTA_VARIANTS[Math.floor(Math.random() * ORDER_CTA_VARIANTS.length)]
+}
 // Вариации того же вопроса — используются при отправке (см. ORDER_CTA_VARIANTS
 // ниже); ORDER_CTA_TEXT остаётся как канонический текст для обратной
 // совместимости, но выбор варианта и проверка «это был CTA?» идут по
@@ -298,10 +334,9 @@ export const ORDER_CTA_VARIANTS = [
   'Готовы оформить доставку?',
 ]
 
-// Дожим, если клиент молчит 1 час после ЛЮБОГО последнего ответа бота (в
-// т.ч. после ORDER_CTA_TEXT — но и на любом другом этапе диалога), как
-// idle_nudge в Telegram-боте (__main__.py), только порог 1 час вместо 30
-// минут. Несколько вариантов текста, а не один и тот же — раньше повторный
+// Дожим, если клиент молчит 30 минут после ЛЮБОГО последнего ответа бота
+// (в т.ч. после CTA-follow-up — но и на любом другом этапе диалога), как
+// idle_nudge в Telegram-боте (__main__.py). Несколько вариантов текста, а не один и тот же — раньше повторный
 // дожим (после того, как клиент снова замолчал уже после ответа на первый)
 // слал буквально то же самое сообщение; ротация по номеру попытки убирает
 // повтор. Если клиент вообще не ответил на дожим 24 часа — вторая волна не
@@ -1026,7 +1061,7 @@ async function generateAndSendGreenApiReply(
 
   const { data: rows } = await supabase
     .from('amocrm_messages')
-    .select('sender, text, id')
+    .select('sender, text, id, amo_message_id')
     .eq('chat_id', input.chatId)
     .order('created_at', { ascending: false })
     .order('id', { ascending: false })
@@ -1034,6 +1069,11 @@ async function generateAndSendGreenApiReply(
   const history = (rows ?? [])
     .reverse()
     .slice(0, -batchSize)
+    // ga:claim:* — служебные защёлки и якорь follow-up, клиент их не видел:
+    // в истории для ИИ и в «последнем сообщении бота» им не место (иначе
+    // после блока результата последним сообщением бота считался бы якорь,
+    // и «давайте» клиента не опознавалось как согласие оформить).
+    .filter((row) => !String((row as { amo_message_id: string }).amo_message_id).startsWith('ga:claim:'))
     .filter((row) => !LINK_IN_MESSAGE.test((row as { text: string }).text))
     .map((row) => ({
       role: (row as { sender: string }).sender === 'client' ? 'user' : 'assistant',
@@ -1047,6 +1087,7 @@ async function generateAndSendGreenApiReply(
   // записанными файлами (assets/voice в боте), текст остаётся тем же.
   const voiceReplies = new Set<string>()
   let sendPaymentQr = false
+  let needsFollowupAnchor = false
   let stageAction: string | null = null
   const priceKnown = historyText.includes('цена') || historyText.includes('сом')
   const looksLikeLocationAnswer = shouldSendResultsAfterLocation(input.text, historyText)
@@ -1066,7 +1107,6 @@ async function generateAndSendGreenApiReply(
   const resultsBlockAllowed = wantsResultsBlock ? await claimResultsBlock(supabase, input.chatId) : false
 
   const lastBotMessage = [...history].reverse().find((item) => item.role === 'assistant')?.content ?? ''
-  const acceptedOrderCta = AFFIRMATIVE_ONLY.test(input.text) && ORDER_CTA_MARKER.test(lastBotMessage)
 
   // Тексты, редактируемые из CRM («Настройки бота» → «Шаблоны») — пустая
   // строка в настройках означает «не переопределено», используем дефолт.
@@ -1080,6 +1120,14 @@ async function generateAndSendGreenApiReply(
     complaintPrompt: botConfig.templates.complaintPrompt || pickVariant(COMPLAINT_PROMPT_VARIANTS),
     cooperationReply: botConfig.templates.cooperationReply || pickVariant(COOPERATION_REPLY_VARIANTS),
   }
+
+  // Согласие оформить: строгое «да/давайте» после любого вопроса-CTA, либо
+  // мягкое (см. isLooseAffirmative) после CTA или сразу после блока
+  // результата — голосовое «эффект с первого раза» и есть подводка к
+  // заказу, «хочу»/«давайте» на него — согласие, а не тема для ИИ.
+  const afterOrderPrompt = ORDER_CTA_MARKER.test(lastBotMessage) || lastBotMessage === T.firstUseEffect
+  const acceptedOrderCta =
+    afterOrderPrompt && (AFFIRMATIVE_ONLY.test(input.text) || isLooseAffirmative(input.text))
 
   // Свои правила из настроек CRM — проверяются раньше встроенного скрипта:
   // владелец может перекрыть штатное поведение своим условием, не трогая код.
@@ -1149,10 +1197,12 @@ async function generateAndSendGreenApiReply(
     sendPaymentQr = true
     stageAction = 'order'
   } else if (deliveryTemplate && priceKnown && resultsBlockAllowed) {
-    // CTA сразу в конце блока — доставка -> фото (в цикле отправки ниже)
-    // -> голосовое -> «вам оформить доставку?», без ожидания.
-    replies.push(deliveryTemplate, T.firstUseEffect, ORDER_CTA_VARIANTS[Math.floor(Math.random() * ORDER_CTA_VARIANTS.length)])
+    // Доставка -> фото (в цикле отправки ниже) -> голосовое. CTA «вам
+    // оформить доставку?» НЕ сразу: через 5 минут молчания клиента его шлёт
+    // followup-scheduler.ts по якорю (см. FOLLOWUP_ANCHOR_TEXT).
+    replies.push(deliveryTemplate, T.firstUseEffect)
     voiceReplies.add(T.firstUseEffect)
+    needsFollowupAnchor = true
   }
 
   if (replies.length === 0) {
@@ -1176,6 +1226,16 @@ async function generateAndSendGreenApiReply(
         .filter(Boolean)
     )
     if (replies.length === 0) return
+    // Живой баг: ИИ сам «оформлял заказ» — сочинял свой чек-лист (просил
+    // адрес/чек/реквизиты в произвольной форме) без QR, хотя на это есть
+    // утверждённый шаблон. Если модель явно перешла к оформлению — шлём
+    // шаблон и QR вместо её текста.
+    if (replies.some((part) => AI_IMPROVISED_CHECKLIST.test(part))) {
+      replies.length = 0
+      replies.push(T.orderChecklist)
+      sendPaymentQr = true
+      stageAction = 'order'
+    }
   }
 
   const chatId = `${input.chatId}@c.us`
@@ -1301,6 +1361,20 @@ async function generateAndSendGreenApiReply(
     if (index < replies.length - 1) {
       await new Promise((resolve) => setTimeout(resolve, 900 + Math.random() * 500))
     }
+  }
+
+  if (needsFollowupAnchor) {
+    // Якорь только в БД, клиенту не уходит: followup-scheduler.ts раз в
+    // минуту ищет чаты, где он — последняя запись и прошло 5+ минут тишины,
+    // и шлёт CTA. Любое сообщение клиента сдвигает якорь — CTA не уходит.
+    const { error: anchorError } = await supabase.from('amocrm_messages').upsert({
+      amo_message_id: `${FOLLOWUP_ANCHOR_ID_PREFIX}:${input.providerMessageId}`,
+      chat_id: input.chatId,
+      direction: 'out',
+      sender: 'bot',
+      text: FOLLOWUP_ANCHOR_TEXT,
+    }, { onConflict: 'amo_message_id', ignoreDuplicates: true })
+    if (anchorError) console.error('greenapi bot-reply: followup anchor failed', anchorError.message)
   }
 
   if (stageAction && !opts.dryRun) {

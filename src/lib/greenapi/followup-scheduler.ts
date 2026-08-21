@@ -1,14 +1,19 @@
-// Дожим клиента, если он молчит — две волны, как в обычной рассылке:
-// 1. Через 1 час после ЛЮБОГО последнего ответа бота (на любом этапе
-//    диалога) — обычный дожим, вариант ротируется (see bot-reply.ts:
-//    IDLE_NUDGE_VARIANTS/nextIdleNudgeReply), не повторяет один и тот же
-//    текст при разных периодах молчания в одном чате.
+// Дожим клиента, если он молчит — три шага, как в обычной рассылке:
+// 0. CTA «вам оформить доставку?» через 5 минут молчания ПОСЛЕ блока
+//    результата (доставка → фото → голосовое). В конце блока bot-reply.ts
+//    пишет в историю служебный якорь FOLLOWUP_ANCHOR_TEXT; если он так и
+//    остался последней записью чата — шлём CTA. Ответил клиент — якорь
+//    сдвинут, CTA не уходит.
+// 1. Через 30 минут после ЛЮБОГО последнего ответа бота (на любом этапе
+//    диалога, в т.ч. после CTA) — обычный дожим, вариант ротируется (see
+//    bot-reply.ts: IDLE_NUDGE_VARIANTS/nextIdleNudgeReply), не повторяет
+//    один и тот же текст при разных периодах молчания в одном чате.
 // 2. Если клиент так и не ответил ещё 24 часа ПОСЛЕ этого дожима — вторая
 //    волна сразу предлагает скидку по лестнице (13%→20%), не повторяет
 //    первый дожим.
 // Если последним бот предложил скидку 13% (по любому поводу — прямая
-// просьба, отказ на CTA) и клиент молчит 1 час — дожим сразу эскалирует до
-// 20%, не дожидаясь второй волны.
+// просьба, отказ на CTA) и клиент молчит 30 минут — дожим сразу эскалирует
+// до 20%, не дожидаясь второй волны.
 //
 // Как только клиент отвечает — цепочка сбрасывается сама: последняя
 // запись в чате становится его сообщением, и до следующего ответа бота
@@ -21,12 +26,20 @@ import { createAdminClient } from '@/lib/supabase/admin'
 import { sendGreenApiMessage } from '@/lib/greenapi/client'
 import {
   canSendGreenApiBotReply,
+  FOLLOWUP_ANCHOR_ID_PREFIX,
+  FOLLOWUP_CTA_ID_PREFIX,
   IDLE_NUDGE_ID_PREFIX,
   nextIdleNudgeReply,
+  pickOrderCta,
 } from '@/lib/greenapi/bot-reply'
 
 const TICK_INTERVAL_MS = 60_000
-const NUDGE_SILENCE_MS = 60 * 60_000
+const FOLLOWUP_CTA_SILENCE_MS = 5 * 60_000
+// Якорь старше суток не обрабатываем: это «хвост» от чатов, где отправка
+// была невозможна (менеджер в чате, бот выключен) — CTA спустя сутки после
+// голосового уже не к месту.
+const FOLLOWUP_CTA_MAX_AGE_MS = 24 * 3600_000
+const NUDGE_SILENCE_MS = 30 * 60_000
 const SECOND_WAVE_SILENCE_MS = 24 * 3600_000
 
 let started = false
@@ -73,9 +86,10 @@ async function sendStageReply(
 
 /**
  * Клиент молчит после последнего реального ответа бота, на любом этапе
- * диалога. Служебные маркеры (ga:claim:*) в счёт не идут — это не реальный
- * ответ клиенту, а внутренняя защёлка. Порог зависит от того, было ли
- * последнее сообщение уже дожимом (24 часа) или обычным ответом (1 час).
+ * диалога. Служебные маркеры (ga:claim:*, в т.ч. якорь follow-up) в счёт не
+ * идут — это не реальный ответ клиенту, а внутренняя защёлка. Порог зависит
+ * от того, было ли последнее сообщение уже дожимом (24 часа) или обычным
+ * ответом (30 минут).
  */
 async function processIdleNudgeStage(supabase: ReturnType<typeof createAdminClient>): Promise<void> {
   const cutoff = new Date(Date.now() - NUDGE_SILENCE_MS).toISOString()
@@ -114,7 +128,41 @@ async function processIdleNudgeStage(supabase: ReturnType<typeof createAdminClie
   }
 }
 
+/**
+ * Шаг 0: CTA через 5 минут после блока результата. Ищем якоря
+ * (ga:claim:followup:*) старше 5 минут и моложе суток; CTA уходит, только
+ * если якорь всё ещё последняя запись чата — то есть ни клиент, ни бот с
+ * тех пор ничего не писали. Повтор исключён: id CTA привязан к id якоря, а
+ * после отправки последней записью становится сам CTA.
+ */
+async function processFollowupCtaStage(supabase: ReturnType<typeof createAdminClient>): Promise<void> {
+  const now = Date.now()
+  const { data: anchors } = await supabase
+    .from('amocrm_messages')
+    .select('id, chat_id')
+    .like('amo_message_id', `${FOLLOWUP_ANCHOR_ID_PREFIX}:%`)
+    .gte('created_at', new Date(now - FOLLOWUP_CTA_MAX_AGE_MS).toISOString())
+    .lte('created_at', new Date(now - FOLLOWUP_CTA_SILENCE_MS).toISOString())
+    .order('created_at', { ascending: true })
+    .limit(200)
+  if (!anchors?.length) return
+
+  for (const anchor of anchors as { id: number; chat_id: string }[]) {
+    const { data: last } = await supabase
+      .from('amocrm_messages')
+      .select('id')
+      .eq('chat_id', anchor.chat_id)
+      .order('created_at', { ascending: false })
+      .order('id', { ascending: false })
+      .limit(1)
+      .maybeSingle()
+    if ((last as { id: number } | null)?.id !== anchor.id) continue // клиент ответил или бот уже писал
+    await sendStageReply(supabase, anchor.chat_id, anchor.id, pickOrderCta(), FOLLOWUP_CTA_ID_PREFIX)
+  }
+}
+
 async function runOnce(): Promise<void> {
   const supabase = createAdminClient()
+  await processFollowupCtaStage(supabase)
   await processIdleNudgeStage(supabase)
 }
