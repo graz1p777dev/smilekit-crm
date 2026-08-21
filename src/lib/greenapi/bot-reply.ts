@@ -217,7 +217,8 @@ const REGIONAL_DELIVERY_TEMPLATE = 'Да, у нас есть доставка ч
 const DELIVERY_TEMPLATES: [RegExp, string][] = [
   // Префиксом, а не целым словом (как остальные города ниже) — живой баг:
   // опечатка «бишкеа» не совпадала с «бишкек» и уходила в общий шаблон
-  // «Ылдам Экспресс» вместо 30-минутной доставки по Яндексу.
+  // «Ылдам Экспресс» вместо 30-минутной доставки по Яндексу. Матчится по
+  // normalized ниже, где щ уже сложено в ш — «бищкека» тоже совпадает.
   [/бишке|токмо/, 'Отлично, у нас есть доставка через Яндекс, за 30 минут доставим'],
   [/\bош\b|джалал-?абад|каракол|нарын|талас|баткен|балыкч|манас/, REGIONAL_DELIVERY_TEMPLATE],
   [/алмат/, 'Отлично, доставим в Алматы — ориентировочно в течение 30 минут'],
@@ -230,7 +231,11 @@ const DELIVERY_TEMPLATES: [RegExp, string][] = [
 ]
 
 function deliveryTemplateForCity(text: string): string | null {
-  const normalized = text.toLowerCase()
+  // Живой баг: опечатка «бищкека» (щ вместо ш) не совпадала с «бишке» —
+  // клиент выпадал из готового шаблона доставки в свободный ответ ИИ.
+  // Складываем щ→ш только для матчинга, в тексты клиента и ответы это
+  // не идёт.
+  const normalized = text.toLowerCase().replace(/щ/g, 'ш')
   for (const [pattern, template] of DELIVERY_TEMPLATES) {
     if (pattern.test(normalized)) return template
   }
@@ -1170,7 +1175,7 @@ async function generateAndSendGreenApiReply(
   } else if (DELIVERY_COST_QUESTION.test(input.text)) {
     const cityTemplate = deliveryTemplateForCity(input.text) ?? deliveryTemplateForCity(historyText)
     if (cityTemplate) {
-      const isBishkekOrTokmok = /бишке|токмо/.test(input.text) || /бишке|токмо/.test(historyText)
+      const isBishkekOrTokmok = /бишке|токмо/.test(input.text.replace(/щ/g, 'ш')) || /бишке|токмо/.test(historyText)
       replies.push(cityTemplate, isBishkekOrTokmok ? DELIVERY_PAYMENT_BISHKEK : DELIVERY_PAYMENT_REGIONS)
     } else {
       replies.push(CITY_QUESTION)
