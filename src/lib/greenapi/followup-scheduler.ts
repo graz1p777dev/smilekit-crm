@@ -50,13 +50,24 @@ const NUDGE_SILENCE_MS = 30 * 60_000
 const SECOND_WAVE_SILENCE_MS = 24 * 3600_000
 
 let started = false
+// Живой баг: без этого флага тик, который не успел уложиться в TICK_INTERVAL_MS
+// (до 200 чатов последовательных await на БД + Green API), пересекался со
+// следующим — оба находили один и тот же устаревший чат почти одновременно
+// и оба слали сообщение до того, как первый успевал зарезервировать строку
+// в БД. .select() в sendStageReply исключает дубль уже после гонки, а этот
+// флаг убирает саму гонку.
+let running = false
 
 export function startFollowupScheduler(): void {
   if (started) return
   started = true
   console.log('greenapi followup scheduler started')
   const tick = () => {
-    void runOnce().catch((error) => console.error('greenapi followup scheduler failed', error))
+    if (running) return
+    running = true
+    void runOnce()
+      .catch((error) => console.error('greenapi followup scheduler failed', error))
+      .finally(() => { running = false })
   }
   tick()
   setInterval(tick, TICK_INTERVAL_MS).unref?.()
@@ -72,17 +83,24 @@ async function sendStageReply(
   if (!(await canSendGreenApiBotReply(supabase, chatId))) return
 
   const botMessageId = `${messageIdPrefix}:${lastId}`
-  const { error: reserveError } = await supabase.from('amocrm_messages').upsert({
+  // Живой баг: upsert с ignoreDuplicates молча не вставляет строку при
+  // повторе, но отправка ниже шла безусловно — если два тика планировщика
+  // (не защищённых от наложения, см. startFollowupScheduler) находили один
+  // и тот же устаревший чат, оба слали сообщение клиенту дважды, хотя в БД
+  // оставалась одна строка. .select() — тот же приём, что claimOnce/
+  // claimResultsBlock в bot-reply.ts: без вставленной строки не отправляем.
+  const { data: reserved, error: reserveError } = await supabase.from('amocrm_messages').upsert({
     amo_message_id: botMessageId,
     chat_id: chatId,
     direction: 'out',
     sender: 'bot',
     text: replyText,
-  }, { onConflict: 'amo_message_id', ignoreDuplicates: true })
+  }, { onConflict: 'amo_message_id', ignoreDuplicates: true }).select('id')
   if (reserveError) {
     console.error('greenapi followup scheduler: reserve failed', reserveError.message)
     return
   }
+  if (!reserved?.length) return // уже отправлено другим тиком
   try {
     await sendGreenApiMessage(`${chatId}@c.us`, replyText)
   } catch (error) {
@@ -100,13 +118,19 @@ async function sendStageReply(
  */
 async function processIdleNudgeStage(supabase: ReturnType<typeof createAdminClient>): Promise<void> {
   const cutoff = new Date(Date.now() - NUDGE_SILENCE_MS).toISOString()
+  // Живой баг: без верхней границы и с ascending этот запрос по мере роста
+  // истории всё чаще упирается в лимит 200 записями из давно завершённых
+  // чатов (клиент там уже ответил, lastRow.sender !== 'bot' — они просто
+  // пропускаются циклом ниже), и до чатов, которые стали неактивны только
+  // что, тик может вообще не доходить. descending отдаёт приоритет самым
+  // свежим кандидатам — тем, кому дожим нужнее всего прямо сейчас.
   const { data: candidates } = await supabase
     .from('amocrm_messages')
     .select('chat_id')
     .eq('sender', 'bot')
     .not('amo_message_id', 'like', 'ga:claim:%')
     .lte('created_at', cutoff)
-    .order('created_at', { ascending: true })
+    .order('created_at', { ascending: false })
     .limit(200)
   if (!candidates?.length) return
 

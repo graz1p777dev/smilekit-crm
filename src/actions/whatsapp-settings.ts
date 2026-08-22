@@ -10,7 +10,7 @@ import { createClient } from '@/lib/supabase/server'
 import { getWhatsappBotConfig, saveWhatsappBotConfig, type WhatsappBotConfig } from '@/lib/greenapi/config'
 import { listGreenApiGroups, type GreenApiGroup } from '@/lib/greenapi/client'
 
-async function requireOwner(): Promise<boolean> {
+export async function requireOwner(): Promise<boolean> {
   const supabase = await createClient()
   const { data: { session } } = await supabase.auth.getSession()
   if (!session) return false

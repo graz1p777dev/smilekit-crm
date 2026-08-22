@@ -89,10 +89,45 @@ export async function saveWhatsappBotConfig(patch: Partial<WhatsappBotConfig>): 
   return { success: true }
 }
 
-/** Уменьшает остаток на quantity штук; не даёт уйти в минус. */
+/**
+ * Уменьшает остаток на quantity штук; не даёт уйти в минус.
+ *
+ * Живой баг: раньше это было обычное read-modify-write через
+ * getWhatsappBotConfig/saveWhatsappBotConfig (оба независимо читают и
+ * перезаписывают весь settings.extra) — два чека, подтвердившихся почти
+ * одновременно, читали один и тот же остаток и оба писали `current - 1`,
+ * теряя одно списание. Теперь пишем через compare-and-swap: UPDATE проходит,
+ * только если extra с момента чтения не менялся (.eq('extra', ...)); если
+ * кто-то успел вклиниться — не считаем это ошибкой, а перечитываем и
+ * пробуем снова.
+ */
 export async function decrementStock(quantity: number): Promise<void> {
-  const config = await getWhatsappBotConfig()
-  const current = config.stock.quantity
-  if (current === null) return // товароучёт не включён — ничего не считаем
-  await saveWhatsappBotConfig({ stock: { quantity: Math.max(0, current - quantity) } })
+  const admin = createAdminClient()
+  for (let attempt = 0; attempt < 5; attempt++) {
+    const { data: row } = await admin.from('settings').select('id, extra').limit(1).maybeSingle()
+    if (!row) return
+    const { id, extra: rawExtra } = row as { id: string; extra: Record<string, unknown> | null }
+    const extra = rawExtra ?? {}
+    const current = (extra[SETTINGS_KEY] as WhatsappBotConfig | undefined) ?? DEFAULTS
+    const quantityNow = current.stock.quantity
+    if (quantityNow === null) return // товароучёт не включён — ничего не считаем
+    const nextExtra = {
+      ...extra,
+      [SETTINGS_KEY]: { ...current, stock: { quantity: Math.max(0, quantityNow - quantity) } },
+    }
+    const { data: updated, error } = await admin
+      .from('settings')
+      .update({ extra: nextExtra })
+      .eq('id', id)
+      .eq('extra', rawExtra as never)
+      .select('id')
+    if (error) {
+      console.error('greenapi config: decrementStock failed', error.message)
+      return
+    }
+    if (updated?.length) return // прошло без конфликта
+    // extra изменился между чтением и записью (параллельный чек или правка
+    // настроек) — перечитываем актуальное состояние и пробуем ещё раз.
+  }
+  console.error('greenapi config: decrementStock gave up after 5 attempts (contention)')
 }

@@ -72,9 +72,13 @@ async function verifyGreenApiReceipt(mediaUrl: string, referenceDate: string): P
   if (!bytes.length || bytes.length > MAX_RECEIPT_BYTES) throw new Error('greenapi receipt: invalid size')
   const mime = response.headers.get('content-type') ?? 'image/jpeg'
   const isPdf = mime.includes('pdf')
+  // Живой баг: файлы до 20 МБ (base64 ~27 МБ payload) на анализ vision-моделью
+  // могут не уложиться в дефолтные 15 с — HTTP-таймаут ошибочно читался как
+  // "не смогли проверить" вместо честного времени на обработку.
   const result = await smilekitBotFetch<ReceiptCheck>('/internal/verify_receipt', {
     method: 'POST',
     body: { imageBase64: bytes.toString('base64'), today: referenceDate, kind: isPdf ? 'pdf' : 'image', mime },
+    timeoutMs: 45_000,
   })
   return result.ok ? result.data : null
 }
@@ -126,9 +130,12 @@ async function transcribeGreenApiVoice(input: InboundGreenApiMessage): Promise<s
   const audio = Buffer.from(await response.arrayBuffer())
   if (!audio.length || audio.length > MAX_VOICE_BYTES) throw new Error('greenapi voice download: invalid size')
   const extension = new URL(input.mediaUrl).pathname.match(/\.([a-z0-9]{2,5})$/i)?.[1] ?? 'ogg'
+  // Тот же живой баг, что у verify_receipt — длинное голосовое (до 20 МБ)
+  // на распознавание речи может не уложиться в дефолтные 15 с.
   const result = await smilekitBotFetch<{ transcript: string }>('/internal/transcribe', {
     method: 'POST',
     body: { audioBase64: audio.toString('base64'), filename: `voice.${extension}` },
+    timeoutMs: 45_000,
   })
   return result.ok ? result.data.transcript.trim() || null : null
 }
@@ -151,8 +158,14 @@ const KYRGYZ_PRODUCT_INFO =
   'Таасири биринчи колдонуудан кийин эле байкалат.\n\n' +
   'Кайсы шаардан болосуз? Жеткирүү боюнча айтып берем.'
 
+// "тиш" (кырг. "зуб") — единственный маркер здесь короткий настолько, что
+// подстрокой ловит русские "тишина"/"тише"/"потише"/"затишье"; тогда
+// русскоязычному клиенту уходила явная инструкция ИИ отвечать целиком на
+// кыргызском (см. использование isKyrgyz ниже). Границы слова —
+// (?<![a-zа-яё0-9_])/(?![a-zа-яё0-9_]), а не \b: в JS \b строится на ASCII
+// \w и с кириллицей не работает вообще (см. AFFIRMATIVE_NEGATION выше).
 const KYRGYZ_MARKERS =
-  /баа|наркы|канча|кайсы|шаар|жеткир|тиш|агарт|колдон|куту|барбы|алам|керек|рахмат|болобу|кантип|эмне/i
+  /баа|наркы|канча|кайсы|шаар|жеткир|(?<![a-zа-яё0-9_])тиш(?![a-zа-яё0-9_])|агарт|колдон|куту|барбы|алам|керек|рахмат|болобу|кантип|эмне/i
 const KYRGYZ_PRICE_INTENT = /баа|наркы|канча\s*(?:сом|турат)/i
 const LINK_IN_MESSAGE = /(?:https?:\/\/|www\.)\S+/i
 const GREETING_ONLY = /^\s*(?:улыбка|здра(?:в)?ствуйте|здра(?:в)?ствуй|привет|добрый\s+(?:день|вечер|утро))[!,.?\s😊👋]*$/iu
@@ -934,7 +947,19 @@ async function processInboundGreenApiMessageNow(
 ): Promise<void> {
   const supabase = createAdminClient()
 
-  const transcript = await transcribeGreenApiVoice(input)
+  // Живой баг: transcribeGreenApiVoice кидает исключение при сбое скачивания
+  // или слишком большом файле (не возвращает null, как для просто пустой
+  // расшифровки) — без try/catch это долетало необработанным отклонением
+  // промиса до webhook-роута (там `void processInboundGreenApiMessage(...)`
+  // без .catch), и клиент оставался вообще без ответа, без видимого следа
+  // в логах, привязанного к конкретному сообщению.
+  let transcript: string | null
+  try {
+    transcript = await transcribeGreenApiVoice(input)
+  } catch (error) {
+    console.error('greenapi bot-reply: voice download/transcription threw', input.providerMessageId, error)
+    return
+  }
   if (VOICE_TYPES.has(input.messageType ?? '') && !transcript) {
     console.error('greenapi bot-reply: voice transcription failed', input.providerMessageId)
     return

@@ -22,6 +22,7 @@ import {
   processInboundGreenApiMessage,
 } from '@/lib/greenapi/bot-reply'
 import { DEFAULT_DOUBT_RESULT_REPLY, DEFAULT_FIRST_USE_EFFECT } from '@/lib/greenapi/default-templates'
+import { requireOwner } from '@/actions/whatsapp-settings'
 
 export interface WhatsappLabMessage {
   sender: 'client' | 'bot'
@@ -70,6 +71,11 @@ export async function sendWhatsappLabMessage(
   chatId: string | undefined,
   text: string
 ): Promise<SendWhatsappLabMessageResult> {
+  // Живой баг: этот сценарий гоняет РЕАЛЬНЫЙ пайплайн (обращения к ИИ,
+  // реальные расходы), а проверки прав тут не было вообще — в отличие от
+  // /dashboard/whatsapp-settings, где владелец редактирует те же промпты.
+  // Любой залогиненный сотрудник (не только owner) мог дёргать эту функцию.
+  if (!(await requireOwner())) return { success: false, error: 'Доступно только владельцу' }
   const trimmed = text.trim()
   if (!trimmed) return { success: false, error: 'Введите сообщение' }
 
@@ -102,6 +108,7 @@ export async function sendWhatsappLabMessage(
  * повторяется, а если последним уже был дожим без ответа — сразу скидка.
  */
 export async function triggerWhatsappLabIdleNudge(chatId: string): Promise<SendWhatsappLabMessageResult> {
+  if (!(await requireOwner())) return { success: false, error: 'Доступно только владельцу' }
   const supabase = createAdminClient()
   const { data: last } = await supabase
     .from('amocrm_messages')

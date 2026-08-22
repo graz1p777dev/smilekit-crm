@@ -33,7 +33,7 @@ export function isSmilekitBotConfigured(): boolean {
  */
 export async function smilekitBotFetch<T>(
   path: string,
-  init: { method?: string; body?: unknown } = {}
+  init: { method?: string; body?: unknown; timeoutMs?: number } = {}
 ): Promise<SmilekitBotApiResult<T>> {
   const base = baseUrl()
   const token = process.env.SMILEKIT_BOT_INTERNAL_TOKEN
@@ -59,7 +59,7 @@ export async function smilekitBotFetch<T>(
       headers,
       body,
       cache: 'no-store',
-      signal: AbortSignal.timeout(DEFAULT_TIMEOUT_MS),
+      signal: AbortSignal.timeout(init.timeoutMs ?? DEFAULT_TIMEOUT_MS),
     })
   } catch {
     return { ok: false, status: 502, error: 'Бот недоступен — проверьте, что smilekit-bot запущен' }
