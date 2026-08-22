@@ -11,6 +11,8 @@ interface Props {
   employees: Map<string, DealEmployee>
   stageColor: string
   dragging: boolean
+  /** Клиент под оформлением заказа или уже оформил — подпись и красная подсветка. */
+  urgentLabel: string | null
   onDragStart: () => void
   onDragEnd: () => void
   onClick: () => void
@@ -44,6 +46,7 @@ export default function DealCard({
   employees,
   stageColor,
   dragging,
+  urgentLabel,
   onDragStart,
   onDragEnd,
   onClick,
@@ -66,11 +69,15 @@ export default function DealCard({
       onDragEnd={onDragEnd}
       onClick={onClick}
       className={cn(
-        'group relative cursor-pointer select-none rounded-xl border border-gray-100 bg-white p-3 shadow-sm',
-        'transition-all duration-150 hover:-translate-y-0.5 hover:shadow-md hover:border-gray-200',
+        'group relative cursor-pointer select-none rounded-xl border bg-white p-3 shadow-sm',
+        'transition-all duration-150 hover:-translate-y-0.5 hover:shadow-md',
+        urgentLabel ? 'border-[var(--bad)] hover:border-[var(--bad)]' : 'border-gray-100 hover:border-gray-200',
         dragging && 'opacity-40 rotate-[1.5deg]'
       )}
-      style={{ borderLeft: `3px solid ${stageColor}` }}
+      style={{
+        borderLeft: `3px solid ${stageColor}`,
+        ...(urgentLabel && { background: 'var(--bad-soft)', boxShadow: '0 0 0 1px var(--bad)' }),
+      }}
     >
       <div
         className="absolute right-1.5 top-2.5 text-gray-300 opacity-0 transition-opacity group-hover:opacity-100"
@@ -78,6 +85,15 @@ export default function DealCard({
       >
         <GripVertical size={14} />
       </div>
+
+      {urgentLabel && (
+        <span
+          className="mb-1.5 inline-flex items-center rounded-md px-1.5 py-0.5 text-[10px] font-bold uppercase tracking-wide text-white"
+          style={{ background: 'var(--bad)' }}
+        >
+          {urgentLabel}
+        </span>
+      )}
 
       <p className="pr-4 text-[13px] font-semibold leading-snug text-gray-800 line-clamp-2">
         {deal.title}

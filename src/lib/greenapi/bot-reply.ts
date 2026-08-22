@@ -1204,6 +1204,7 @@ async function generateAndSendGreenApiReply(
     // за реквизитами. Green API картинки шлёт, так что ждать «подтверждения»
     // перед выдачей реквизитов больше не нужно.
     replies.push(T.orderChecklist)
+    voiceReplies.add(T.orderChecklist)
     sendPaymentQr = true
     stageAction = 'order'
   } else if (deliveryTemplate && priceKnown && resultsBlockAllowed) {
@@ -1243,6 +1244,7 @@ async function generateAndSendGreenApiReply(
     if (replies.some((part) => AI_IMPROVISED_CHECKLIST.test(part))) {
       replies.length = 0
       replies.push(T.orderChecklist)
+      voiceReplies.add(T.orderChecklist)
       sendPaymentQr = true
       stageAction = 'order'
     }
@@ -1271,7 +1273,10 @@ async function generateAndSendGreenApiReply(
       // Green API рендерит голосовой «пузырь» только для .ogg/Opus, поэтому
       // при любой ошибке откатываемся на текст, чтобы клиент не остался без
       // ответа.
-      const voiceName = text === T.firstUseEffect ? 'first_use_effect.ogg' : 'not_scam.ogg'
+      const voiceName =
+        text === T.firstUseEffect ? 'first_use_effect.ogg'
+        : text === T.orderChecklist ? 'order_checklist.ogg'
+        : 'not_scam.ogg'
       if (opts.dryRun) {
         // Тестовый chat_id не существует в WhatsApp — реальный вызов Green
         // API только тратил бы время и падал. Запись в amocrm_messages выше

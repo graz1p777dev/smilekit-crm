@@ -44,6 +44,7 @@ export default function DealsBoard({ initialStages, initialDeals, employees, me,
   const [dragId, setDragId] = useState<string | null>(null)
   const [dragOverStage, setDragOverStage] = useState<string | null>(null)
   const [search, setSearch] = useState('')
+  const [employeeFilter, setEmployeeFilter] = useState<string>('all')
   const [modal, setModal] = useState<ModalState>({
     open: false, deal: null, isNew: false, stageId: '',
   })
@@ -136,16 +137,31 @@ export default function DealsBoard({ initialStages, initialDeals, employees, me,
     }
   }, [refresh])
 
+  // Сделки уже переданы в оформление заказа — этот же этап отмечает
+  // ACTION_STAGE_NAME['order'] в src/lib/deals/advance-stage.ts, здесь имя
+  // этапа используется тем же способом, чтобы не заводить отдельный флаг.
+  const orderStageId = useMemo(
+    () => stages.find((s) => s.name === 'Передан менеджеру')?.id ?? null,
+    [stages]
+  )
+
   // ─── Фильтрация и раскладка по колонкам ────────────────────────────────────
   const filtered = useMemo(() => {
     const q = search.trim().toLowerCase()
-    if (!q) return deals
-    return deals.filter((d) =>
-      `${d.title} ${d.customer_name ?? ''} ${d.customer_phone ?? ''} ${d.customer_username ?? ''} ${d.city ?? ''} ${d.address ?? ''}`
+    return deals.filter((d) => {
+      if (employeeFilter !== 'all') {
+        if (employeeFilter === 'none') {
+          if (d.responsible_employee_id) return false
+        } else if (d.responsible_employee_id !== employeeFilter) {
+          return false
+        }
+      }
+      if (!q) return true
+      return `${d.title} ${d.customer_name ?? ''} ${d.customer_phone ?? ''} ${d.customer_username ?? ''} ${d.city ?? ''} ${d.address ?? ''}`
         .toLowerCase()
         .includes(q)
-    )
-  }, [deals, search])
+    })
+  }, [deals, search, employeeFilter])
 
   const columns = useMemo(() => {
     const map = new Map<string, Deal[]>()
@@ -205,6 +221,18 @@ export default function DealsBoard({ initialStages, initialDeals, employees, me,
 
         <div className="flex flex-wrap items-center gap-2">
           <AmoBotToggle />
+          <select
+            value={employeeFilter}
+            onChange={(e) => setEmployeeFilter(e.target.value)}
+            className="h-9 rounded-xl border border-gray-200 bg-white/80 px-3 text-[13px] text-gray-600 outline-none transition-colors focus:border-gray-300"
+            title="Фильтр по ответственному"
+          >
+            <option value="all">Все сотрудники</option>
+            <option value="none">Без ответственного</option>
+            {employees.map((e) => (
+              <option key={e.id} value={e.id}>{e.name}</option>
+            ))}
+          </select>
           <div className="relative">
             <Search size={15} className="absolute left-2.5 top-1/2 -translate-y-1/2 text-gray-400" />
             <input
@@ -300,6 +328,16 @@ export default function DealsBoard({ initialStages, initialDeals, employees, me,
                     employees={employeeMap}
                     stageColor={stage.color}
                     dragging={dragId === deal.id}
+                    // Под оформлением (этап «Передан менеджеру») или уже
+                    // оформлен (status won) — оба требуют внимания менеджера,
+                    // подсвечиваются одинаково ярко, но с разной подписью.
+                    urgentLabel={
+                      deal.status === 'won'
+                        ? 'Оформлено'
+                        : deal.stage_id === orderStageId
+                          ? 'Оформляет'
+                          : null
+                    }
                     onDragStart={() => beginDrag(deal.id)}
                     onDragEnd={endDrag}
                     onClick={() => openEdit(deal)}
