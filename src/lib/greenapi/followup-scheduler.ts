@@ -33,6 +33,13 @@ import {
   pickOrderCta,
 } from '@/lib/greenapi/bot-reply'
 
+// Живой баг: «Лаборатория» (dryRun) пишет тестовые сообщения в ту же
+// amocrm_messages, что и реальные чаты (chat_id вида `lab-...`), и
+// планировщик пытался слать им реальные дожимы через Green API — падало на
+// каждом тике с HTTP 400 (chatId не в формате телефона). Настоящий chat_id
+// Green API — всегда только цифры (см. phoneFromGreenApiChatId).
+const isRealPhoneChatId = (chatId: string): boolean => /^\d+$/.test(chatId)
+
 const TICK_INTERVAL_MS = 60_000
 const FOLLOWUP_CTA_SILENCE_MS = 5 * 60_000
 // Якорь старше суток не обрабатываем: это «хвост» от чатов, где отправка
@@ -104,6 +111,7 @@ async function processIdleNudgeStage(supabase: ReturnType<typeof createAdminClie
   if (!candidates?.length) return
 
   const chatIds = [...new Set((candidates as { chat_id: string }[]).map((row) => row.chat_id))]
+    .filter(isRealPhoneChatId)
   for (const chatId of chatIds) {
     const { data: last } = await supabase
       .from('amocrm_messages')
@@ -148,6 +156,7 @@ async function processFollowupCtaStage(supabase: ReturnType<typeof createAdminCl
   if (!anchors?.length) return
 
   for (const anchor of anchors as { id: number; chat_id: string }[]) {
+    if (!isRealPhoneChatId(anchor.chat_id)) continue
     const { data: last } = await supabase
       .from('amocrm_messages')
       .select('id')
