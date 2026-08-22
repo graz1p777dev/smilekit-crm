@@ -1020,7 +1020,7 @@ async function processInboundGreenApiMessageNow(
   // canSendGreenApiBotReply.
   if (!isPhoneAllowedForBot(input.chatId)) return
 
-  scheduleGreenApiReply(input, opts)
+  await scheduleGreenApiReply(input, opts)
 }
 
 const DEBOUNCE_MS = 50_000
@@ -1038,10 +1038,15 @@ interface PendingGreenApiReplyBatch {
 // ответ сразу.
 const pendingGreenApiReplyBatches = new Map<string, PendingGreenApiReplyBatch>()
 
-function scheduleGreenApiReply(input: InboundGreenApiMessage, opts: GreenApiTestOptions): void {
+function scheduleGreenApiReply(input: InboundGreenApiMessage, opts: GreenApiTestOptions): Promise<void> | void {
   if (opts.dryRun) {
-    void globalGreenApiProcessingLimit(() => generateAndSendGreenApiReply(input, 1, opts))
-    return
+    // Живой баг: раньше это тоже был fire-and-forget (void ...) — вызывающий
+    // код («Лаборатория», см. sendWhatsappLabMessage) читал историю чата
+    // сразу после отправки и почти всегда успевал раньше, чем ответ бота
+    // дописывался в БД, поэтому бот «не отвечал». Возвращаем промис, чтобы
+    // dryRun-вызов реально дожидался готового ответа — ровно то, что и
+    // задумано комментарием ниже про debounce.
+    return globalGreenApiProcessingLimit(() => generateAndSendGreenApiReply(input, 1, opts))
   }
   const existing = pendingGreenApiReplyBatches.get(input.chatId)
   if (existing) clearTimeout(existing.timer)
