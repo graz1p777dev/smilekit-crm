@@ -41,6 +41,14 @@ export async function POST(request: NextRequest) {
   const providerMessageId = body.idMessage
   if (!chatId || !providerMessageId) return NextResponse.json({ ok: true }) // служебные события без сообщения
 
+  // Групповые чаты (включая свою же группу доставки, botConfig.deliveryGroupId)
+  // никогда не должны доходить до скрипта продаж: chatId группы — это
+  // `<id>@g.us`, а phoneFromGreenApiChatId снимает только `@c.us` и пропускает
+  // его как есть. Живой баг: сообщение сотрудника в группе доставки
+  // обрабатывалось как обычный клиент — заводилась фиктивная сделка и бот
+  // мог ответить рекламным текстом/чек-листом прямо в служебном чате.
+  if (chatId.endsWith('@g.us')) return NextResponse.json({ ok: true })
+
   const phone = phoneFromGreenApiChatId(chatId)
   const typeMessage = body.messageData?.typeMessage ?? ''
   const text = extractText(body)
