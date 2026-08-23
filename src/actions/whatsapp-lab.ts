@@ -20,6 +20,7 @@ import {
   IDLE_NUDGE_ID_PREFIX,
   nextDiscountOffer,
   nextIdleNudgeReply,
+  ORDER_CHECKLIST_VARIANTS,
   processInboundGreenApiMessage,
   sendResultsPhotoOnly,
 } from '@/lib/greenapi/bot-reply'
@@ -60,7 +61,14 @@ async function loadHistory(chatId: string): Promise<WhatsappLabMessage[]> {
       sender: row.sender as 'client' | 'bot',
       text: row.text,
       createdAt: row.created_at,
-      isVoice: row.text === DEFAULT_FIRST_USE_EFFECT || row.text === DEFAULT_DOUBT_RESULT_REPLY,
+      // Живой баг: чек-лист оформления рандомизирован (ORDER_CHECKLIST_VARIANTS,
+      // 4 варианта текста), а раньше isVoice сверялся только с одним дефолтным —
+      // в 3 случаях из 4 голосовое в проде уходило верно, а в «Лаборатории»
+      // показывалось как обычный текст, будто голосовое не отправилось.
+      isVoice:
+        row.text === DEFAULT_FIRST_USE_EFFECT ||
+        row.text === DEFAULT_DOUBT_RESULT_REPLY ||
+        ORDER_CHECKLIST_VARIANTS.includes(row.text),
     }))
 }
 
