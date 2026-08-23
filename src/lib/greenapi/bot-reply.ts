@@ -1413,6 +1413,13 @@ async function generateAndSendGreenApiReply(
   const chatId = `${input.chatId}@c.us`
   const mediaBaseUrl = process.env.SMILEKIT_BOT_API_URL?.replace(/\/$/, '')
 
+  // Живой баг: самое первое «Здравствуйте» уходило мгновенно — читалось как
+  // автоответчик, а не как человек. 10 секунд — та же пауза, что делает
+  // менеджер, прежде чем открыть чат и начать печатать.
+  if (replies[0] === T.productInfo) {
+    await new Promise((resolve) => setTimeout(resolve, 10_000))
+  }
+
   for (let index = 0; index < replies.length; index++) {
     if (!(await canSendGreenApiBotReply(supabase, input.chatId, opts))) return
     const text = replies[index]
@@ -1478,6 +1485,23 @@ async function generateAndSendGreenApiReply(
         } catch (error) {
           await supabase.from('amocrm_messages').delete().eq('amo_message_id', qrMessageId)
           console.error('greenapi bot-reply: qr send failed', error)
+        }
+      }
+      // Голосовое сразу после QR — пояснение по оплате поверх картинки с кодом.
+      const qrVoiceMessageId = `ga:bot:${input.providerMessageId}:qr-voice`
+      const { error: qrVoiceReserveError } = await supabase.from('amocrm_messages').upsert({
+        amo_message_id: qrVoiceMessageId,
+        chat_id: input.chatId,
+        direction: 'out',
+        sender: 'bot',
+        text: '[голосовое: пояснение по оплате]',
+      }, { onConflict: 'amo_message_id', ignoreDuplicates: true })
+      if (!qrVoiceReserveError && !opts.dryRun) {
+        try {
+          await sendGreenApiVoice(chatId, `${mediaBaseUrl}/media/voice/qr_payment_note.ogg`, 'qr_payment_note.ogg')
+        } catch (error) {
+          await supabase.from('amocrm_messages').delete().eq('amo_message_id', qrVoiceMessageId)
+          console.error('greenapi bot-reply: qr voice send failed', error)
         }
       }
     }

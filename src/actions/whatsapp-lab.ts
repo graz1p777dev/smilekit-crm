@@ -68,6 +68,7 @@ async function loadHistory(chatId: string): Promise<WhatsappLabMessage[]> {
       isVoice:
         row.text === DEFAULT_FIRST_USE_EFFECT ||
         row.text === DEFAULT_DOUBT_RESULT_REPLY ||
+        row.text === '[голосовое: пояснение по оплате]' ||
         ORDER_CHECKLIST_VARIANTS.includes(row.text),
     }))
 }
