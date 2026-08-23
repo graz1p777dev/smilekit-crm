@@ -1,9 +1,15 @@
 // Дожим клиента, если он молчит — три шага, как в обычной рассылке:
-// 0. CTA «вам оформить доставку?» через 5 минут молчания ПОСЛЕ блока
+// 0. CTA «вам оформить со скидкой?» через 5 минут молчания ПОСЛЕ блока
 //    результата (доставка → фото → голосовое). В конце блока bot-reply.ts
 //    пишет в историю служебный якорь FOLLOWUP_ANCHOR_TEXT; если он так и
-//    остался последней записью чата — шлём CTA. Ответил клиент — якорь
-//    сдвинут, CTA не уходит.
+//    остался последней записью чата — шлём этот CTA (реальная скидка 13%
+//    по той же лестнице nextDiscountOffer, а не просто вопрос про доставку —
+//    раз уж CTA сам упоминает скидку, скидку нужно реально дать). Ответил
+//    клиент — якорь сдвинут, CTA не уходит.
+// -1. Аналогично для CITY_QUESTION: если клиент 5 минут не назвал город —
+//    followup-scheduler.ts сам шлёт блок «до/после» (sendResultsPhotoOnly),
+//    без доставки и голосового (город ещё не известен). См.
+//    CITY_WAIT_ANCHOR_ID_PREFIX ниже.
 // 1. Через 30 минут после ЛЮБОГО последнего ответа бота (на любом этапе
 //    диалога, в т.ч. после CTA) — обычный дожим, вариант ротируется (see
 //    bot-reply.ts: IDLE_NUDGE_VARIANTS/nextIdleNudgeReply), не повторяет
@@ -26,11 +32,13 @@ import { createAdminClient } from '@/lib/supabase/admin'
 import { sendGreenApiMessage } from '@/lib/greenapi/client'
 import {
   canSendGreenApiBotReply,
+  CITY_WAIT_ANCHOR_ID_PREFIX,
   FOLLOWUP_ANCHOR_ID_PREFIX,
   FOLLOWUP_CTA_ID_PREFIX,
   IDLE_NUDGE_ID_PREFIX,
+  nextDiscountOffer,
   nextIdleNudgeReply,
-  pickOrderCta,
+  sendResultsPhotoOnly,
 } from '@/lib/greenapi/bot-reply'
 
 // Живой баг: «Лаборатория» (dryRun) пишет тестовые сообщения в ту же
@@ -48,6 +56,9 @@ const FOLLOWUP_CTA_SILENCE_MS = 5 * 60_000
 const FOLLOWUP_CTA_MAX_AGE_MS = 24 * 3600_000
 const NUDGE_SILENCE_MS = 30 * 60_000
 const SECOND_WAVE_SILENCE_MS = 24 * 3600_000
+// Тот же порог, что FOLLOWUP_CTA_SILENCE_MS, но для CITY_QUESTION.
+const CITY_WAIT_SILENCE_MS = 5 * 60_000
+const CITY_WAIT_MAX_AGE_MS = 24 * 3600_000
 
 let started = false
 // Живой баг: без этого флага тик, который не успел уложиться в TICK_INTERVAL_MS
@@ -165,7 +176,11 @@ async function processIdleNudgeStage(supabase: ReturnType<typeof createAdminClie
  * (ga:claim:followup:*) старше 5 минут и моложе суток; CTA уходит, только
  * если якорь всё ещё последняя запись чата — то есть ни клиент, ни бот с
  * тех пор ничего не писали. Повтор исключён: id CTA привязан к id якоря, а
- * после отправки последней записью становится сам CTA.
+ * после отправки последней записью становится сам CTA. Текст CTA — реальное
+ * предложение скидки 13% (nextDiscountOffer), а не просто вопрос про
+ * доставку: раз клиент увидит «со скидкой», скидка должна быть настоящей,
+ * а не только словами. Если клиент откажет и на неё — та же лестница,
+ * что и на прямую просьбу о скидке (см. NEGATIVE_ONLY в bot-reply.ts).
  */
 async function processFollowupCtaStage(supabase: ReturnType<typeof createAdminClient>): Promise<void> {
   const now = Date.now()
@@ -190,12 +205,50 @@ async function processFollowupCtaStage(supabase: ReturnType<typeof createAdminCl
       .limit(1)
       .maybeSingle()
     if ((last as { id: number } | null)?.id !== anchor.id) continue // клиент ответил или бот уже писал
-    await sendStageReply(supabase, anchor.chat_id, anchor.id, pickOrderCta(), FOLLOWUP_CTA_ID_PREFIX)
+    const discountCta = await nextDiscountOffer(supabase, anchor.chat_id)
+    await sendStageReply(supabase, anchor.chat_id, anchor.id, discountCta, FOLLOWUP_CTA_ID_PREFIX)
+  }
+}
+
+/**
+ * Шаг -1: клиент не назвал город 5 минут после CITY_QUESTION. Ищем якоря
+ * (ga:claim:city-wait:*) старше 5 минут и моложе суток; если якорь всё ещё
+ * последняя запись чата — присылаем блок «до/после» (sendResultsPhotoOnly,
+ * без доставки/голосового — город ещё не известен). Если клиент потом всё
+ * же назовёт город, обычный путь в bot-reply.ts дошлёт доставку и
+ * голосовое отдельно (см. deliveryVoiceAllowed).
+ */
+async function processCityWaitStage(supabase: ReturnType<typeof createAdminClient>): Promise<void> {
+  const now = Date.now()
+  const { data: anchors } = await supabase
+    .from('amocrm_messages')
+    .select('id, chat_id')
+    .like('amo_message_id', `${CITY_WAIT_ANCHOR_ID_PREFIX}:%`)
+    .gte('created_at', new Date(now - CITY_WAIT_MAX_AGE_MS).toISOString())
+    .lte('created_at', new Date(now - CITY_WAIT_SILENCE_MS).toISOString())
+    .order('created_at', { ascending: true })
+    .limit(200)
+  if (!anchors?.length) return
+
+  for (const anchor of anchors as { id: number; chat_id: string }[]) {
+    if (!isRealPhoneChatId(anchor.chat_id)) continue
+    const { data: last } = await supabase
+      .from('amocrm_messages')
+      .select('id')
+      .eq('chat_id', anchor.chat_id)
+      .order('created_at', { ascending: false })
+      .order('id', { ascending: false })
+      .limit(1)
+      .maybeSingle()
+    if ((last as { id: number } | null)?.id !== anchor.id) continue // клиент ответил или бот уже писал
+    if (!(await canSendGreenApiBotReply(supabase, anchor.chat_id))) continue
+    await sendResultsPhotoOnly(supabase, anchor.chat_id)
   }
 }
 
 async function runOnce(): Promise<void> {
   const supabase = createAdminClient()
+  await processCityWaitStage(supabase)
   await processFollowupCtaStage(supabase)
   await processIdleNudgeStage(supabase)
 }

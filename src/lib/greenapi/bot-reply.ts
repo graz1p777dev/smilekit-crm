@@ -343,6 +343,12 @@ export const ORDER_CTA_TEXT = 'Вам оформить доставку?'
 export const FOLLOWUP_ANCHOR_ID_PREFIX = 'ga:claim:followup'
 export const FOLLOWUP_ANCHOR_TEXT = '[ожидание оформления]'
 export const FOLLOWUP_CTA_ID_PREFIX = 'ga:bot:cta-followup'
+// Тот же якорный приём, что FOLLOWUP_ANCHOR, но для вопроса CITY_QUESTION:
+// если клиент не назвал город 5 минут, followup-scheduler.ts сам присылает
+// блок «до/после» (без доставки и голосового — город ещё не известен),
+// чтобы не терять клиента, который застрял на этом вопросе молча.
+export const CITY_WAIT_ANCHOR_ID_PREFIX = 'ga:claim:city-wait'
+export const CITY_WAIT_ANCHOR_TEXT = '[ожидание города]'
 export function pickOrderCta(): string {
   return ORDER_CTA_VARIANTS[Math.floor(Math.random() * ORDER_CTA_VARIANTS.length)]
 }
@@ -614,6 +620,67 @@ async function claimResultsBlock(
     return false
   }
   return Boolean(data?.length)
+}
+
+/**
+ * Клиент 5 минут не ответил на CITY_QUESTION (см. CITY_WAIT_ANCHOR_ID_PREFIX,
+ * followup-scheduler.ts) — присылаем сам блок «до/после» без доставки и
+ * голосового (город ещё не известен, их посчитать не из чего). Использует
+ * тот же claimResultsBlock, что и обычный путь через ответ клиента — если
+ * клиент потом всё же назовёт город, фото не задвоится (см. deliveryVoiceAllowed
+ * в generateAndSendGreenApiReply), а доставка и голосовое всё равно уйдут.
+ */
+export async function sendResultsPhotoOnly(
+  supabase: ReturnType<typeof createAdminClient>,
+  chatId: string,
+  opts: { dryRun?: boolean } = {}
+): Promise<void> {
+  if (!(await claimResultsBlock(supabase, chatId))) return
+  const mediaBaseUrl = process.env.SMILEKIT_BOT_API_URL?.replace(/\/$/, '')
+  if (!mediaBaseUrl) return
+  const waChatId = `${chatId}@c.us`
+
+  await supabase.from('amocrm_messages').upsert({
+    amo_message_id: `ga:bot:city-timeout:${chatId}:results-intro`,
+    chat_id: chatId,
+    direction: 'out',
+    sender: 'bot',
+    text: RESULTS_INTRO,
+  }, { onConflict: 'amo_message_id', ignoreDuplicates: true })
+  if (!opts.dryRun) {
+    await sendGreenApiMessage(waChatId, RESULTS_INTRO).catch((error) =>
+      console.error('greenapi bot-reply: city-timeout results intro failed', error)
+    )
+  }
+
+  for (const [name, caption] of RESULT_PHOTOS) {
+    const photoMessageId = `ga:bot:city-timeout:${chatId}:result:${name}`
+    const { error: photoReserveError } = await supabase.from('amocrm_messages').upsert({
+      amo_message_id: photoMessageId,
+      chat_id: chatId,
+      direction: 'out',
+      sender: 'bot',
+      text: caption || '[фото результата]',
+    }, { onConflict: 'amo_message_id', ignoreDuplicates: true })
+    if (photoReserveError) {
+      console.error('greenapi bot-reply: city-timeout photo reserve failed', photoReserveError.message)
+      continue
+    }
+    if (!opts.dryRun) {
+      try {
+        await sendGreenApiFileByUrl({
+          chatId: waChatId,
+          urlFile: `${mediaBaseUrl}/media/results/${name}`,
+          fileName: name,
+          caption: caption || undefined,
+        })
+      } catch (error) {
+        await supabase.from('amocrm_messages').delete().eq('amo_message_id', photoMessageId)
+        console.error('greenapi bot-reply: city-timeout photo send failed', error)
+      }
+    }
+    await new Promise((resolve) => setTimeout(resolve, 700))
+  }
 }
 
 /**
@@ -1128,6 +1195,7 @@ async function generateAndSendGreenApiReply(
   const voiceReplies = new Set<string>()
   let sendPaymentQr = false
   let needsFollowupAnchor = false
+  let needsCityAnchor = false
   let stageAction: string | null = null
   const priceKnown = historyText.includes('цена') || historyText.includes('сом')
   const looksLikeLocationAnswer = shouldSendResultsAfterLocation(input.text, historyText)
@@ -1144,7 +1212,14 @@ async function generateAndSendGreenApiReply(
   // защиты бот повторял голосовое «эффект с первого раза» уже во время
   // оформления заказа — не к месту.
   const wantsResultsBlock = looksLikeLocationAnswer || Boolean(deliveryTemplate && priceKnown)
+  // Фото «до/после» — отдельный одноразовый захват от текста доставки+
+  // голосового: если фото уже ушло само по себе через city-wait-таймер
+  // (клиент 5 минут молчал на вопрос о городе — см. followup-scheduler.ts,
+  // sendResultsPhotoOnly), claimResultsBlock здесь просто не даст повторить
+  // фото, а deliveryVoiceAllowed всё равно разрешит отправить доставку и
+  // голосовое, как только клиент действительно назовёт город.
   const resultsBlockAllowed = wantsResultsBlock ? await claimResultsBlock(supabase, input.chatId) : false
+  const deliveryVoiceAllowed = wantsResultsBlock ? await claimOnce(supabase, input.chatId, 'results-delivery') : false
 
   const lastBotMessage = [...history].reverse().find((item) => item.role === 'assistant')?.content ?? ''
 
@@ -1196,10 +1271,12 @@ async function generateAndSendGreenApiReply(
     )
   } else if (LINK_IN_MESSAGE.test(input.text) || GREETING_ONLY.test(input.text)) {
     replies.push(T.productInfo, CITY_QUESTION)
+    needsCityAnchor = true
   } else if (isKyrgyz && KYRGYZ_PRICE_INTENT.test(input.text)) {
     replies.push(KYRGYZ_PRODUCT_INFO)
   } else if (history.length === 0) {
     replies.push(T.productInfo, CITY_QUESTION)
+    needsCityAnchor = true
   } else if (SCAM_DOUBT.test(input.text)) {
     replies.push(T.doubtResult)
     voiceReplies.add(T.doubtResult)
@@ -1214,6 +1291,7 @@ async function generateAndSendGreenApiReply(
       replies.push(cityTemplate, isBishkekOrTokmok ? DELIVERY_PAYMENT_BISHKEK : DELIVERY_PAYMENT_REGIONS)
     } else {
       replies.push(CITY_QUESTION)
+      needsCityAnchor = true
     }
   } else if (COMPLAINT.test(input.text)) {
     replies.push(T.complaintPrompt)
@@ -1237,10 +1315,11 @@ async function generateAndSendGreenApiReply(
     voiceReplies.add(T.orderChecklist)
     sendPaymentQr = true
     stageAction = 'order'
-  } else if (deliveryTemplate && priceKnown && resultsBlockAllowed) {
-    // Доставка -> фото (в цикле отправки ниже) -> голосовое. CTA «вам
-    // оформить доставку?» НЕ сразу: через 5 минут молчания клиента его шлёт
-    // followup-scheduler.ts по якорю (см. FOLLOWUP_ANCHOR_TEXT).
+  } else if (deliveryTemplate && priceKnown && deliveryVoiceAllowed) {
+    // Доставка -> фото (в цикле отправки ниже, гейт — отдельный
+    // resultsBlockAllowed) -> голосовое. CTA «вам оформить со скидкой?» НЕ
+    // сразу: через 5 минут молчания клиента его шлёт followup-scheduler.ts
+    // по якорю (см. FOLLOWUP_ANCHOR_TEXT).
     replies.push(deliveryTemplate, T.firstUseEffect)
     voiceReplies.add(T.firstUseEffect)
     needsFollowupAnchor = true
@@ -1420,6 +1499,19 @@ async function generateAndSendGreenApiReply(
       text: FOLLOWUP_ANCHOR_TEXT,
     }, { onConflict: 'amo_message_id', ignoreDuplicates: true })
     if (anchorError) console.error('greenapi bot-reply: followup anchor failed', anchorError.message)
+  }
+
+  if (needsCityAnchor) {
+    // Тот же приём для CITY_QUESTION: если клиент не назовёт город 5 минут,
+    // followup-scheduler.ts сам пришлёт блок «до/после» (sendResultsPhotoOnly).
+    const { error: cityAnchorError } = await supabase.from('amocrm_messages').upsert({
+      amo_message_id: `${CITY_WAIT_ANCHOR_ID_PREFIX}:${input.providerMessageId}`,
+      chat_id: input.chatId,
+      direction: 'out',
+      sender: 'bot',
+      text: CITY_WAIT_ANCHOR_TEXT,
+    }, { onConflict: 'amo_message_id', ignoreDuplicates: true })
+    if (cityAnchorError) console.error('greenapi bot-reply: city anchor failed', cityAnchorError.message)
   }
 
   if (stageAction && !opts.dryRun) {
