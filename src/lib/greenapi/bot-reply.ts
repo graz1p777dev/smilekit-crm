@@ -627,8 +627,9 @@ async function claimResultsBlock(
  * followup-scheduler.ts) — присылаем сам блок «до/после» без доставки и
  * голосового (город ещё не известен, их посчитать не из чего). Использует
  * тот же claimResultsBlock, что и обычный путь через ответ клиента — если
- * клиент потом всё же назовёт город, фото не задвоится (см. deliveryVoiceAllowed
- * в generateAndSendGreenApiReply), а доставка и голосовое всё равно уйдут.
+ * клиент потом всё же назовёт город, фото не задвоится (claim уже занят),
+ * а доставка и голосовое всё равно уйдут отдельным независимым захватом
+ * (claimOnce('results-delivery') в generateAndSendGreenApiReply).
  */
 export async function sendResultsPhotoOnly(
   supabase: ReturnType<typeof createAdminClient>,
@@ -1196,6 +1197,7 @@ async function generateAndSendGreenApiReply(
   let sendPaymentQr = false
   let needsFollowupAnchor = false
   let needsCityAnchor = false
+  let sendResultsPhotoThisTurn = false
   let stageAction: string | null = null
   const priceKnown = historyText.includes('цена') || historyText.includes('сом')
   const looksLikeLocationAnswer = shouldSendResultsAfterLocation(input.text, historyText)
@@ -1211,15 +1213,15 @@ async function generateAndSendGreenApiReply(
   // короткий ответ проходит shouldSendResultsAfterLocation. Без общей
   // защиты бот повторял голосовое «эффект с первого раза» уже во время
   // оформления заказа — не к месту.
+  // Живой баг: раньше claimResultsBlock/claimOnce('results-delivery')
+  // вызывались здесь безусловно, ДО того, как известно, какая именно ветка
+  // ниже сработает — короткое «давайте оформим» без названного города
+  // ошибочно проходило shouldSendResultsAfterLocation (короткий ответ без
+  // «?» после вопроса про город), claim «съедался» впустую, а фото «до/после»
+  // всё равно уходило следом за чек-листом заказа, хотя город не называли.
+  // Теперь оба захвата — внутри самой ветки доставки ниже, только когда она
+  // реально выбрана (после ORDER_INTENT и остальных более специфичных веток).
   const wantsResultsBlock = looksLikeLocationAnswer || Boolean(deliveryTemplate && priceKnown)
-  // Фото «до/после» — отдельный одноразовый захват от текста доставки+
-  // голосового: если фото уже ушло само по себе через city-wait-таймер
-  // (клиент 5 минут молчал на вопрос о городе — см. followup-scheduler.ts,
-  // sendResultsPhotoOnly), claimResultsBlock здесь просто не даст повторить
-  // фото, а deliveryVoiceAllowed всё равно разрешит отправить доставку и
-  // голосовое, как только клиент действительно назовёт город.
-  const resultsBlockAllowed = wantsResultsBlock ? await claimResultsBlock(supabase, input.chatId) : false
-  const deliveryVoiceAllowed = wantsResultsBlock ? await claimOnce(supabase, input.chatId, 'results-delivery') : false
 
   const lastBotMessage = [...history].reverse().find((item) => item.role === 'assistant')?.content ?? ''
 
@@ -1274,9 +1276,6 @@ async function generateAndSendGreenApiReply(
     needsCityAnchor = true
   } else if (isKyrgyz && KYRGYZ_PRICE_INTENT.test(input.text)) {
     replies.push(KYRGYZ_PRODUCT_INFO)
-  } else if (history.length === 0) {
-    replies.push(T.productInfo, CITY_QUESTION)
-    needsCityAnchor = true
   } else if (SCAM_DOUBT.test(input.text)) {
     replies.push(T.doubtResult)
     voiceReplies.add(T.doubtResult)
@@ -1315,14 +1314,32 @@ async function generateAndSendGreenApiReply(
     voiceReplies.add(T.orderChecklist)
     sendPaymentQr = true
     stageAction = 'order'
-  } else if (deliveryTemplate && priceKnown && deliveryVoiceAllowed) {
-    // Доставка -> фото (в цикле отправки ниже, гейт — отдельный
-    // resultsBlockAllowed) -> голосовое. CTA «вам оформить со скидкой?» НЕ
-    // сразу: через 5 минут молчания клиента его шлёт followup-scheduler.ts
-    // по якорю (см. FOLLOWUP_ANCHOR_TEXT).
-    replies.push(deliveryTemplate, T.firstUseEffect)
-    voiceReplies.add(T.firstUseEffect)
-    needsFollowupAnchor = true
+  } else if (history.length === 0) {
+    // Живой баг: раньше эта ветка стояла ПЕРЕД всеми проверками конкретного
+    // намерения (жалоба/состав/скидка/сотрудничество/мошенники и т.д.) —
+    // первое сообщение клиента получало этот шаблон, даже если в нём был
+    // прямой вопрос или жалоба. Теперь это последний общий вариант — только
+    // если ни одно специфичное намерение выше не совпало.
+    replies.push(T.productInfo, CITY_QUESTION)
+    needsCityAnchor = true
+  } else if (deliveryTemplate && priceKnown && wantsResultsBlock) {
+    // Доставка -> фото (в цикле отправки ниже) -> голосовое. CTA «вам
+    // оформить со скидкой?» НЕ сразу: через 5 минут молчания клиента его
+    // шлёт followup-scheduler.ts по якорю (см. FOLLOWUP_ANCHOR_TEXT).
+    // Живой баг: оба захвата (claimOnce/claimResultsBlock) раньше выполнялись
+    // безусловно ДО выбора ветки — короткое «давайте оформим» без города
+    // ложно проходило shouldSendResultsAfterLocation, «съедало» claim и следом
+    // за чек-листом заказа (ветка ORDER_INTENT выше) улетало ещё и фото
+    // «до/после», хотя город не называли. Теперь захват — только здесь,
+    // и только когда эта ветка реально выбрана (после ORDER_INTENT и прочих).
+    if (await claimOnce(supabase, input.chatId, 'results-delivery')) {
+      replies.push(deliveryTemplate, T.firstUseEffect)
+      voiceReplies.add(T.firstUseEffect)
+      needsFollowupAnchor = true
+      if (await claimResultsBlock(supabase, input.chatId)) {
+        sendResultsPhotoThisTurn = true
+      }
+    }
   }
 
   if (replies.length === 0) {
@@ -1435,7 +1452,7 @@ async function generateAndSendGreenApiReply(
     // Ровно один раз за чат: shouldSendResultsAfterLocation срабатывает на
     // каждый короткий ответ клиента, и без этой защиты бот присылал фото
     // снова и снова. В Telegram ту же роль играет storage.claim_event.
-    if (resultsBlockAllowed && index === 0 && mediaBaseUrl) {
+    if (sendResultsPhotoThisTurn && index === 0 && mediaBaseUrl) {
       // Запись бота ДО отправки обязательна для любого исходящего: эхо из
       // вебхука Green API ищет свежую строку sender='bot' с тем же текстом,
       // и без неё подводка опозналась бы как сообщение менеджера — бот
