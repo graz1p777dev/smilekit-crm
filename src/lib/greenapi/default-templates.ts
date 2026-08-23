@@ -16,11 +16,8 @@ export const DEFAULT_ORDER_CHECKLIST =
   '• адрес доставки;\n\n' +
   '• номер телефона.'
 
-const SMILEKIT_RESULTS_URL = 'https://smilekit.vercel.app/#results'
-
 export const DEFAULT_DOUBT_RESULT_REPLY =
-  'Понимаю, лучше один раз увидеть 😊 Вот страница с настоящими фото до/после ' +
-  `и перепиской с нашими покупателями — без прикрас: ${SMILEKIT_RESULTS_URL}\n\n` +
+  'Понимаю, лучше один раз увидеть 😊 Отправляла уже фото до/после — это настоящие результаты наших покупателей, без прикрас. ' +
   'Мы гарантируем эффект уже после первого применения.'
 
 export const DEFAULT_FIRST_USE_EFFECT =
