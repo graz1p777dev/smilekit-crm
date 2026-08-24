@@ -400,6 +400,32 @@ export const ORDER_CTA_VARIANTS = [
   'Готовы оформить доставку?',
 ]
 
+// Живой баг: клиент сам сказал «завтра»/«эртен» (Telegram-бот это уже умеет,
+// см. promised_clock_time_hours/promised_calendar_date_hours в sales.py) —
+// а общий 30-минутный дожим в WhatsApp этого не знал и всё равно писал
+// «Возвращаясь к нашему разговору...» посреди дня, хотя клиент только что
+// договорился вернуться позже. Грубая эвристика (не парсим точное время,
+// просто не дёргаем клиента раньше правдоподобного срока) — этого достаточно,
+// чтобы не выглядеть навязчиво.
+const PROMISED_LATER_HOURS: [RegExp, number][] = [
+  [/завтра|эртен/i, 18],
+  [/вечером|кечинде/i, 5],
+  [/через\s*час\b/i, 1.5],
+  [/на\s+(?:этой\s+|следующей\s+)?неделе|на\s+днях/i, 48],
+  [/по[зс]же|попозже|потом(?:\s+напишу)?/i, 3],
+]
+export const PROMISED_ANCHOR_ID_PREFIX = 'ga:claim:promised'
+
+/** Сколько часов не дёргать клиента дожимом — null, если клиент ничего не обещал. */
+function promisedDelayHours(text: string): number | null {
+  const explicitHours = text.match(/через\s+(\d{1,2})\s*ч/i)
+  if (explicitHours) return Math.min(48, Number(explicitHours[1]) + 0.5)
+  for (const [pattern, hours] of PROMISED_LATER_HOURS) {
+    if (pattern.test(text)) return hours
+  }
+  return null
+}
+
 // Дожим, если клиент молчит 30 минут после ЛЮБОГО последнего ответа бота
 // (в т.ч. после CTA-follow-up — но и на любом другом этапе диалога), как
 // idle_nudge в Telegram-боте (__main__.py). Несколько вариантов текста, а не один и тот же — раньше повторный
@@ -1094,6 +1120,22 @@ async function processInboundGreenApiMessageNow(
   }
   if (!inserted?.length) return // дубль вебхука — уже обработано
 
+  // Клиент сам назвал срок («завтра», «через час») — не дёргаем его
+  // дожимом раньше. Ключ фиксированный (без providerMessageId) — строка
+  // перезаписывается upsert-ом (onConflict без ignoreDuplicates) при каждом
+  // новом обещании, а не копится по одной на сообщение.
+  const promisedHours = promisedDelayHours(input.text)
+  if (promisedHours !== null) {
+    const promisedUntilMs = Date.now() + promisedHours * 3600_000
+    await supabase.from('amocrm_messages').upsert({
+      amo_message_id: `${PROMISED_ANCHOR_ID_PREFIX}:${input.chatId}`,
+      chat_id: input.chatId,
+      direction: 'out',
+      sender: 'bot',
+      text: `[обещал вернуться до ${new Date(promisedUntilMs).toISOString()}]`,
+    }, { onConflict: 'amo_message_id' })
+  }
+
   const externalKey = await resolveGreenApiExternalKey(supabase, input.chatId)
   const { data: integration } = await supabase
     .from('integrations')
@@ -1347,8 +1389,11 @@ async function generateAndSendGreenApiReply(
     // WhatsApp не умел слать картинки, поэтому клиента отправляли к менеджеру
     // за реквизитами. Green API картинки шлёт, так что ждать «подтверждения»
     // перед выдачей реквизитов больше не нужно.
+    // Живой баг: чек-лист уходил голосовым, а следом за QR — ещё одно
+    // голосовое (qr_payment_note.ogg) — клиент получал подряд два голосовых
+    // сообщения. Список из трёх пунктов проще читать текстом (можно
+    // вернуться и свериться), голосовое оставляем только одно — после QR.
     replies.push(T.orderChecklist)
-    voiceReplies.add(T.orderChecklist)
     sendPaymentQr = true
     stageAction = 'order'
   } else if (history.length === 0) {
@@ -1407,7 +1452,6 @@ async function generateAndSendGreenApiReply(
     if (replies.some((part) => AI_IMPROVISED_CHECKLIST.test(part))) {
       replies.length = 0
       replies.push(T.orderChecklist)
-      voiceReplies.add(T.orderChecklist)
       sendPaymentQr = true
       stageAction = 'order'
     }

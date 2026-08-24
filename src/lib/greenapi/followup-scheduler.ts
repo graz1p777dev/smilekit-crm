@@ -38,6 +38,7 @@ import {
   IDLE_NUDGE_ID_PREFIX,
   nextDiscountOffer,
   nextIdleNudgeReply,
+  PROMISED_ANCHOR_ID_PREFIX,
   sendResultsPhotoOnly,
 } from '@/lib/greenapi/bot-reply'
 
@@ -121,6 +122,28 @@ async function sendStageReply(
 }
 
 /**
+ * Клиент сам сказал, когда вернётся («завтра», «через час» — см.
+ * promisedDelayHours в bot-reply.ts). Живой пример: клиент написал «Эртен
+ * киге» (кырг. «завтра»), бот вежливо согласился, а через 35 минут всё
+ * равно написал «Возвращаясь к нашему разговору...» — обычный дожим не
+ * знал об этом обещании. true — если срок ещё не наступил, дожим пропускаем.
+ */
+async function isPromisedLaterStillPending(
+  supabase: ReturnType<typeof createAdminClient>,
+  chatId: string
+): Promise<boolean> {
+  const { data } = await supabase
+    .from('amocrm_messages')
+    .select('text')
+    .eq('amo_message_id', `${PROMISED_ANCHOR_ID_PREFIX}:${chatId}`)
+    .maybeSingle()
+  const text = (data as { text: string } | null)?.text
+  const match = text?.match(/(\d{4}-\d{2}-\d{2}T[\d:.]+Z)/)
+  if (!match) return false
+  return new Date(match[1]).getTime() > Date.now()
+}
+
+/**
  * Клиент молчит после последнего реального ответа бота, на любом этапе
  * диалога. Служебные маркеры (ga:claim:*, в т.ч. якорь follow-up) в счёт не
  * идут — это не реальный ответ клиенту, а внутренняя защёлка. Порог зависит
@@ -164,6 +187,7 @@ async function processIdleNudgeStage(supabase: ReturnType<typeof createAdminClie
     const alreadyNudged = lastRow.amo_message_id.startsWith(IDLE_NUDGE_ID_PREFIX)
     const requiredSilenceMs = alreadyNudged ? SECOND_WAVE_SILENCE_MS : NUDGE_SILENCE_MS
     if (new Date(lastRow.created_at).getTime() > Date.now() - requiredSilenceMs) continue // порог ещё не прошёл
+    if (await isPromisedLaterStillPending(supabase, chatId)) continue // клиент сам сказал, когда вернётся
 
     const replyText = await nextIdleNudgeReply(supabase, chatId, lastRow.text, lastRow.amo_message_id)
     if (!replyText) continue // больше предложить нечего — не пишем
