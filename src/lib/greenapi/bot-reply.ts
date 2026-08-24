@@ -875,6 +875,28 @@ export function processInboundGreenApiMessage(
  * проверку, всё равно уходит в группу — с пометкой для ручной проверки, чтобы
  * менеджер увидел его, а не потерял.
  */
+/**
+ * Живой баг: пуш заказа в группу доставки (Telegram и/или WhatsApp) падал
+ * на одиночном сетевом сбое без единой попытки повтора — клиент получал
+ * «чек принят», а курьер о заказе просто не узнавал, ни в CRM, ни в логах
+ * (только console.error, который никто не видит в реальном времени). Три
+ * попытки с растущей паузой закрывают почти все временные сбои.
+ */
+async function withRetries<T>(fn: () => Promise<T>, attempts = 3): Promise<T> {
+  let lastError: unknown
+  for (let attempt = 0; attempt < attempts; attempt++) {
+    try {
+      return await fn()
+    } catch (error) {
+      lastError = error
+      if (attempt < attempts - 1) {
+        await new Promise((resolve) => setTimeout(resolve, 1000 * (attempt + 1)))
+      }
+    }
+  }
+  throw lastError
+}
+
 async function handleGreenApiReceipt(
   supabase: ReturnType<typeof createAdminClient>,
   input: InboundGreenApiMessage,
@@ -967,31 +989,33 @@ async function handleGreenApiReceipt(
   }
 
   try {
-    const bytes = await fetch(input.mediaUrl!, { signal: AbortSignal.timeout(20_000) })
-      .then((response) => response.arrayBuffer())
-    const pushed = await smilekitBotFetch('/internal/push_delivery', {
-      method: 'POST',
-      body: {
-        imageBase64: Buffer.from(bytes).toString('base64'),
-        kind: 'image',
-        source: 'WhatsApp',
-        customerName: input.authorName ?? null,
-        customerPhone: input.chatId,
-        address: input.text || null,
-        orderSummary: clientNotes.slice(0, 350),
-        mismatchReasons: verified ? null : checkUnavailable
-          ? ['автопроверка недоступна — проверьте чек глазами']
-          : [
-            !check?.is_real_receipt_screenshot ? 'не похоже на скриншот перевода' : null,
-            check && !check.amount_ok ? 'сумма не совпадает' : null,
-            check && !check.recipient_ok ? 'получатель не совпадает' : null,
-            check && !check.date_ok ? 'дата не совпадает' : null,
-          ].filter(Boolean),
-      },
+    await withRetries(async () => {
+      const bytes = await fetch(input.mediaUrl!, { signal: AbortSignal.timeout(20_000) })
+        .then((response) => response.arrayBuffer())
+      const pushed = await smilekitBotFetch('/internal/push_delivery', {
+        method: 'POST',
+        body: {
+          imageBase64: Buffer.from(bytes).toString('base64'),
+          kind: 'image',
+          source: 'WhatsApp',
+          customerName: input.authorName ?? null,
+          customerPhone: input.chatId,
+          address: input.text || null,
+          orderSummary: clientNotes.slice(0, 350),
+          mismatchReasons: verified ? null : checkUnavailable
+            ? ['автопроверка недоступна — проверьте чек глазами']
+            : [
+              !check?.is_real_receipt_screenshot ? 'не похоже на скриншот перевода' : null,
+              check && !check.amount_ok ? 'сумма не совпадает' : null,
+              check && !check.recipient_ok ? 'получатель не совпадает' : null,
+              check && !check.date_ok ? 'дата не совпадает' : null,
+            ].filter(Boolean),
+        },
+      })
+      if (!pushed.ok) throw new Error(pushed.error ?? 'push_delivery failed')
     })
-    if (!pushed.ok) console.error('greenapi bot-reply: delivery push failed', pushed.error)
   } catch (error) {
-    console.error('greenapi bot-reply: delivery push failed', error)
+    console.error('greenapi bot-reply: delivery push failed after retries', error)
   }
 
   const botConfig = await getWhatsappBotConfig()
@@ -1015,13 +1039,13 @@ async function handleGreenApiReceipt(
       .replaceAll('{payment}', paymentLine)
     const fullCaption = caption.includes(paymentLine) ? caption : `${caption}\n${paymentLine}`
     try {
-      await sendGreenApiDeliveryGroupFile(botConfig.deliveryGroupId, {
+      await withRetries(() => sendGreenApiDeliveryGroupFile(botConfig.deliveryGroupId, {
         urlFile: input.mediaUrl!,
         fileName: 'receipt.jpg',
         caption: fullCaption,
-      })
+      }))
     } catch (error) {
-      console.error('greenapi bot-reply: whatsapp delivery group push failed', error)
+      console.error('greenapi bot-reply: whatsapp delivery group push failed after retries', error)
     }
   }
 
