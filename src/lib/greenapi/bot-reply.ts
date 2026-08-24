@@ -31,6 +31,7 @@ import {
   DEFAULT_SAFETY_COMPOSITION,
 } from '@/lib/greenapi/default-templates'
 import {
+  sendGreenApiDeliveryGroup,
   sendGreenApiDeliveryGroupFile,
   sendGreenApiFileByUrl,
   sendGreenApiMessage,
@@ -312,6 +313,19 @@ function shouldSendResultsAfterLocation(text: string, historyText: string): bool
 // (?<![a-zа-яё0-9_])/(?![a-zа-яё0-9_]) вокруг кириллических слов.
 const ORDER_INTENT =
   /хочу\s+(?:заказать|купить|взять|одну|одн[уо]\s+(?:коробк|пачк|упаковк)|сделать\s+заказ)|(?:как|где|можно)\s+(?:заказать|купить|оформить|оплатить|сделать\s+заказ)|закажу|заказать|куплю|(?<![a-zа-яё0-9_])оформ\w*|(?<![a-zа-яё0-9_])беру(?![a-zа-яё0-9_])|возьму|реквизит|куда\s+(?:скинуть|перевести|оплатить|платить|переводить)|как\s+(?:оплатить|платить|оплачивать)|способ\s+оплаты|оплачу|готов[аы]?\s+(?:оплатить|купить|заказать)|номер\s+карты|скин(?:ь|ьте)\s+(?:номер|реквизит|карту|qr)|\bqr[\s-]?код/i
+
+// Живой баг: клиент прямо просит оплату при получении («хочу оплатить
+// после того, как приеду», «можно адрес?» — тот же маркер, что уже описан
+// в prompts.py для ИИ-канала), а ORDER_INTENT (тоже совпадает — «оплатить»
+// в тексте есть) всё равно гнал к чек-листу с QR и требованием чека —
+// клиент явно попросил оплату при получении, а получил требование
+// предоплаты. Эта проверка стоит раньше ORDER_INTENT в цепочке ответов.
+const PAY_ON_DELIVERY_REQUEST =
+  /оплач?у\s*(?:после|как\s+только|когда)[^.!?\n]{0,20}(?:приеду|получу|доставк)|оплат[ауы]?\s*при\s*получении|можно\s*(?:просто\s*)?адрес\s*\??|наличными\s*(?:курьеру|при\s*получении)|оплачу\s*курьеру/i
+const PAY_ON_DELIVERY_ACK_REPLY =
+  'Хорошо, оплата при получении 😊 Пришлите, пожалуйста, адрес доставки и номер телефона — оформлю доставку.'
+const COD_WAIT_ANCHOR_ID_PREFIX = 'ga:claim:cod-wait'
+const COD_WAIT_ANCHOR_TEXT = '[ожидание адреса — оплата при получении]'
 
 // Короткое согласие само по себе намерения не выражает («давайте» может
 // относиться к чему угодно) — засчитываем его как заказ, только если прошлое
@@ -1117,6 +1131,85 @@ async function resolveGreenApiExternalKey(
   return greenApiKey
 }
 
+const COD_ORDER_CONFIRM_REPLY = 'Спасибо! 😊 Заказ оформлен, оплата — при получении. Скоро свяжется курьер.'
+
+/**
+ * Клиент попросил оплату при получении (см. PAY_ON_DELIVERY_REQUEST) и
+ * прислал следующим сообщением адрес+телефон — регистрируем заказ и шлём
+ * в группу доставки текстом, без чека/QR (по определению для COD их нет).
+ * true — сообщение обработано как адрес и общий скрипт ниже уже не нужен.
+ */
+async function handleCodAddressSubmission(
+  supabase: ReturnType<typeof createAdminClient>,
+  input: InboundGreenApiMessage,
+  externalKey: string,
+  opts: GreenApiTestOptions
+): Promise<boolean> {
+  const { data: recentRows } = await supabase
+    .from('amocrm_messages')
+    .select('amo_message_id')
+    .eq('chat_id', input.chatId)
+    .order('created_at', { ascending: false })
+    .limit(2)
+  // [0] — только что вставленное сообщение самого клиента (см. insert выше
+  // по коду), [1] — то, что было последним до него.
+  const priorRow = (recentRows as { amo_message_id: string }[] | null)?.[1]
+  if (!priorRow || !priorRow.amo_message_id.startsWith(COD_WAIT_ANCHOR_ID_PREFIX)) return false
+  if (!(await canSendGreenApiBotReply(supabase, input.chatId, opts))) return false
+
+  const botMessageId = `ga:bot:${input.providerMessageId}:cod-confirm`
+  const { data: reserved } = await supabase.from('amocrm_messages').upsert({
+    amo_message_id: botMessageId,
+    chat_id: input.chatId,
+    direction: 'out',
+    sender: 'bot',
+    text: COD_ORDER_CONFIRM_REPLY,
+  }, { onConflict: 'amo_message_id', ignoreDuplicates: true }).select('id')
+  if (!reserved?.length) return true // дубль вебхука — уже обработано
+
+  if (!opts.dryRun) {
+    try {
+      await sendGreenApiMessage(`${input.chatId}@c.us`, COD_ORDER_CONFIRM_REPLY)
+    } catch (error) {
+      await supabase.from('amocrm_messages').delete().eq('amo_message_id', botMessageId)
+      console.error('greenapi bot-reply: cod confirm reply failed', error)
+      return true
+    }
+
+    const advanced = await advanceDealFromBotAction(externalKey, 'order')
+    if (!advanced.ok && advanced.error) {
+      console.error('greenapi bot-reply: cod stage advance failed', advanced.error)
+    }
+    await ingestOrder({
+      externalKey: `${externalKey}:order:${input.providerMessageId}`,
+      source: 'manual',
+      customerName: input.authorName,
+      customerPhone: input.chatId,
+      quantity: 1,
+      totalAmount: null,
+      currency: 'KGS',
+      summary: `Оплата при получении (WhatsApp)\nАдрес/телефон от клиента: ${input.text}`,
+    }).then((result) => {
+      if (result.error) console.error('greenapi bot-reply: cod order ingest failed', result.error)
+    })
+
+    const botConfig = await getWhatsappBotConfig()
+    if (botConfig.deliveryGroupId) {
+      const groupText =
+        'Новый заказ — оплата при получении 💵\n' +
+        `Телефон: ${input.chatId}\n` +
+        `Имя: ${input.authorName || '—'}\n` +
+        `Адрес/телефон от клиента: ${input.text}`
+      try {
+        await withRetries(() => sendGreenApiDeliveryGroup(botConfig.deliveryGroupId, groupText))
+      } catch (error) {
+        console.error('greenapi bot-reply: cod delivery group push failed after retries', error)
+      }
+    }
+  }
+  return true
+}
+
 async function processInboundGreenApiMessageNow(
   input: InboundGreenApiMessage,
   opts: GreenApiTestOptions = {}
@@ -1210,6 +1303,12 @@ async function processInboundGreenApiMessageNow(
   // оплатившему клиенту.
   if (botEnabled && IMAGE_TYPES.has(input.messageType ?? '') && input.mediaUrl) {
     await handleGreenApiReceipt(supabase, input, externalKey)
+    return
+  }
+
+  // Клиент попросил оплату при получении (см. PAY_ON_DELIVERY_REQUEST) и
+  // прислал следующим сообщением адрес+телефон — до общего скрипта.
+  if (botEnabled && input.text && (await handleCodAddressSubmission(supabase, input, externalKey, opts))) {
     return
   }
 
@@ -1321,6 +1420,7 @@ async function generateAndSendGreenApiReply(
   let sendPaymentQr = false
   let needsFollowupAnchor = false
   let needsCityAnchor = false
+  let needsCodAnchor = false
   let sendResultsPhotoThisTurn = false
   let stageAction: string | null = null
   const priceKnown = historyText.includes('цена') || historyText.includes('сом')
@@ -1431,6 +1531,13 @@ async function generateAndSendGreenApiReply(
     // Клиент отказался оформлять на CTA «вам оформить доставку?» — та же
     // лестница скидок, что и на прямую просьбу выше, общее состояние.
     replies.push(await nextDiscountOffer(supabase, input.chatId))
+  } else if (PAY_ON_DELIVERY_REQUEST.test(input.text)) {
+    // Клиент прямо попросил оплату при получении — ORDER_INTENT ниже тоже
+    // совпал бы (в тексте есть «оплатить»), но чек-лист с QR требовал бы
+    // предоплату вопреки прямой просьбе клиента. Адрес+телефон вместо чека —
+    // ждём следующим сообщением (см. COD_WAIT_ANCHOR_ID_PREFIX ниже).
+    replies.push(PAY_ON_DELIVERY_ACK_REPLY)
+    needsCodAnchor = true
   } else if (ORDER_INTENT.test(input.text) || acceptedOrderCta) {
     // QR отправляется сразу вместе с чек-листом (ниже, sendPaymentQr) — раньше
     // WhatsApp не умел слать картинки, поэтому клиента отправляли к менеджеру
@@ -1681,6 +1788,20 @@ async function generateAndSendGreenApiReply(
       text: CITY_WAIT_ANCHOR_TEXT,
     }, { onConflict: 'amo_message_id', ignoreDuplicates: true })
     if (cityAnchorError) console.error('greenapi bot-reply: city anchor failed', cityAnchorError.message)
+  }
+
+  if (needsCodAnchor) {
+    // Клиент попросил оплату при получении — ждём адрес+телефон следующим
+    // сообщением (см. обработку COD_WAIT_ANCHOR_ID_PREFIX в
+    // processInboundGreenApiMessageNow, срабатывает раньше общего скрипта).
+    const { error: codAnchorError } = await supabase.from('amocrm_messages').upsert({
+      amo_message_id: `${COD_WAIT_ANCHOR_ID_PREFIX}:${input.providerMessageId}`,
+      chat_id: input.chatId,
+      direction: 'out',
+      sender: 'bot',
+      text: COD_WAIT_ANCHOR_TEXT,
+    }, { onConflict: 'amo_message_id', ignoreDuplicates: true })
+    if (codAnchorError) console.error('greenapi bot-reply: cod anchor failed', codAnchorError.message)
   }
 
   if (stageAction && !opts.dryRun) {
