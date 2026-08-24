@@ -546,6 +546,15 @@ const DELIVERY_COST_QUESTION =
 const DELIVERY_PAYMENT_BISHKEK = 'Доставка курьером, оплата — при получении 😊'
 const DELIVERY_PAYMENT_REGIONS = 'По регионам — предоплата 400 сом, остальная сумма при получении 😊'
 
+// Клиент прямо спрашивает, бесплатна ли доставка — отдельно от общего
+// DELIVERY_COST_QUESTION (тот отвечает способом оплаты, не ценой): здесь
+// нужен именно ответ на «бесплатно?», с готовым предложением скидки на
+// товар, а не пересказ способа оплаты не по теме вопроса.
+const DELIVERY_FREE_QUESTION = /достав\w*[^?]{0,15}бесплат|бесплат\w*[^?]{0,15}достав/i
+const DELIVERY_FREE_DISCOUNT_REPLY =
+  'К сожалению, бесплатной доставки нет 😊 Но можем сделать скидку 200 сом на товар — получится 1290 сом, ' +
+  'и с учётом доставки выйдет примерно как обычная цена. Оформляем?'
+
 const COMPLAINT =
   /развод|обман(?:ули)?|кинул|мошенник|верните\s+деньги|хочу\s+возврат|ужасн(?:о|ый|ая)|отвратительн|никогда\s+(?:больше\s+)?не\s+куплю|не\s+помогл|разочарован/i
 const COOPERATION =
@@ -987,17 +996,29 @@ async function handleGreenApiReceipt(
 
   const botConfig = await getWhatsappBotConfig()
   if (botConfig.deliveryGroupId) {
-    // Промпт из настроек — свободный текст, {name}/{phone}/{address} заменяются
-    // значениями заказа. Без промпта — тот же формат, что уходит в Telegram.
-    const caption = (botConfig.deliveryPrompt || 'Новый заказ ({name}, {phone})\nАдрес: {address}')
+    // Живой баг: курьер в группе доставки не видел, оплачен ли заказ уже
+    // (чек проверен автоматически) — рисковал попросить оплату повторно
+    // при вручении или, наоборот, отдать заказ с непрошедшим проверку чеком.
+    // Тот же статус, что уже пишем в summary заказа (см. ingestOrder выше).
+    const paymentLine = verified
+      ? 'Оплата: чек проверен автоматически ✅ — повторно не спрашивать'
+      : checkUnavailable
+        ? 'Оплата: автопроверка недоступна — проверьте чек глазами перед выдачей'
+        : 'Оплата: чек НЕ прошёл проверку ⚠️ — уточните у клиента перед выдачей'
+    // Промпт из настроек — свободный текст, {name}/{phone}/{address}/{payment}
+    // заменяются значениями заказа. Без промпта — тот же формат, что уходит
+    // в Telegram, плюс строка оплаты в конце.
+    const caption = (botConfig.deliveryPrompt || 'Новый заказ ({name}, {phone})\nАдрес: {address}\n{payment}')
       .replaceAll('{name}', input.authorName || '—')
       .replaceAll('{phone}', input.chatId)
       .replaceAll('{address}', input.text || '—')
+      .replaceAll('{payment}', paymentLine)
+    const fullCaption = caption.includes(paymentLine) ? caption : `${caption}\n${paymentLine}`
     try {
       await sendGreenApiDeliveryGroupFile(botConfig.deliveryGroupId, {
         urlFile: input.mediaUrl!,
         fileName: 'receipt.jpg',
-        caption,
+        caption: fullCaption,
       })
     } catch (error) {
       console.error('greenapi bot-reply: whatsapp delivery group push failed', error)
@@ -1362,6 +1383,8 @@ async function generateAndSendGreenApiReply(
     replies.push(pickVariant(SAFETY_COMPOSITION_VARIANTS))
   } else if (EFFECT_DURATION_QUESTION.test(input.text)) {
     replies.push(pickVariant(EFFECT_DURATION_VARIANTS))
+  } else if (DELIVERY_FREE_QUESTION.test(input.text)) {
+    replies.push(DELIVERY_FREE_DISCOUNT_REPLY)
   } else if (DELIVERY_COST_QUESTION.test(input.text)) {
     const cityTemplate = deliveryTemplateForCity(input.text) ?? deliveryTemplateForCity(historyText)
     if (cityTemplate) {
