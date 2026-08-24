@@ -1016,6 +1016,7 @@ async function handleGreenApiReceipt(
           imageBase64: Buffer.from(bytes).toString('base64'),
           kind: 'image',
           source: 'WhatsApp',
+          externalKey: `${externalKey}:order:${input.providerMessageId}`,
           customerName: input.authorName ?? null,
           customerPhone: input.chatId,
           address: input.text || null,
