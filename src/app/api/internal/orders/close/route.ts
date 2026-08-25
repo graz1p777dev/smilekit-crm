@@ -1,14 +1,18 @@
 // ─── POST /api/internal/orders/close ────────────────────────────────────────
-// Telegram-бот зовёт этот эндпоинт, когда курьер реагирует (лайком или любой
-// другой реакцией) на сообщение с заказом в группе доставки — сигнал «заказ
-// доставлен». Тот же общий секрет, что у /api/internal/orders и
-// /api/internal/notify.
+// Telegram-бот зовёт этот эндпоинт, когда что-то происходит с заказом в
+// группе доставки: курьер отвечает «Взял» (status='shipped', заказ принят
+// в работу) или реагирует любой реакцией на сообщение (status='delivered',
+// заказ доставлен). status необязателен — по умолчанию 'delivered' для
+// обратной совместимости со старыми вызовами. Тот же общий секрет, что у
+// /api/internal/orders и /api/internal/notify.
 
 import { NextResponse } from 'next/server'
 import { createAdminClient } from '@/lib/supabase/admin'
 
 export const dynamic = 'force-dynamic'
 export const runtime = 'nodejs'
+
+const ALLOWED_STATUSES = new Set(['confirmed', 'shipped', 'delivered', 'cancelled'])
 
 export async function POST(request: Request) {
   const expectedToken = process.env.INTERNAL_NOTIFY_TOKEN
@@ -35,10 +39,13 @@ export async function POST(request: Request) {
     return NextResponse.json({ error: 'externalKey is required' }, { status: 400 })
   }
 
+  const requestedStatus = typeof body.status === 'string' ? body.status.trim() : ''
+  const status = ALLOWED_STATUSES.has(requestedStatus) ? requestedStatus : 'delivered'
+
   const supabase = createAdminClient()
   const { error, data } = await supabase
     .from('orders')
-    .update({ status: 'delivered' })
+    .update({ status })
     .eq('external_key', externalKey)
     .select('id')
   if (error) {
