@@ -636,15 +636,16 @@ export async function registerOutgoingGreenApiMessage(input: InboundGreenApiMess
 }
 
 const chatQueues = new Map<string, Promise<void>>()
-// Живой баг: лимит был 4 — и generateAndSendGreenApiReply (весь ответ, включая
-// намеренную 10-секундную паузу перед первым «Здравствуйте» и паузы
-// 0.9–1.4с между сообщениями внутри одного ответа) держит слот всё это
-// время. Под наплывом клиентов (реклама, рассылка) 4 слота быстро
-// становятся очередью — 20 клиентов подряд означало реальные 2-3 минуты
-// ожидания для тех, кто в конце очереди, хотя каждый отдельный ответ
-// укладывался в заявленные 10 секунд. 12 — тот же порядок величины, что и
-// у Supabase-пула соединений, просто с запасом под всплеск.
-const globalGreenApiProcessingLimit = createLimiter(12)
+// Живой баг: лимит был 4, потом 12 — и generateAndSendGreenApiReply (весь
+// ответ, включая намеренную 10-секундную паузу перед первым «Здравствуйте»
+// и паузы 0.9–1.4с между сообщениями внутри одного ответа) держит слот всё
+// это время. Под наплывом клиентов (реклама, рассылка) даже 12 слотов
+// становились очередью — по прямой просьбе владельца лимита больше нет:
+// createLimiter(Infinity) технически сохраняет структуру кода (тот же
+// вызов limit(fn) везде ниже), но runNext() в concurrency-limit.ts никогда
+// не увидит active >= Infinity, так что задача стартует сразу же, без
+// очереди — де-факто отвечает всем одновременно.
+const globalGreenApiProcessingLimit = createLimiter(Infinity)
 
 async function isManagerControllingChat(
   supabase: ReturnType<typeof createAdminClient>,
@@ -780,6 +781,21 @@ export async function sendResultsPhotoOnly(
     }
     await new Promise((resolve) => setTimeout(resolve, 700))
   }
+
+  // Живой баг: если клиент так и не назвал город, полный блок (доставка +
+  // голосовое) никогда не срабатывал — а вместе с ним и CTA «оформляем со
+  // скидкой?» (он завязан на needsFollowupAnchor в основном потоке). Клиент
+  // получал фото и... тишину навсегда, даже если потом молчал часами. Тот
+  // же якорь, что и у полного блока — followup-scheduler.ts не различает,
+  // как именно дошли до конца показа результата.
+  const { error: anchorError } = await supabase.from('amocrm_messages').upsert({
+    amo_message_id: `${FOLLOWUP_ANCHOR_ID_PREFIX}:city-timeout:${chatId}`,
+    chat_id: chatId,
+    direction: 'out',
+    sender: 'bot',
+    text: FOLLOWUP_ANCHOR_TEXT,
+  }, { onConflict: 'amo_message_id', ignoreDuplicates: true })
+  if (anchorError) console.error('greenapi bot-reply: city-timeout followup anchor failed', anchorError.message)
 }
 
 /**
