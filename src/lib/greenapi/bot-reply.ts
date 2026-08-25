@@ -297,6 +297,7 @@ function shouldSendResultsAfterLocation(text: string, historyText: string): bool
   const priorPrice = historyText.includes('цена') || historyText.includes('сом')
   if (!priorPrice || LINK_IN_MESSAGE.test(text) || GREETING_ONLY.test(text)) return false
   if (NOT_A_LOCATION_REPLY.test(normalized)) return false
+  if (UNSUPPORTED_COUNTRY.test(normalized)) return false
   const askedForCity = historyText.includes('из какого вы города') || historyText.includes('вы в бишкеке')
   const shortLocationAnswer = !/[?？]/.test(text) && normalized.split(/\s+/).length <= 5
   const deliveryQuestion = /достав|жеткир|отправ|привез/iu.test(text)
@@ -572,6 +573,20 @@ const DELIVERY_FREE_QUESTION = /достав\w*[^?]{0,15}бесплат|бесп
 const DELIVERY_FREE_DISCOUNT_REPLY =
   'К сожалению, бесплатной доставки нет 😊 Но можем сделать скидку 200 сом на товар — получится 1290 сом, ' +
   'и с учётом доставки выйдет примерно как обычная цена. Оформляем?'
+
+// Живой баг: клиент спросил про страну, куда доставки нет («Германия,
+// привезёте?») — «привез»/«достав» в тексте включало deliveryQuestion в
+// shouldSendResultsAfterLocation, и бот врал про доставку через «Ылдам
+// Экспресс» за 1 день, хотя товар продаётся только в Кыргызстане,
+// Казахстане, Узбекистане (Россия — отдельно, через СДЭК от 7 дней, без
+// местного склада). Список — только явно «дальнее зарубежье», чтобы не
+// зацепить реальные города/сёла КР/КЗ/УЗ по случайному совпадению.
+const UNSUPPORTED_COUNTRY =
+  /герман|немец|сша\b|америк|европ|англи|британ|франц|итали|испани|канад|австрали|турци|оаэ|дубай|китат|кита[йя]|коре[яи]/i
+const UNSUPPORTED_COUNTRY_REPLY =
+  'Продаём и доставляем только в Кыргызстан, Казахстан и Узбекистан. В Россию отправляем через СДЭК ' +
+  '(от 7 дней, точную стоимость доставки нужно уточнять отдельно — своего склада там нет). ' +
+  'В другие страны, к сожалению, доставки нет.'
 
 const COMPLAINT =
   /развод|обман(?:ули)?|кинул|мошенник|верните\s+деньги|хочу\s+возврат|ужасн(?:о|ый|ая)|отвратительн|никогда\s+(?:больше\s+)?не\s+куплю|не\s+помогл|разочарован/i
@@ -1536,6 +1551,8 @@ async function generateAndSendGreenApiReply(
     replies.push(pickVariant(SAFETY_COMPOSITION_VARIANTS))
   } else if (EFFECT_DURATION_QUESTION.test(input.text)) {
     replies.push(pickVariant(EFFECT_DURATION_VARIANTS))
+  } else if (UNSUPPORTED_COUNTRY.test(input.text)) {
+    replies.push(UNSUPPORTED_COUNTRY_REPLY)
   } else if (DELIVERY_FREE_QUESTION.test(input.text)) {
     replies.push(DELIVERY_FREE_DISCOUNT_REPLY)
   } else if (DELIVERY_COST_QUESTION.test(input.text)) {
