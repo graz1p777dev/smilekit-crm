@@ -636,7 +636,15 @@ export async function registerOutgoingGreenApiMessage(input: InboundGreenApiMess
 }
 
 const chatQueues = new Map<string, Promise<void>>()
-const globalGreenApiProcessingLimit = createLimiter(4)
+// Живой баг: лимит был 4 — и generateAndSendGreenApiReply (весь ответ, включая
+// намеренную 10-секундную паузу перед первым «Здравствуйте» и паузы
+// 0.9–1.4с между сообщениями внутри одного ответа) держит слот всё это
+// время. Под наплывом клиентов (реклама, рассылка) 4 слота быстро
+// становятся очередью — 20 клиентов подряд означало реальные 2-3 минуты
+// ожидания для тех, кто в конце очереди, хотя каждый отдельный ответ
+// укладывался в заявленные 10 секунд. 12 — тот же порядок величины, что и
+// у Supabase-пула соединений, просто с запасом под всплеск.
+const globalGreenApiProcessingLimit = createLimiter(12)
 
 async function isManagerControllingChat(
   supabase: ReturnType<typeof createAdminClient>,
