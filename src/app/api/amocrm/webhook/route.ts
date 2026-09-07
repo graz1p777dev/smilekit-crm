@@ -2,6 +2,7 @@ import { after, NextRequest, NextResponse } from 'next/server'
 import { upsertDealFromInbound } from '@/lib/deals/auto-create'
 import { processInboundAmoMessage, registerOutgoingAmoMessage } from '@/lib/amocrm/bot-reply'
 import { isBodyTooLarge, safeEqual } from '@/lib/webhook-auth'
+import { checkRateLimit, getClientIp } from '@/lib/rate-limit'
 
 // Вебхук amoCRM (Настройки → Интеграции → Webhooks на towhite.amocrm.ru).
 // Секрет в query string — единственная проверка, что запрос от amoCRM (сам
@@ -17,6 +18,17 @@ import { isBodyTooLarge, safeEqual } from '@/lib/webhook-auth'
 export async function POST(request: NextRequest) {
   if (isBodyTooLarge(request)) {
     return NextResponse.json({ error: 'Payload Too Large' }, { status: 413 })
+  }
+
+  const ip = getClientIp(request)
+  const perIp = checkRateLimit(`amocrm-webhook:ip:${ip}`, { windowMs: 60_000, max: 60 })
+  if (!perIp.allowed) {
+    return NextResponse.json({ error: 'Too Many Requests' }, { status: 429, headers: { 'Retry-After': String(perIp.retryAfterSeconds) } })
+  }
+  // Общий предохранитель на все IP разом — на случай распределённой атаки.
+  const global = checkRateLimit('amocrm-webhook:global', { windowMs: 60_000, max: 300 })
+  if (!global.allowed) {
+    return NextResponse.json({ error: 'Too Many Requests' }, { status: 429, headers: { 'Retry-After': String(global.retryAfterSeconds) } })
   }
 
   const secret = request.nextUrl.searchParams.get('secret')
