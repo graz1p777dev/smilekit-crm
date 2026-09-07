@@ -18,6 +18,7 @@ import { createAdminClient } from '@/lib/supabase/admin'
 import { smilekitBotFetch } from '@/lib/smilekit-bot-api'
 import { upsertDealFromInbound } from '@/lib/deals/auto-create'
 import { advanceDealFromBotAction } from '@/lib/deals/advance-stage'
+import { isIntegrationBotEnabled } from '@/lib/integration-status'
 import { ingestOrder } from '@/lib/orders/ingest'
 import { decrementStock, getWhatsappBotConfig } from '@/lib/greenapi/config'
 import {
@@ -911,13 +912,13 @@ export async function canSendGreenApiBotReply(
   // Общий с amoCRM-каналом аварийный выключатель (integrations.amoCRM) —
   // это переключатель «бот продаж SmileKit включён», а не именно amoCRM.
   const [integrationResult, managerControls] = await Promise.all([
-    supabase.from('integrations').select('is_active').eq('name', 'amoCRM').maybeSingle(),
+    supabase.from('integrations').select('is_active, paused_until').eq('name', 'amoCRM').maybeSingle(),
     isManagerControllingChat(supabase, chatId),
   ])
   if (integrationResult.error) return false
   const integrationActive = opts.skipIntegrationCheck
     ? true
-    : Boolean((integrationResult.data as { is_active?: boolean } | null)?.is_active)
+    : isIntegrationBotEnabled(integrationResult.data)
   return integrationActive && !managerControls
 }
 
@@ -1337,12 +1338,12 @@ async function processInboundGreenApiMessageNow(
   const externalKey = await resolveGreenApiExternalKey(supabase, input.chatId)
   const { data: integration } = await supabase
     .from('integrations')
-    .select('is_active')
+    .select('is_active, paused_until')
     .eq('name', 'amoCRM')
     .maybeSingle()
   const botEnabled = opts.skipIntegrationCheck
     ? true
-    : Boolean((integration as { is_active?: boolean } | null)?.is_active)
+    : isIntegrationBotEnabled(integration)
 
   // dryRun (Лаборатория) не должен плодить настоящие сделки в воронке —
   // тестовый chat_id не должен быть виден менеджерам как реальный лид.

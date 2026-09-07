@@ -15,6 +15,8 @@ import { syncAmoChatHistory } from '@/lib/amocrm/history'
 import { getAmoChatControlStatus, setAmoChatBotEnabled } from '@/lib/amocrm/bot-reply'
 import { sendAmoChatMessage } from '@/lib/amocrm/chat'
 import { sendGreenApiMessage, toGreenApiChatId } from '@/lib/greenapi/client'
+import { recordAudit } from '@/actions/audit'
+import { isAllowedBotControlRole } from '@/lib/bot-control-roles'
 import type {
   Deal,
   DealEmployee,
@@ -668,8 +670,25 @@ export async function getDealBotControl(dealId: string): Promise<DealBotControl>
 export async function setDealBotControl(chatId: string, botEnabled: boolean): Promise<DealActionResult> {
   const me = await getViewer()
   if (!me) return { success: false, error: 'Нет авторизации' }
+  if (!isAllowedBotControlRole(me.role)) return { success: false, error: 'Недостаточно прав' }
   try {
+    const admin = createAdminClient()
+    const { data: before } = await admin
+      .from('amocrm_chat_control')
+      .select('bot_enabled')
+      .eq('chat_id', chatId)
+      .maybeSingle()
+
     await setAmoChatBotEnabled(chatId, botEnabled, me.id)
+
+    const beforeEnabled = (before as { bot_enabled?: boolean } | null)?.bot_enabled
+    await recordAudit({
+      action: 'update',
+      resourceType: 'amocrm_chat_control',
+      resourceId: chatId,
+      summary: `Управление ботом в чате ${chatId}: ${beforeEnabled ?? '—'} → ${botEnabled}`,
+    })
+
     return { success: true }
   } catch (error) {
     return { success: false, error: error instanceof Error ? error.message : 'Не удалось переключить управление' }

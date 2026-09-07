@@ -12,6 +12,7 @@ import { advanceDealFromBotAction } from '@/lib/deals/advance-stage'
 import { getAmoChatHistory, sendAmoChatMessage, sendAmoChatVoice } from '@/lib/amocrm/chat'
 import { syncAmoChatHistory } from '@/lib/amocrm/history'
 import { createLimiter } from '@/lib/concurrency-limit'
+import { isIntegrationBotEnabled } from '@/lib/integration-status'
 
 export interface InboundAmoMessage {
   amoMessageId: string
@@ -327,13 +328,13 @@ async function canSendAmoBotReply(
   const [integrationResult, managerControls] = await Promise.all([
     supabase
       .from('integrations')
-      .select('is_active')
+      .select('is_active, paused_until')
       .eq('name', 'amoCRM')
       .maybeSingle(),
     isManagerControllingChat(supabase, chatId),
   ])
   if (integrationResult.error) return false
-  return Boolean((integrationResult.data as { is_active?: boolean } | null)?.is_active) && !managerControls
+  return isIntegrationBotEnabled(integrationResult.data) && !managerControls
 }
 
 function enqueueInboundAmoMessage(input: InboundAmoMessage, alreadyStored = false): Promise<void> {
@@ -446,10 +447,10 @@ async function processInboundAmoMessageNow(input: InboundAmoMessage, alreadyStor
   // и сделки продолжаем вести, но клиенту не отвечаем и этапы не двигаем.
   const { data: integration } = await supabase
     .from('integrations')
-    .select('is_active')
+    .select('is_active, paused_until')
     .eq('name', 'amoCRM')
     .maybeSingle()
-  const botEnabled = Boolean((integration as { is_active?: boolean } | null)?.is_active)
+  const botEnabled = isIntegrationBotEnabled(integration)
   await upsertDealFromInbound({
     externalKey,
     source: 'amocrm',
