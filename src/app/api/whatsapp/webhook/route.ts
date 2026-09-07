@@ -1,11 +1,15 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { createAdminClient } from '@/lib/supabase/admin'
 import { upsertDealFromInbound } from '@/lib/deals/auto-create'
+import { isBodyTooLarge, safeEqual } from '@/lib/webhook-auth'
 
 // Wazzup24 webhook — регистрируется через PATCH https://api.wazzup24.com/v3/webhooks
 // с webhooksUri вида https://<домен-CRM>/api/whatsapp/webhook?secret=...
 // Секрет в query string — единственная проверка, что запрос реально от Wazzup
 // (сам Wazzup ничего не подписывает).
+//
+// Без timestamp-поля в payload'е Wazzup защита от replay-атак здесь не
+// работает — делать её не из чего.
 
 interface WazzupMessage {
   messageId: string
@@ -18,8 +22,13 @@ interface WazzupMessage {
 }
 
 export async function POST(request: NextRequest) {
+  if (isBodyTooLarge(request)) {
+    return NextResponse.json({ error: 'Payload Too Large' }, { status: 413 })
+  }
+
   const secret = request.nextUrl.searchParams.get('secret')
-  if (!secret || secret !== process.env.WAZZUP_WEBHOOK_SECRET) {
+  const expectedSecret = process.env.WAZZUP_WEBHOOK_SECRET
+  if (!secret || !expectedSecret || !safeEqual(secret, expectedSecret)) {
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
   }
 

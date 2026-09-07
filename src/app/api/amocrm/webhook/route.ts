@@ -1,6 +1,7 @@
 import { after, NextRequest, NextResponse } from 'next/server'
 import { upsertDealFromInbound } from '@/lib/deals/auto-create'
 import { processInboundAmoMessage, registerOutgoingAmoMessage } from '@/lib/amocrm/bot-reply'
+import { isBodyTooLarge, safeEqual } from '@/lib/webhook-auth'
 
 // Вебхук amoCRM (Настройки → Интеграции → Webhooks на towhite.amocrm.ru).
 // Секрет в query string — единственная проверка, что запрос от amoCRM (сам
@@ -9,10 +10,18 @@ import { processInboundAmoMessage, registerOutgoingAmoMessage } from '@/lib/amoc
 // amoCRM шлёт form-urlencoded с ключами вида leads[add][0][id]. По id лида
 // добираем через API amoCRM имя лида и телефон контакта — сделка у нас
 // заводится сразу с полными данными, наш сервер остаётся мастером истории.
+//
+// Без timestamp-поля в payload'е amoCRM защита от replay-атак (повторной
+// отправки перехваченного запроса) здесь не работает — делать её не из чего.
 
 export async function POST(request: NextRequest) {
+  if (isBodyTooLarge(request)) {
+    return NextResponse.json({ error: 'Payload Too Large' }, { status: 413 })
+  }
+
   const secret = request.nextUrl.searchParams.get('secret')
-  if (!secret || secret !== process.env.AMOCRM_WEBHOOK_SECRET) {
+  const expectedSecret = process.env.AMOCRM_WEBHOOK_SECRET
+  if (!secret || !expectedSecret || !safeEqual(secret, expectedSecret)) {
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
   }
 
