@@ -43,6 +43,10 @@ export interface WhatsappBotConfig {
   deliveryGroupId: string | null
   /** Что и как форматировать при отправке подтверждённого заказа в группу. */
   deliveryPrompt: string | null
+  /** Группа, куда бот передаёт клиента менеджеру после пост-результатной
+   * цепочки дожима (CTA/«актуально?»/скидки) — см. bot-reply.ts
+   * handOffToManager. */
+  handoffGroupId: string | null
   /** Внешние системы (Bitrix и т.п.) — на них дублируются события заказов. */
   outboundWebhooks: OutboundWebhook[]
   stock: { quantity: number | null }
@@ -53,6 +57,7 @@ const DEFAULTS: WhatsappBotConfig = {
   customRules: [],
   deliveryGroupId: null,
   deliveryPrompt: null,
+  handoffGroupId: null,
   outboundWebhooks: [],
   stock: { quantity: null },
 }
@@ -69,6 +74,7 @@ export async function getWhatsappBotConfig(): Promise<WhatsappBotConfig> {
     customRules: stored?.customRules ?? [],
     deliveryGroupId: stored?.deliveryGroupId ?? null,
     deliveryPrompt: stored?.deliveryPrompt ?? null,
+    handoffGroupId: stored?.handoffGroupId ?? null,
     outboundWebhooks: stored?.outboundWebhooks ?? [],
     stock: stored?.stock ?? { quantity: null },
   }

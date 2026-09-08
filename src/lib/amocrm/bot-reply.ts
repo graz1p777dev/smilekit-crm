@@ -78,6 +78,11 @@ const WHATSAPP_WAITING_PLACEHOLDER = /ожидание сообщения.*пр�
 
 const CITY_QUESTION = 'Подскажите, пожалуйста, из какого вы города?'
 
+// Тот же живой баг, что нашли и починили в WhatsApp/Green API-канале:
+// ИИ-фолбэк отвалился — код молча делал return, клиент не получал вообще
+// ничего. Один повтор при сбое плюс честный текст вместо тишины.
+const FALLBACK_AI_FAILURE_REPLY = 'Извините, не расслышала 😊 Уточните, пожалуйста, ещё раз?'
+
 const FIRST_USE_EFFECT =
   'Гарантированно увидите эффект с первого раза 😁. После курса эффект будет постоянный✅😊'
 
@@ -149,6 +154,15 @@ function shouldSendResultsAfterLocation(text: string, historyText: string): bool
 const ORDER_INTENT =
   /хочу\s+(?:заказать|купить|взять)|(?:как|где)\s+(?:заказать|купить|оформить)|закажу|заказать|оформить|оформляйте|оформляем|\bберу\b|возьму|можно\s+оформить|реквизит|куда\s+(?:скинуть|перевести|оплатить|платить)|как\s+оплатить|способ\s+оплаты|\bqr[\s-]?код/i
 
+// Тот же живой баг, что нашли и починили в WhatsApp/Green API-канале
+// (src/lib/greenapi/bot-reply.ts): ИИ-фолбэк иногда сам, без единого слова
+// клиента о скидке, предлагает скидку — MANAGER_PROMPT и SUPERVISOR_PROMPT
+// это запрещают, но ИИ-самопроверка не 100% надёжна, нужна code-level
+// страховка. Если цена ещё не звучала в переписке, а клиент скидку не
+// просил — самовольная скидка от ИИ заведомо неуместна.
+const DISCOUNT_REQUEST = /скидк|дешевле|подешевле|акци[юя]|дорого|не\s*хватает\s*денег|нет\s*денег/i
+const AI_IMPROVISED_DISCOUNT = /скидк|1290|1190|13\s*%|20\s*%/i
+
 const SMILEKIT_RESULTS_URL = 'https://smilekit.vercel.app/#results'
 
 // templates.py: DOUBT_RESULT_REPLY — дословно по ТЗ, «гарантируем», без
@@ -203,6 +217,23 @@ export async function registerOutgoingAmoMessage(input: InboundAmoMessage): Prom
     .gte('created_at', new Date(Date.now() - 5 * 60_000).toISOString())
     .limit(1)
   if (recentBot?.length) return // эхо нашей же отправки через amojo
+
+  // Тот же живой баг, что нашли и починили в WhatsApp/Green API-канале
+  // (src/lib/greenapi/bot-reply.ts registerOutgoingGreenApiMessage): если
+  // до первого сообщения клиента в чате уже есть исходящее сообщение не от
+  // бота (авто-приветствие рекламной площадки, интеграция и т.п.) — оно
+  // записывалось как sender='operator', и настоящее первое сообщение
+  // клиента переставало считаться первым (history.length === 0 ниже
+  // становилось false), уходя мимо приветствия сразу в ИИ. Живой человек не
+  // может ответить раньше, чем клиент вообще что-то написал в этот чат —
+  // если входящих от клиента ещё не было, это не оператор, а автоматика.
+  const { data: anyClientMessage } = await supabase
+    .from('amocrm_messages')
+    .select('id')
+    .eq('chat_id', input.chatId)
+    .eq('direction', 'in')
+    .limit(1)
+  if (!anyClientMessage?.length) return
 
   await supabase.from('amocrm_messages').upsert(
     {
@@ -565,25 +596,42 @@ async function processInboundAmoMessageNow(input: InboundAmoMessage, alreadyStor
     const labMessage = isKyrgyz
       ? `${input.text}\n\nЖоопту толугу менен кыргыз тилинде бер. Орусча сөздөрдү аралаштырба.`
       : input.text
-    const lab = await smilekitBotFetch<{ reply: string }>('/internal/lab', {
+    let lab = await smilekitBotFetch<{ reply: string }>('/internal/lab', {
       method: 'POST',
       body: { message: labMessage, history },
     })
     if (!lab.ok) {
-      console.error('amocrm bot-reply: lab failed', lab.error)
-      return
+      console.error('amocrm bot-reply: lab failed, retrying once', lab.error)
+      lab = await smilekitBotFetch<{ reply: string }>('/internal/lab', {
+        method: 'POST',
+        body: { message: labMessage, history },
+      })
     }
-    const reply = lab.data.reply?.trim()
-    if (!reply) return
-    // Бот делит длинный ответ тегом <NEXT_MESSAGE> (Telegram шлёт частями) —
-    // в WhatsApp тег утекал клиенту текстом. Делим так же, как Telegram.
-    replies.push(
-      ...reply
-        .split(/<NEXT_MESSAGE>/i)
-        .map((part) => part.trim())
-        .filter(Boolean)
-    )
-    if (replies.length === 0) return
+    if (!lab.ok) {
+      console.error('amocrm bot-reply: lab failed after retry', lab.error)
+      replies.push(FALLBACK_AI_FAILURE_REPLY)
+    }
+    const reply = lab.ok ? lab.data.reply?.trim() : undefined
+    if (lab.ok && !reply) return
+    if (reply) {
+      // Бот делит длинный ответ тегом <NEXT_MESSAGE> (Telegram шлёт частями) —
+      // в WhatsApp тег утекал клиенту текстом. Делим так же, как Telegram.
+      replies.push(
+        ...reply
+          .split(/<NEXT_MESSAGE>/i)
+          .map((part) => part.trim())
+          .filter(Boolean)
+      )
+      if (replies.length === 0) return
+      if (
+        !DISCOUNT_REQUEST.test(input.text) &&
+        !historyText.includes('сом') &&
+        replies.some((part) => AI_IMPROVISED_DISCOUNT.test(part))
+      ) {
+        replies.length = 0
+        replies.push(PRODUCT_INFO, CITY_QUESTION)
+      }
+    }
   }
 
   for (let index = 0; index < replies.length; index++) {

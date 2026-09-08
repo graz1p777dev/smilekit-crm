@@ -131,12 +131,15 @@ async function transcribeGreenApiVoice(input: InboundGreenApiMessage): Promise<s
   const audio = Buffer.from(await response.arrayBuffer())
   if (!audio.length || audio.length > MAX_VOICE_BYTES) throw new Error('greenapi voice download: invalid size')
   const extension = new URL(input.mediaUrl).pathname.match(/\.([a-z0-9]{2,5})$/i)?.[1] ?? 'ogg'
-  // Тот же живой баг, что у verify_receipt — длинное голосовое (до 20 МБ)
-  // на распознавание речи может не уложиться в дефолтные 15 с.
+  // Живой баг: Gemini (распознавание речи) регулярно падал с 429/таймаутом,
+  // которые раньше не ретраились на стороне Python (см. _gemini_generate в
+  // service.py — исправлено), только 503. Теперь там до 3 попыток с паузой,
+  // худший случай — около 65 с; таймаут здесь должен быть выше этого с
+  // запасом, иначе Node оборвёт запрос раньше, чем Python успеет доретраить.
   const result = await smilekitBotFetch<{ transcript: string }>('/internal/transcribe', {
     method: 'POST',
     body: { audioBase64: audio.toString('base64'), filename: `voice.${extension}` },
-    timeoutMs: 45_000,
+    timeoutMs: 75_000,
   })
   return result.ok ? result.data.transcript.trim() || null : null
 }
@@ -171,13 +174,13 @@ const KYRGYZ_PRICE_INTENT = /баа|наркы|канча\s*(?:сом|турат
 const LINK_IN_MESSAGE = /(?:https?:\/\/|www\.)\S+/i
 const GREETING_ONLY = /^\s*(?:улыбка|здра(?:в)?ствуйте|здра(?:в)?ствуй|привет|добрый\s+(?:день|вечер|утро))[!,.?\s😊👋]*$/iu
 
-const CITY_QUESTION = 'Подскажите, пожалуйста, из какого вы города?'
+const CITY_QUESTION = 'Подскажите, пожалуйста, из какого вы города?)'
 
 // Отправляется голосовым (.ogg, см. voiceReplies ниже) — клиент текст не
 // видит, поэтому вариации бессмысленны, текст только один.
 const FIRST_USE_EFFECT = DEFAULT_FIRST_USE_EFFECT
 
-const LOW_STOCK_DISCOUNT_CTA = DEFAULT_LOW_STOCK_CTA
+export const LOW_STOCK_DISCOUNT_CTA = DEFAULT_LOW_STOCK_CTA
 
 // Вариации чек-листа оформления — тот же список из трёх пунктов, только
 // другая вводная фраза, чтобы один и тот же клиент не видел дословно
@@ -226,7 +229,7 @@ const EFFECT_DURATION_VARIANTS = ['До 3 месяцев 😊', 'Эффекта 
 // может быть в списке regex (см. REGIONAL_DELIVERY_FALLBACK ниже): раньше
 // такие случаи (например, «Село.Арчалы») уходили в ИИ, который сам выдумывал
 // сроки и стоимость доставки — теперь только заранее утверждённый текст.
-const REGIONAL_DELIVERY_TEMPLATE = 'Да, у нас есть доставка через Ылдам Экспресс 🚚✅ За 1 день доставим прям до дома.'
+const REGIONAL_DELIVERY_TEMPLATE = 'Да, у нас есть доставка, осуществляется через Ылдам Экспресс 🚚✅\nЗа 1 день доставим прямо до дома.'
 
 // Живой баг: список городов был совсем коротким (по паре на страну), и всё,
 // что в него не попадало — включая настоящие города/райцентры — уходило в
@@ -236,33 +239,34 @@ const REGIONAL_DELIVERY_TEMPLATE = 'Да, у нас есть доставка ч
 // CLAUDE.md (Кыргызстан/Казахстан/Узбекистан + Россия через СДЭК) —
 // известный город теперь узнаётся напрямую, а не по грубому «похоже на
 // ответ» правилу.
-const OTHER_KZ_REGION_TEMPLATE = 'Отлично, доставим — по остальным регионам Казахстана ориентировочно за 1–3 дня'
-const OTHER_UZ_CITY_TEMPLATE = 'Отлично, доставим — точный срок по Узбекистану уточним отдельно'
+const OTHER_KZ_REGION_TEMPLATE = 'Да, у нас есть доставка, осуществляется через СДЭК ✅'
+const OTHER_UZ_CITY_TEMPLATE = 'Да, у нас есть доставка. В течение 1 дня доставим.\nОсуществляется через БТС Экспресс 🚚'
+const RUSSIA_DELIVERY_TEMPLATE = 'Да, у нас есть доставка, осуществляется через СДЭК ✅'
 
 const DELIVERY_TEMPLATES: [RegExp, string][] = [
   // Префиксом, а не целым словом (как остальные города ниже) — живой баг:
   // опечатка «бишкеа» не совпадала с «бишкек» и уходила в общий шаблон
-  // «Ылдам Экспресс» вместо 30-минутной доставки по Яндексу. Матчится по
-  // normalized ниже, где щ уже сложено в ш — «бищкека» тоже совпадает.
-  [/бишке|токмо/, 'Отлично, у нас есть доставка через Яндекс, за 30 минут доставим'],
+  // «Ылдам Экспресс» вместо доставки по Яндексу. Матчится по normalized
+  // ниже, где щ уже сложено в ш — «бищкека» тоже совпадает.
+  [/бишке|токмо/, 'Да, у нас есть доставка, по Бишкеку осуществляется через Яндекс 🚚\nПосле оформления будет у вас через 20–40 минут ✅'],
   // Остальной Кыргызстан — райцентры и крупные города вне Бишкека/Токмока.
   [
     /(?<![a-zа-яё0-9_])ош(?![a-zа-яё0-9_])|джалал-?абад|каракол|нарын|талас|баткен|балыкч|манас|кара-?балт|кант(?![а-яё])|кызыл-?кия|узген|кара-?к[уе]л|майлуу-?су|исфана|кочкор|кемин|чолпон-?ата|ат-?баши|сузак|араван|ноокат|айдаркен|сулюкта|кара-?су(?![а-яё])|исык-?кул|иссык-?кул|жалал-?абад/,
     REGIONAL_DELIVERY_TEMPLATE,
   ],
-  [/алмат/, 'Отлично, доставим в Алматы — ориентировочно в течение 30 минут'],
+  [/алмат/, 'Да, у нас есть доставка в Алматы 😇📍\nВ течение дня доставим или же в течение 30–40 минут через Яндекс.'],
   [
     /астан|шымкент|караганд|актюбе|актобе|тараз(?![а-яё])|павлодар|усть-?камен|өскемен|оскемен|семей|атырау|костанай|кызылорда|уральск|орал(?![а-яё])|петропавл|актау|темиртау|туркестан/,
     OTHER_KZ_REGION_TEMPLATE,
   ],
-  [/ташкент/, 'Отлично, доставим в Ташкент — ориентировочно в течение 1 часа'],
+  [/ташкент/, 'Да, у нас есть доставка в Ташкенте 😇📍\nВ течение дня доставим или же в течение 30–40 минут через Яндекс.'],
   [
     /самарканд|бухар|андижан|наманган|фергана|нукус|карши(?![а-яё])|термез|ургенч|коканд|жиззах|джиззах/,
     OTHER_UZ_CITY_TEMPLATE,
   ],
   [
     /москв|росси|петербург|питер(?![а-яё])|новосибирск|екатеринбург|казан(?![а-яё])/,
-    'Своего склада в России нет, отправляем через СДЭК — доставка от 7 дней. Точную стоимость доставки уточним отдельно',
+    RUSSIA_DELIVERY_TEMPLATE,
   ],
 ]
 
@@ -289,7 +293,7 @@ function deliveryTemplateForCity(text: string): string | null {
 // Живой баг №2: «Хорошо, спасибо» (два слова из блок-листа подряд) не
 // совпадало — регекс проверял ровно одно слово в начале/конце строки, а не
 // любую комбинацию. Обёртка (?:...)+ ловит любое число таких слов подряд.
-const NOT_A_LOCATION_REPLY =
+export const NOT_A_LOCATION_REPLY =
   /^(?:(?:спасибо|спс|благодар\w*|хорошо|ладно|ок|окей|поняла?|понятно|ясно|отдыхайте|пока|до\s*связи|до\s*свидания|угу|ага|давайте(?:\s+оформ[а-яё]*)?|потом|позже|подума[юем]|извини\w*|прости\w*|удачи|спокойной\s*ночи|доброй\s*ночи|хорошего\s*дня)[\s,!.)😊😉👍🙏]*)+$/i
 
 function shouldSendResultsAfterLocation(text: string, historyText: string): boolean {
@@ -312,7 +316,7 @@ function shouldSendResultsAfterLocation(text: string, historyText: string): bool
 // стороны позиции оказываются \W, границы нет, и \bоформ\w* НИКОГДА не
 // совпадал ни с чем. Тот же класс бага чинится по всему файлу заменой \b на
 // (?<![a-zа-яё0-9_])/(?![a-zа-яё0-9_]) вокруг кириллических слов.
-const ORDER_INTENT =
+export const ORDER_INTENT =
   /хочу\s+(?:заказать|купить|взять|одну|одн[уо]\s+(?:коробк|пачк|упаковк)|сделать\s+заказ)|(?:как|где|можно)\s+(?:заказать|купить|оформить|оплатить|сделать\s+заказ)|закажу|заказать|куплю|(?<![a-zа-яё0-9_])оформ\w*|(?<![a-zа-яё0-9_])беру(?![a-zа-яё0-9_])|возьму|реквизит|куда\s+(?:скинуть|перевести|оплатить|платить|переводить)|как\s+(?:оплатить|платить|оплачивать)|способ\s+оплаты|оплачу|готов[аы]?\s+(?:оплатить|купить|заказать)|номер\s+карты|скин(?:ь|ьте)\s+(?:номер|реквизит|карту|qr)|\bqr[\s-]?код/i
 
 // Живой баг: «Мы можем завтра оформить заказ?» — вопрос про будущее, а
@@ -321,7 +325,7 @@ const ORDER_INTENT =
 // («можем/можно ли... завтра/позже... оформить») с явным словом
 // будущего — не сигнал «оформляйте прямо сейчас», отдаём ИИ, который уже
 // умеет вежливо ответить «конечно, будем ждать» (см. prompts.py).
-const FUTURE_ORDER_QUESTION =
+export const FUTURE_ORDER_QUESTION =
   /(?:можем|можно|получится|успе[юем]{2})\s+(?:ли\s+)?(?:завтра|эртен|позже|попозже|послезавтра|на\s+следующей\s+неделе)[^?]*оформ|оформ[^?]*(?:завтра|эртен|позже|попозже|послезавтра|на\s+следующей\s+неделе)[^?]*\?/i
 
 // Живой баг: клиент прямо просит оплату при получении («хочу оплатить
@@ -334,12 +338,41 @@ const FUTURE_ORDER_QUESTION =
 // случая в истории чатов) писали «оплатить» (инфинитив) — \w-класс тут ни
 // при чём, просто не предусмотрели форму. [а-яё]* вместо жёсткого списка
 // окончаний покрывает оплачу/оплатить/оплачивать и т.п. разом.
-const PAY_ON_DELIVERY_REQUEST =
+export const PAY_ON_DELIVERY_REQUEST =
   /(?:оплат[а-яё]*|заплач[а-яё]*)\s*(?:ли\s+)?(?:после|как\s+только|когда|при)[^.!?\n]{0,25}(?:приед|получ|доставк|привез)|оплат[ауы]?\s*при\s*получении|можно\s*(?:просто\s*)?адрес\s*\??|наличными\s*(?:курьеру|при\s*получении)|оплачу\s*курьеру/i
 const PAY_ON_DELIVERY_ACK_REPLY =
   'Хорошо, оплата при получении 😊 Пришлите, пожалуйста, адрес доставки и номер телефона — оформлю доставку.'
 const COD_WAIT_ANCHOR_ID_PREFIX = 'ga:claim:cod-wait'
 const COD_WAIT_ANCHOR_TEXT = '[ожидание адреса — оплата при получении]'
+
+// После того как заказ реально оформлен (чек принят или подтверждена оплата
+// при получении — см. оба места записи ORDER_PLACED_ANCHOR_ID_PREFIX ниже),
+// бот больше не придумывает статус доставки сам — этого он не знает, знает
+// курьер/менеджер в группе доставки. На вопросы про доставку/курьера дальше
+// молчим (отвечает человек), на остальные вопросы бот продолжает отвечать
+// как обычно.
+const ORDER_PLACED_ANCHOR_ID_PREFIX = 'ga:claim:order-placed'
+const POST_ORDER_DELIVERY_QUESTION =
+  /достав\w*|курьер\w*|привез(?:ут|ли|ёте|ете)?|отправ(?:или|лен\w*|ьте)?|где\s+(?:мой\s+)?заказ|когда\s+(?:буд|прид|приед|получ)/iu
+
+async function hasPlacedOrder(supabase: ReturnType<typeof createAdminClient>, chatId: string): Promise<boolean> {
+  const { data } = await supabase
+    .from('amocrm_messages')
+    .select('id')
+    .eq('amo_message_id', `${ORDER_PLACED_ANCHOR_ID_PREFIX}:${chatId}`)
+    .maybeSingle()
+  return Boolean(data)
+}
+
+async function markOrderPlaced(supabase: ReturnType<typeof createAdminClient>, chatId: string): Promise<void> {
+  await supabase.from('amocrm_messages').upsert({
+    amo_message_id: `${ORDER_PLACED_ANCHOR_ID_PREFIX}:${chatId}`,
+    chat_id: chatId,
+    direction: 'out',
+    sender: 'bot',
+    text: '[заказ оформлен]',
+  }, { onConflict: 'amo_message_id' })
+}
 
 // Короткое согласие само по себе намерения не выражает («давайте» может
 // относиться к чему угодно) — засчитываем его как заказ, только если прошлое
@@ -393,29 +426,35 @@ const ORDER_CTA_MARKER = /оформ\w*[^.!?]*\?/i
 // только адрес+телефон, менеджеру пришлось руками дописывать «и чек»).
 // [^.!?] без \n в исключениях — та же защита от переползания на соседние
 // предложения, но перенос строки внутри списка теперь не обрывает совпадение.
-const AI_IMPROVISED_CHECKLIST =
+export const AI_IMPROVISED_CHECKLIST =
   /(?:чек|скриншот)[^.!?]{0,40}(?:оплат|перевод)|(?:адрес|номер\s+телефона)[^.!?]{0,40}(?:чек|оплат)|реквизит|(?:пришлите|отправьте|напишите|укажите|скиньте)[^.!?]{0,40}(?:адрес|чек|номер\s+телефона)|(?:для|чтобы)\s+оформ\w*[^.!?]{0,60}(?:нужн|пришлите|отправьте|укажите)/i
 
-// Подводка перед фото — дословно как в Telegram (__main__.py).
-const RESULTS_INTRO = 'Вот результат нашего клиента до и после применения 👇'
+// Живой баг: клиент пришёл по рекламе (Instagram-«Click-to-WhatsApp»), где
+// Meta сама шлёт авто-приветствие ДО первого сообщения клиента — это ломало
+// history.length===0 (см. фикс в registerOutgoingGreenApiMessage выше) и
+// уводило первый настоящий вопрос клиента в ИИ-фолбэк вместо приветствия.
+// ИИ там САМ, без единого слова о скидке от клиента, предложил 13% — хотя
+// MANAGER_PROMPT и SUPERVISOR_PROMPT это прямо запрещают. Промпт — не
+// гарантия: ИИ-самопроверка (SUPERVISOR_PROMPT) в этом самом случае тоже не
+// сработала. Это код-level страховка на тот же класс ошибки, а не только
+// upstream-фикс истории — если цена вообще ещё не звучала в переписке, а
+// клиент скидку не просил (DISCOUNT_REQUEST), самовольная скидка от ИИ
+// заведомо неуместна и заменяется на обычное приветствие с ценой.
+export const AI_IMPROVISED_DISCOUNT = /скидк|1290|1190|13\s*%|20\s*%/i
 
-// CTA после блока результата (доставка -> фото -> голосовое). Раньше шёл
-// сразу третьим сообщением — клиент не успевал даже дослушать голосовое,
-// как бот уже «оформлял». Теперь CTA уходит через FOLLOWUP_CTA_SILENCE_MS
-// (5 минут) молчания клиента (followup-scheduler.ts): в конце блока в
-// историю пишется служебный якорь FOLLOWUP_ANCHOR_TEXT, и если он так и
-// остался последней записью в чате — планировщик шлёт этот вопрос. Если
-// клиент что-то написал — якорь перестаёт быть последним, CTA не уходит
-// (дальше бот сам предлагает оформить в ходе диалога). Скидку сама по
-// себе не предлагаем — только если клиент на этот вопрос ответит отказом
-// (NEGATIVE_ONLY ниже).
+// Подводка перед фото — дословно как в Telegram (__main__.py).
+const RESULTS_INTRO = 'Вот такой эффект будет уже после первого применения 👇'
+
+// ИИ-фолбэк отвалился дважды подряд — честный текст вместо полной тишины
+// (см. живой баг в generateAndSendGreenApiReply: клиент спросил «А какой
+// адрес?», ответа не было 6 часов, пока не написал то же самое повторно).
+const FALLBACK_AI_FAILURE_REPLY = 'Извините, не расслышала 😊 Уточните, пожалуйста, ещё раз?'
+
+// CTA «вам оформить доставку?», который бот сам предлагает в ходе диалога.
+// Скидку сама по себе не предлагаем — только если клиент на этот вопрос
+// ответит отказом (NEGATIVE_ONLY ниже).
 export const ORDER_CTA_TEXT = 'Вам оформить доставку?'
-// Якорь — тот же приём, что ga:claim:*: сидит в amocrm_messages, клиенту не
-// уходит, в «Лаборатории» и истории для ИИ скрыт (префикс ga:claim:).
-export const FOLLOWUP_ANCHOR_ID_PREFIX = 'ga:claim:followup'
-export const FOLLOWUP_ANCHOR_TEXT = '[ожидание оформления]'
-export const FOLLOWUP_CTA_ID_PREFIX = 'ga:bot:cta-followup'
-// Тот же якорный приём, что FOLLOWUP_ANCHOR, но для вопроса CITY_QUESTION:
+// Тот же якорный приём, что ga:claim:*, но для вопроса CITY_QUESTION:
 // если клиент не назвал город 5 минут, followup-scheduler.ts сам присылает
 // блок «до/после» (без доставки и голосового — город ещё не известен),
 // чтобы не терять клиента, который застрял на этом вопросе молча.
@@ -434,6 +473,125 @@ export const ORDER_CTA_VARIANTS = [
   'Оформить вам заказ с доставкой?',
   'Готовы оформить доставку?',
 ]
+
+// После блока результата (фото до/после + голосовое) бот больше не пишет
+// сам ничего — ни CTA, ни дожима, ни скидок (см. isAwaitingPostResultsReply
+// ниже). Первый же ответ клиента после этого сразу уходит менеджеру в
+// рабочую группу «Передача от бота» (handOffToManager).
+export const POST_RESULTS_STAGE_ANCHOR_ID_PREFIX = 'ga:claim:post-results-stage'
+export const HANDED_OFF_ANCHOR_ID_PREFIX = 'ga:claim:handed-off'
+
+async function isHandedOffToManager(
+  supabase: ReturnType<typeof createAdminClient>,
+  chatId: string
+): Promise<boolean> {
+  const { data } = await supabase
+    .from('amocrm_messages')
+    .select('id')
+    .eq('amo_message_id', `${HANDED_OFF_ANCHOR_ID_PREFIX}:${chatId}`)
+    .maybeSingle()
+  return Boolean(data)
+}
+
+async function buildHandoffCardText(
+  supabase: ReturnType<typeof createAdminClient>,
+  chatId: string,
+  lastMessageText: string
+): Promise<string> {
+  const { data: historyRows } = await supabase
+    .from('amocrm_messages')
+    .select('text, sender')
+    .eq('chat_id', chatId)
+    .order('created_at', { ascending: true })
+    .limit(200)
+  const historyText = ((historyRows ?? []) as { text: string; sender: string }[])
+    .map((row) => row.text)
+    .join(' ')
+    .toLowerCase()
+    .replace(/щ/g, 'ш')
+  let city = ''
+  for (const [pattern] of DELIVERY_TEMPLATES) {
+    if (pattern.test(historyText)) {
+      const match = historyText.match(pattern)
+      if (match) {
+        city = match[0]
+        break
+      }
+    }
+  }
+  return (
+    'Новый клиент для менеджера\n' +
+    `Номер: +${chatId}\n` +
+    `Город: ${city || 'не указан'}\n` +
+    `Последнее сообщение: «${lastMessageText}»`
+  )
+}
+
+async function sendHandoffCard(
+  supabase: ReturnType<typeof createAdminClient>,
+  chatId: string,
+  lastMessageText: string
+): Promise<void> {
+  const botConfig = await getWhatsappBotConfig()
+  if (!botConfig.handoffGroupId) return
+  const cardText = await buildHandoffCardText(supabase, chatId, lastMessageText)
+  try {
+    await withRetries(() => sendGreenApiDeliveryGroup(botConfig.handoffGroupId, cardText))
+  } catch (error) {
+    console.error('greenapi bot-reply: handoff card send failed after retries', error)
+  }
+}
+
+/**
+ * Клиент ответил на CTA/дожим/скидку из пост-результатной цепочки — дальше
+ * бот эту переписку не ведёт вообще, карточка клиента уходит в рабочую
+ * группу «Передача от бота», а дальше отвечает менеджер (см. документ
+ * «Логика бота — первичный контакт», п. 6–11).
+ */
+async function handOffToManager(
+  supabase: ReturnType<typeof createAdminClient>,
+  input: InboundGreenApiMessage
+): Promise<void> {
+  await supabase.from('amocrm_messages').upsert({
+    amo_message_id: `${HANDED_OFF_ANCHOR_ID_PREFIX}:${input.chatId}`,
+    chat_id: input.chatId,
+    direction: 'out',
+    sender: 'bot',
+    text: '[передано менеджеру]',
+  }, { onConflict: 'amo_message_id' })
+  // Цепочка дожима больше не нужна — менеджер уже в курсе, дальнейшие
+  // автоматические шаги (актуально?/скидки) только мешали бы.
+  await supabase.from('amocrm_messages').delete().eq('amo_message_id', `${POST_RESULTS_STAGE_ANCHOR_ID_PREFIX}:${input.chatId}`)
+  await sendHandoffCard(supabase, input.chatId, input.text)
+}
+
+const HANDOFF_REMINDER_INTERVAL_MS = 24 * 60 * 60_000
+
+/**
+ * Клиент продолжает писать уже после передачи менеджеру — карточку не
+ * дублируем на каждое такое сообщение (иначе группа завалена одним и тем же
+ * клиентом), но если менеджер за сутки так и не среагировал, шлём то же
+ * напоминание повторно, а не молча теряем зависшего клиента. Возвращает
+ * true, если чат передан менеджеру (бот его дальше не обрабатывает) —
+ * вне зависимости от того, ушло ли в этот раз напоминание.
+ */
+async function maybeRemindHandoff(
+  supabase: ReturnType<typeof createAdminClient>,
+  input: InboundGreenApiMessage
+): Promise<boolean> {
+  const { data } = await supabase
+    .from('amocrm_messages')
+    .select('id, created_at')
+    .eq('amo_message_id', `${HANDED_OFF_ANCHOR_ID_PREFIX}:${input.chatId}`)
+    .maybeSingle()
+  if (!data) return false
+  const { id, created_at } = data as { id: number; created_at: string }
+  if (Date.now() - new Date(created_at).getTime() >= HANDOFF_REMINDER_INTERVAL_MS) {
+    await supabase.from('amocrm_messages').update({ created_at: new Date().toISOString() }).eq('id', id)
+    await sendHandoffCard(supabase, input.chatId, input.text)
+  }
+  return true
+}
 
 // Живой баг: клиент сам сказал «завтра»/«эртен» (Telegram-бот это уже умеет,
 // см. promised_clock_time_hours/promised_calendar_date_hours в sales.py) —
@@ -482,6 +640,22 @@ export const IDLE_NUDGE_VARIANTS = [
 export const DISCOUNT_OFFER_13_TEXT = 'Хорошо, сделаю для вас скидку 13% — 1290 сом вместо 1490 сом. Оформляем?'
 export const DISCOUNT_OFFER_20_TEXT = 'Хорошо, для вас сделаю специальную цену — 1190 сом вместо 1490 сом. Такое предлагаю нечасто. Оформляем?'
 export const DISCOUNT_REJECT_TEXT = 'Дешевле, к сожалению, не могу — 1190 сом уже максимальная скидка. Оформляем по этой цене?'
+
+// Якорь ставится один раз сразу после блока результата (см. запись
+// POST_RESULTS_STAGE_ANCHOR_ID_PREFIX ниже по файлу) и снимается либо тут
+// (handOffToManager), либо никогда автоматически не продвигается —
+// followup-scheduler.ts эту стадию больше не трогает.
+async function isAwaitingPostResultsReply(
+  supabase: ReturnType<typeof createAdminClient>,
+  chatId: string
+): Promise<boolean> {
+  const { data } = await supabase
+    .from('amocrm_messages')
+    .select('id')
+    .eq('amo_message_id', `${POST_RESULTS_STAGE_ANCHOR_ID_PREFIX}:${chatId}`)
+    .maybeSingle()
+  return Boolean(data)
+}
 
 // Реальный текст уже отправленной и сработавшей рассылки (campaigns.message,
 // «Скидка 13 процентов 🐇», completed) — переиспользуем его же, а не
@@ -554,22 +728,41 @@ const RESULT_PHOTOS: readonly (readonly [string, string])[] = [
 // видит, поэтому вариации бессмысленны, текст только один.
 const DOUBT_RESULT_REPLY = DEFAULT_DOUBT_RESULT_REPLY
 
-const SCAM_DOUBT =
+export const SCAM_DOUBT =
   /(?:вы\s+)?(?:точно\s+)?не\s+мошенник|мошенники\s*\?|(?:это\s+)?(?:точно\s+)?не\s+(?:обман|развод|скам|фейк)|без\s+обмана|(?:это\s+)?(?:все|всё)?\s*реально\s*(?:да|\?)|не\s+кин[её]те|вам\s+можно\s+доверять|можно\s+(?:ли\s+)?вам\s+верить|вы\s+настоящие/i
 
 // Тот же роутер-сценарий "safety_composition", что в Telegram-боте
 // (service.py ROUTE_TOOL): вопрос про состав/безопасность/вред для эмали
 // или дёсен. Раньше в WhatsApp такой ветки не было вовсе — вопрос уходил в
 // ИИ, который сочинял свой ответ вместо утверждённого текста.
-const SAFETY_COMPOSITION_DOUBT =
-  /вред(?:ит|но|ен)?[^.!?]{0,15}(?:эмал|дёсн|десн)|(?:эмал|дёсн|десн)[^.!?]{0,15}вред|опасн\w*[^.!?]{0,15}(?:эмал|дёсн|десн|состав)|(?:безопасн\w*[^.!?]{0,15}состав|состав[^.!?]{0,15}безопасн)/i
+// Вопрос сформулирован через «вред»/«опасно» (отрицательная рамка, «вредно
+// для эмали?», «не опасно?») — на такой вопрос естественно звучит голосовое
+// (оно начинается с «нет, конечно»). Вопрос через «безопасно» (утвердительная
+// рамка, «это безопасно?») — «нет, конечно» в ответ прозвучит наоборот,
+// как подтверждение опасности, поэтому здесь остаётся только текст.
+export const SAFETY_COMPOSITION_HARM_DOUBT =
+  /вред(?:ит|но|ен)?[^.!?]{0,15}(?:эмал|дёсн|десн)|(?:эмал|дёсн|десн)[^.!?]{0,15}вред|опасн\w*[^.!?]{0,15}(?:эмал|дёсн|десн|состав)/i
+export const SAFETY_COMPOSITION_SAFE_DOUBT =
+  /безопасн\w*[^.!?]{0,15}состав|состав[^.!?]{0,15}безопасн/i
+const SAFETY_COMPOSITION_DOUBT = new RegExp(
+  `${SAFETY_COMPOSITION_HARM_DOUBT.source}|${SAFETY_COMPOSITION_SAFE_DOUBT.source}`,
+  'i'
+)
 
-const SAFETY_COMPOSITION_VARIANTS = [
+export const SAFETY_COMPOSITION_VARIANTS = [
   DEFAULT_SAFETY_COMPOSITION,
   'Состав полностью безопасен и никак не вредит эмали зубов. То фото результата, что я присылала, — это мои собственные зубы 😊 Могу прислать состав, если интересно.',
   'Не переживайте, состав абсолютно безопасный, эмаль не повреждает. Результат на фото — мои собственные зубы. Хотите — пришлю состав.',
   'Состав у нас безопасный, эмали не вредит совсем. И фото результата, которое я отправляла, — это мои собственные зубы. Если нужно, отправлю состав.',
 ]
+
+// Второе голосовое в блоке результата (после доставки → фото до/после →
+// «гарантированно увидите эффект…») — проактивно снимает возражение про
+// безопасность состава, не дожидаясь вопроса. Отдельный текст (а не один
+// из SAFETY_COMPOSITION_VARIANTS выше) — иначе оба места отправки не
+// различить по одному только тексту при выборе имени голосового файла.
+export const RESULTS_BLOCK_SAFETY_TEXT =
+  'Состав у нас полностью безопасный, эмаль не повреждает — можем прислать состав, если интересно.'
 
 // Живой баг: клиент спросил стоимость/платность доставки отдельно от
 // названия города («Имею ввиду доставку») — ИИ-фолбэк выдумал «бесплатно»,
@@ -578,7 +771,7 @@ const SAFETY_COMPOSITION_VARIANTS = [
 // это детерминированная ветка — деньги не оставляем на усмотрение ИИ.
 const DELIVERY_COST_QUESTION =
   /сколько\s*(?:будет|стоит|выйдет)[^?]{0,20}достав|достав\w*[^?]{0,15}(?:плат|бесплат)|(?:плат|бесплат)\w*[^?]{0,15}достав|имею\s*ввиду\s*доставк/i
-const DELIVERY_PAYMENT_BISHKEK = 'Доставка курьером, оплата — при получении 😊'
+export const DELIVERY_PAYMENT_BISHKEK = 'Доставка курьером, оплата — при получении 😊'
 const DELIVERY_PAYMENT_REGIONS = 'По регионам — предоплата 400 сом, остальная сумма при получении 😊'
 
 // Клиент прямо спрашивает, бесплатна ли доставка — отдельно от общего
@@ -590,6 +783,23 @@ const DELIVERY_FREE_DISCOUNT_REPLY =
   'К сожалению, бесплатной доставки нет 😊 Но можем сделать скидку 200 сом на товар — получится 1290 сом, ' +
   'и с учётом доставки выйдет примерно как обычная цена. Оформляем?'
 
+// Клиент спрашивает про самовывоз — точки/склада для выдачи нет, мы онлайн-
+// магазин, работаем только через курьерскую доставку. Оплата при получении
+// как альтернатива самовывозу — та же гарантия «не платить вперёд», просто
+// без визита клиента к нам.
+export const PICKUP_QUESTION = /самовывоз|сам\w*\s*забра\w*|забра\w*\s*сам\w*/i
+const PICKUP_REPLY =
+  'Самовывоза нет, мы онлайн-магазин без точки выдачи 😊 Но можем сделать оплату при получении — курьер привезёт, оплатите на месте.'
+
+// Живой баг: клиент спросил «А какой адрес?», это не совпадало ни с одним
+// шаблоном (PAY_ON_DELIVERY_REQUEST ждёт «можно адрес?», не голый вопрос) —
+// уходило в ИИ-фолбэк, а тот ответил расплывчато. Клиент на самом деле
+// спрашивает, какие данные от него нужны — отвечаем конкретной инструкцией,
+// а не переспрашиваем и не гадаем.
+export const ADDRESS_QUESTION = /^\s*(?:а\s+)?как(?:ой|ая)?\s+адрес\s*[?？]?\s*$|^\s*адрес\s*[?？]\s*$/i
+const ADDRESS_QUESTION_REPLY =
+  'Напишите, пожалуйста, ваш адрес и номер телефона одним сообщением — оформим доставку 😊'
+
 // Живой баг: клиент спросил про страну, куда доставки нет («Германия,
 // привезёте?») — «привез»/«достав» в тексте включало deliveryQuestion в
 // shouldSendResultsAfterLocation, и бот врал про доставку через «Ылдам
@@ -597,12 +807,9 @@ const DELIVERY_FREE_DISCOUNT_REPLY =
 // Казахстане, Узбекистане (Россия — отдельно, через СДЭК от 7 дней, без
 // местного склада). Список — только явно «дальнее зарубежье», чтобы не
 // зацепить реальные города/сёла КР/КЗ/УЗ по случайному совпадению.
-const UNSUPPORTED_COUNTRY =
+export const UNSUPPORTED_COUNTRY =
   /герман|немец|сша\b|америк|европ|англи|британ|франц|итали|испани|канад|австрали|турци|оаэ|дубай|китат|кита[йя]|коре[яи]/i
-const UNSUPPORTED_COUNTRY_REPLY =
-  'Продаём и доставляем только в Кыргызстан, Казахстан и Узбекистан. В Россию отправляем через СДЭК ' +
-  '(от 7 дней, точную стоимость доставки нужно уточнять отдельно — своего склада там нет). ' +
-  'В другие страны, к сожалению, доставки нет.'
+const UNSUPPORTED_COUNTRY_REPLY = 'К сожалению, в другие страны доставки пока нет.'
 
 const COMPLAINT =
   /развод|обман(?:ули)?|кинул|мошенник|верните\s+деньги|хочу\s+возврат|ужасн(?:о|ый|ая)|отвратительн|никогда\s+(?:больше\s+)?не\s+куплю|не\s+помогл|разочарован/i
@@ -652,6 +859,25 @@ export async function registerOutgoingGreenApiMessage(input: InboundGreenApiMess
     .gte('created_at', new Date(Date.now() - 24 * 3600_000).toISOString())
     .limit(1)
   if (recentBot?.length) return // эхо нашей же отправки
+
+  // Живой баг: клиент пришёл по рекламе «Click-to-WhatsApp» из Instagram —
+  // Meta сама шлёт автоматическое приветствие («напишите слово "Улыбка"...»)
+  // ДО того, как клиент вообще что-то написал. Это исходящее сообщение не от
+  // нашего бота — записывалось как sender='operator', и следующий реальный
+  // первый вопрос клиента после него уже не считался «первым сообщением»
+  // (history.length === 0 переставало быть true) — уходил в ИИ-фолбэк вместо
+  // приветствия с ценой, а ИИ ещё и сам предлагал скидку, которую никто не
+  // просил (MANAGER_PROMPT это прямо запрещает). Признак: живой оператор не
+  // может написать раньше, чем клиент хоть что-то прислал в этот чат — если
+  // входящих от клиента ещё не было вообще, это не человек, а автоматика
+  // рекламной платформы, и в историю чата её включать не нужно.
+  const { data: anyClientMessage } = await supabase
+    .from('amocrm_messages')
+    .select('id')
+    .eq('chat_id', input.chatId)
+    .eq('direction', 'in')
+    .limit(1)
+  if (!anyClientMessage?.length) return
 
   await supabase.from('amocrm_messages').upsert(
     {
@@ -812,21 +1038,6 @@ export async function sendResultsPhotoOnly(
     }
     await new Promise((resolve) => setTimeout(resolve, 700))
   }
-
-  // Живой баг: если клиент так и не назвал город, полный блок (доставка +
-  // голосовое) никогда не срабатывал — а вместе с ним и CTA «оформляем со
-  // скидкой?» (он завязан на needsFollowupAnchor в основном потоке). Клиент
-  // получал фото и... тишину навсегда, даже если потом молчал часами. Тот
-  // же якорь, что и у полного блока — followup-scheduler.ts не различает,
-  // как именно дошли до конца показа результата.
-  const { error: anchorError } = await supabase.from('amocrm_messages').upsert({
-    amo_message_id: `${FOLLOWUP_ANCHOR_ID_PREFIX}:city-timeout:${chatId}`,
-    chat_id: chatId,
-    direction: 'out',
-    sender: 'bot',
-    text: FOLLOWUP_ANCHOR_TEXT,
-  }, { onConflict: 'amo_message_id', ignoreDuplicates: true })
-  if (anchorError) console.error('greenapi bot-reply: city-timeout followup anchor failed', anchorError.message)
 }
 
 /**
@@ -910,15 +1121,16 @@ export async function canSendGreenApiBotReply(
   if (!isPhoneAllowedForBot(chatId)) return false
   // Общий с amoCRM-каналом аварийный выключатель (integrations.amoCRM) —
   // это переключатель «бот продаж SmileKit включён», а не именно amoCRM.
-  const [integrationResult, managerControls] = await Promise.all([
+  const [integrationResult, managerControls, handedOff] = await Promise.all([
     supabase.from('integrations').select('is_active').eq('name', 'amoCRM').maybeSingle(),
     isManagerControllingChat(supabase, chatId),
+    isHandedOffToManager(supabase, chatId),
   ])
   if (integrationResult.error) return false
   const integrationActive = opts.skipIntegrationCheck
     ? true
     : Boolean((integrationResult.data as { is_active?: boolean } | null)?.is_active)
-  return integrationActive && !managerControls
+  return integrationActive && !managerControls && !handedOff
 }
 
 function enqueueInboundGreenApiMessage(
@@ -1049,6 +1261,7 @@ async function handleGreenApiReceipt(
   }).then((result) => {
     if (result.error) console.error('greenapi bot-reply: order ingest failed', result.error)
   })
+  await markOrderPlaced(supabase, input.chatId)
   if ((dealRow as { id?: string } | null)?.id) {
     // ingestOrder не знает про deal_id — привязываем отдельно.
     const { data: orderRow } = await supabase
@@ -1205,16 +1418,25 @@ async function handleCodAddressSubmission(
   externalKey: string,
   opts: GreenApiTestOptions
 ): Promise<boolean> {
-  const { data: recentRows } = await supabase
+  // Живой баг: якорь искался как «последняя запись перед этим сообщением»,
+  // а любое следующее сообщение клиента засчитывалось за адрес без проверки
+  // содержимого — клиент написал «Хорошо подумаю» (просто отложил ответ,
+  // никакого адреса), бот всё равно завёл заказ и отчитался «заказ
+  // оформлен, курьер свяжется». Теперь якорь ищем по chatId напрямую (тот
+  // же приём, что PROMISED_ANCHOR_ID_PREFIX) — так его не «погребает» ответ
+  // бота на промежуточную отговорку клиента.
+  const { data: anchorRow } = await supabase
     .from('amocrm_messages')
-    .select('amo_message_id')
-    .eq('chat_id', input.chatId)
-    .order('created_at', { ascending: false })
-    .limit(2)
-  // [0] — только что вставленное сообщение самого клиента (см. insert выше
-  // по коду), [1] — то, что было последним до него.
-  const priorRow = (recentRows as { amo_message_id: string }[] | null)?.[1]
-  if (!priorRow || !priorRow.amo_message_id.startsWith(COD_WAIT_ANCHOR_ID_PREFIX)) return false
+    .select('id')
+    .eq('amo_message_id', `${COD_WAIT_ANCHOR_ID_PREFIX}:${input.chatId}`)
+    .maybeSingle()
+  if (!anchorRow) return false
+  // Тот же блок-лист общих реплик (спасибо/хорошо/подумаю/потом и т.п.),
+  // что и NOT_A_LOCATION_REPLY — если клиент явно не назвал ничего
+  // конкретного, продолжаем ждать реальный адрес, а не выдумываем заказ
+  // из вежливой отговорки. Якорь остаётся как есть — он больше не
+  // привязан к позиции в истории, следующее сообщение найдёт его снова.
+  if (NOT_A_LOCATION_REPLY.test(input.text.trim().toLowerCase().replace(/\s+/g, ' '))) return false
   if (!(await canSendGreenApiBotReply(supabase, input.chatId, opts))) return false
 
   const botMessageId = `ga:bot:${input.providerMessageId}:cod-confirm`
@@ -1226,6 +1448,10 @@ async function handleCodAddressSubmission(
     text: COD_ORDER_CONFIRM_REPLY,
   }, { onConflict: 'amo_message_id', ignoreDuplicates: true }).select('id')
   if (!reserved?.length) return true // дубль вебхука — уже обработано
+  // Закрываем ожидание — иначе следующее сообщение клиента (уже после
+  // оформления) снова нашло бы этот якорь и было бы принято за ещё один
+  // адрес.
+  await supabase.from('amocrm_messages').delete().eq('amo_message_id', `${COD_WAIT_ANCHOR_ID_PREFIX}:${input.chatId}`)
 
   if (!opts.dryRun) {
     try {
@@ -1252,6 +1478,7 @@ async function handleCodAddressSubmission(
     }).then((result) => {
       if (result.error) console.error('greenapi bot-reply: cod order ingest failed', result.error)
     })
+    await markOrderPlaced(supabase, input.chatId)
 
     const botConfig = await getWhatsappBotConfig()
     if (botConfig.deliveryGroupId) {
@@ -1357,6 +1584,21 @@ async function processInboundGreenApiMessageNow(
 
   if (await isManagerControllingChat(supabase, input.chatId)) return
   if (await isPhoneBlockedForBot(supabase, input.chatId)) return
+  if (await maybeRemindHandoff(supabase, input)) return
+
+  // Живой баг-правка: раньше после блока результата (фото до/после +
+  // голосовое) шла автоматическая цепочка дожима (CTA → «актуально?» →
+  // скидки), и передача менеджеру срабатывала только на ответ ИМЕННО на
+  // один из её пяти текстов. По прямой просьбе владельца цепочку убрали
+  // целиком — бот после блока результата больше не пишет вообще ничего
+  // сам, а на любое следующее сообщение клиента сразу передаёт менеджеру.
+  // Якорь POST_RESULTS_STAGE_ANCHOR_ID_PREFIX ставится один раз сразу
+  // после блока результата (см. ниже) и снимается либо тут (первым же
+  // ответом клиента), либо handOffToManager-ом.
+  if (await isAwaitingPostResultsReply(supabase, input.chatId)) {
+    await handOffToManager(supabase, input)
+    return
+  }
 
   // Картинка от клиента — это чек. Отдельная ветка до общего скрипта: ИИ
   // картинку не видит и, не зная об оплате, предлагал предоплату уже
@@ -1385,6 +1627,14 @@ async function processInboundGreenApiMessageNow(
     return
   }
 
+  // Заказ уже оформлен — вопрос про доставку/курьера бот больше не
+  // обрабатывает сам (реальный статус знает только курьер/менеджер), молчим
+  // и оставляем ответ человеку. Остальные вопросы бот продолжает вести как
+  // обычно (см. ORDER_PLACED_ANCHOR_ID_PREFIX выше).
+  if (POST_ORDER_DELIVERY_QUESTION.test(input.text) && (await hasPlacedOrder(supabase, input.chatId))) {
+    return
+  }
+
   const inboundAction = COMPLAINT.test(input.text) || COOPERATION.test(input.text)
     ? 'non_standard_request'
     : stageActionForInbound(input.text)
@@ -1404,7 +1654,7 @@ async function processInboundGreenApiMessageNow(
   await scheduleGreenApiReply(input, opts)
 }
 
-const DEBOUNCE_MS = 50_000
+const DEBOUNCE_MS = 8_000
 
 interface PendingGreenApiReplyBatch {
   texts: string[]
@@ -1413,10 +1663,14 @@ interface PendingGreenApiReplyBatch {
 
 // Клиент часто пишет несколько сообщений подряд отдельными пузырями
 // («Здравствуйте» → «Бишкек» → «сколько стоит») — без буфера бот отвечал на
-// каждое сразу и вразнобой, вместо одного связного ответа. Ждём 50 секунд
-// тишины после последнего сообщения и отвечаем на все разом. В «Лаборатории»
-// (dryRun) ждать не нужно — там тестируют по одному сообщению за раз и ждут
-// ответ сразу.
+// каждое сразу и вразнобой, вместо одного связного ответа. Ждём тишины после
+// последнего сообщения и отвечаем на все разом. В «Лаборатории» (dryRun)
+// ждать не нужно — там тестируют по одному сообщению за раз и ждут ответ
+// сразу.
+// Живой баг: было 50 секунд — клиент реально ждал почти минуту на простое
+// «Здравствуйте» и жаловался, что бот «долго отвечает». 8 секунд всё ещё
+// хватает поймать быстрые подряд идущие сообщения, но не выглядит как
+// зависание.
 const pendingGreenApiReplyBatches = new Map<string, PendingGreenApiReplyBatch>()
 
 function scheduleGreenApiReply(input: InboundGreenApiMessage, opts: GreenApiTestOptions): Promise<void> | void {
@@ -1478,7 +1732,6 @@ async function generateAndSendGreenApiReply(
   // записанными файлами (assets/voice в боте), текст остаётся тем же.
   const voiceReplies = new Set<string>()
   let sendPaymentQr = false
-  let needsFollowupAnchor = false
   let needsCityAnchor = false
   let needsCodAnchor = false
   let sendResultsPhotoThisTurn = false
@@ -1524,9 +1777,16 @@ async function generateAndSendGreenApiReply(
 
   // Согласие оформить: строгое «да/давайте» после любого вопроса-CTA, либо
   // мягкое (см. isLooseAffirmative) после CTA или сразу после блока
-  // результата — голосовое «эффект с первого раза» и есть подводка к
-  // заказу, «хочу»/«давайте» на него — согласие, а не тема для ИИ.
-  const afterOrderPrompt = ORDER_CTA_MARKER.test(lastBotMessage) || lastBotMessage === T.firstUseEffect
+  // результата — голосовые «эффект с первого раза» и «состав безопасный» и
+  // есть подводка к заказу, «хочу»/«давайте» на них — согласие, а не тема
+  // для ИИ. Живой баг: после добавления второго голосового в конец блока
+  // (RESULTS_BLOCK_SAFETY_TEXT) последним сообщением бота стало уже не
+  // firstUseEffect — без явной проверки на новый текст тоже это согласие
+  // клиента снова уходило бы в ИИ вместо чек-листа.
+  const afterOrderPrompt =
+    ORDER_CTA_MARKER.test(lastBotMessage) ||
+    lastBotMessage === T.firstUseEffect ||
+    lastBotMessage === RESULTS_BLOCK_SAFETY_TEXT
   const acceptedOrderCta =
     afterOrderPrompt && (AFFIRMATIVE_ONLY.test(input.text) || isLooseAffirmative(input.text))
 
@@ -1564,18 +1824,25 @@ async function generateAndSendGreenApiReply(
     replies.push(T.doubtResult)
     voiceReplies.add(T.doubtResult)
   } else if (SAFETY_COMPOSITION_DOUBT.test(input.text)) {
-    replies.push(pickVariant(SAFETY_COMPOSITION_VARIANTS))
+    const variant = pickVariant(SAFETY_COMPOSITION_VARIANTS)
+    replies.push(variant)
+    if (SAFETY_COMPOSITION_HARM_DOUBT.test(input.text)) voiceReplies.add(variant)
   } else if (EFFECT_DURATION_QUESTION.test(input.text)) {
     replies.push(pickVariant(EFFECT_DURATION_VARIANTS))
   } else if (UNSUPPORTED_COUNTRY.test(input.text)) {
     replies.push(UNSUPPORTED_COUNTRY_REPLY)
   } else if (DELIVERY_FREE_QUESTION.test(input.text)) {
     replies.push(DELIVERY_FREE_DISCOUNT_REPLY)
+  } else if (PICKUP_QUESTION.test(input.text)) {
+    replies.push(PICKUP_REPLY)
+  } else if (ADDRESS_QUESTION.test(input.text)) {
+    replies.push(ADDRESS_QUESTION_REPLY)
   } else if (DELIVERY_COST_QUESTION.test(input.text)) {
     const cityTemplate = deliveryTemplateForCity(input.text) ?? deliveryTemplateForCity(historyText)
     if (cityTemplate) {
       const isBishkekOrTokmok = /бишке|токмо/.test(input.text.replace(/щ/g, 'ш')) || /бишке|токмо/.test(historyText)
       replies.push(cityTemplate, isBishkekOrTokmok ? DELIVERY_PAYMENT_BISHKEK : DELIVERY_PAYMENT_REGIONS)
+      if (isBishkekOrTokmok) voiceReplies.add(DELIVERY_PAYMENT_BISHKEK)
     } else {
       replies.push(CITY_QUESTION)
       needsCityAnchor = true
@@ -1621,21 +1888,32 @@ async function generateAndSendGreenApiReply(
     replies.push(T.productInfo, CITY_QUESTION)
     needsCityAnchor = true
   } else if (deliveryTemplate && priceKnown && wantsResultsBlock) {
-    // Доставка -> фото (в цикле отправки ниже) -> голосовое. CTA «вам
-    // оформить со скидкой?» НЕ сразу: через 5 минут молчания клиента его
-    // шлёт followup-scheduler.ts по якорю (см. FOLLOWUP_ANCHOR_TEXT).
-    // Живой баг: оба захвата (claimOnce/claimResultsBlock) раньше выполнялись
-    // безусловно ДО выбора ветки — короткое «давайте оформим» без города
-    // ложно проходило shouldSendResultsAfterLocation, «съедало» claim и следом
-    // за чек-листом заказа (ветка ORDER_INTENT выше) улетало ещё и фото
-    // «до/после», хотя город не называли. Теперь захват — только здесь,
-    // и только когда эта ветка реально выбрана (после ORDER_INTENT и прочих).
+    // Доставка -> фото (в цикле отправки ниже) -> голосовое. Живой баг: оба
+    // захвата (claimOnce/claimResultsBlock) раньше выполнялись безусловно
+    // ДО выбора ветки — короткое «давайте оформим» без города ложно
+    // проходило shouldSendResultsAfterLocation, «съедало» claim и следом за
+    // чек-листом заказа (ветка ORDER_INTENT выше) улетало ещё и фото
+    // «до/после», хотя город не называли. Теперь захват — только здесь, и
+    // только когда эта ветка реально выбрана (после ORDER_INTENT и прочих).
     if (await claimOnce(supabase, input.chatId, 'results-delivery')) {
       replies.push(deliveryTemplate, T.firstUseEffect)
       voiceReplies.add(T.firstUseEffect)
-      needsFollowupAnchor = true
       if (await claimResultsBlock(supabase, input.chatId)) {
         sendResultsPhotoThisTurn = true
+        // По просьбе владельца (29.08): после блока результата бот больше
+        // сам ничего не пишет — ни CTA, ни дожима. Этот якорь только
+        // помечает «жду первый ответ клиента» — как только он придёт,
+        // isAwaitingPostResultsReply увидит якорь и сразу передаст чат
+        // менеджеру (handOffToManager), без всякой автоматики между этим
+        // моментом и ответом клиента. followup-scheduler.ts эту стадию не
+        // трогает вообще (processPostResultsFollowupStage убран).
+        await supabase.from('amocrm_messages').upsert({
+          amo_message_id: `${POST_RESULTS_STAGE_ANCHOR_ID_PREFIX}:${input.chatId}`,
+          chat_id: input.chatId,
+          direction: 'out',
+          sender: 'bot',
+          text: '[ожидание ответа после результата]',
+        }, { onConflict: 'amo_message_id' })
       }
     }
   }
@@ -1644,32 +1922,54 @@ async function generateAndSendGreenApiReply(
     const labMessage = isKyrgyz
       ? `${input.text}\n\nЖоопту толугу менен кыргыз тилинде бер. Орусча сөздөрдү аралаштырба.`
       : input.text
-    const lab = await smilekitBotFetch<{ reply: string }>('/internal/lab', {
+    // Живой баг: клиент спросил «А какой адрес?», вызов ИИ-фолбэка
+    // отвалился, и код тихо «return» — клиент не получил вообще ничего и
+    // ждал ответа 6 часов, пока не написал то же самое ещё раз. Один повтор
+    // при сбое плюс честный текстовый фолбэк вместо полной тишины, если и
+    // повтор не помог — клиент видит хоть что-то, а не подвисший чат.
+    let lab = await smilekitBotFetch<{ reply: string }>('/internal/lab', {
       method: 'POST',
       body: { message: labMessage, history },
     })
     if (!lab.ok) {
-      console.error('greenapi bot-reply: lab failed', lab.error)
-      return
+      console.error('greenapi bot-reply: lab failed, retrying once', lab.error)
+      lab = await smilekitBotFetch<{ reply: string }>('/internal/lab', {
+        method: 'POST',
+        body: { message: labMessage, history },
+      })
     }
-    const reply = lab.data.reply?.trim()
-    if (!reply) return
-    replies.push(
-      ...reply
-        .split(/<NEXT_MESSAGE>/i)
-        .map((part) => part.trim())
-        .filter(Boolean)
-    )
-    if (replies.length === 0) return
-    // Живой баг: ИИ сам «оформлял заказ» — сочинял свой чек-лист (просил
-    // адрес/чек/реквизиты в произвольной форме) без QR, хотя на это есть
-    // утверждённый шаблон. Если модель явно перешла к оформлению — шлём
-    // шаблон и QR вместо её текста.
-    if (replies.some((part) => AI_IMPROVISED_CHECKLIST.test(part))) {
-      replies.length = 0
-      replies.push(T.orderChecklist)
-      sendPaymentQr = true
-      stageAction = 'order'
+    if (!lab.ok) {
+      console.error('greenapi bot-reply: lab failed after retry', lab.error)
+      replies.push(FALLBACK_AI_FAILURE_REPLY)
+    }
+    const reply = lab.ok ? lab.data.reply?.trim() : undefined
+    if (lab.ok && !reply) return
+    if (reply) {
+      replies.push(
+        ...reply
+          .split(/<NEXT_MESSAGE>/i)
+          .map((part) => part.trim())
+          .filter(Boolean)
+      )
+      if (replies.length === 0) return
+      // Живой баг: ИИ сам «оформлял заказ» — сочинял свой чек-лист (просил
+      // адрес/чек/реквизиты в произвольной форме) без QR, хотя на это есть
+      // утверждённый шаблон. Если модель явно перешла к оформлению — шлём
+      // шаблон и QR вместо её текста.
+      if (replies.some((part) => AI_IMPROVISED_CHECKLIST.test(part))) {
+        replies.length = 0
+        replies.push(T.orderChecklist)
+        sendPaymentQr = true
+        stageAction = 'order'
+      } else if (
+        !DISCOUNT_REQUEST.test(input.text) &&
+        !historyText.includes('сом') &&
+        replies.some((part) => AI_IMPROVISED_DISCOUNT.test(part))
+      ) {
+        replies.length = 0
+        replies.push(T.productInfo, CITY_QUESTION)
+        needsCityAnchor = true
+      }
     }
   }
 
@@ -1706,6 +2006,9 @@ async function generateAndSendGreenApiReply(
       const voiceName =
         text === T.firstUseEffect ? 'first_use_effect.ogg'
         : text === T.orderChecklist ? 'order_checklist.ogg'
+        : text === RESULTS_BLOCK_SAFETY_TEXT ? 'composition_safe.ogg'
+        : text === DELIVERY_PAYMENT_BISHKEK ? 'delivery_price_bishkek.ogg'
+        : SAFETY_COMPOSITION_VARIANTS.includes(text) ? 'not_harmful.ogg'
         : 'not_scam.ogg'
       if (opts.dryRun) {
         // Тестовый chat_id не существует в WhatsApp — реальный вызов Green
@@ -1825,20 +2128,6 @@ async function generateAndSendGreenApiReply(
     }
   }
 
-  if (needsFollowupAnchor) {
-    // Якорь только в БД, клиенту не уходит: followup-scheduler.ts раз в
-    // минуту ищет чаты, где он — последняя запись и прошло 5+ минут тишины,
-    // и шлёт CTA. Любое сообщение клиента сдвигает якорь — CTA не уходит.
-    const { error: anchorError } = await supabase.from('amocrm_messages').upsert({
-      amo_message_id: `${FOLLOWUP_ANCHOR_ID_PREFIX}:${input.providerMessageId}`,
-      chat_id: input.chatId,
-      direction: 'out',
-      sender: 'bot',
-      text: FOLLOWUP_ANCHOR_TEXT,
-    }, { onConflict: 'amo_message_id', ignoreDuplicates: true })
-    if (anchorError) console.error('greenapi bot-reply: followup anchor failed', anchorError.message)
-  }
-
   if (needsCityAnchor) {
     // Тот же приём для CITY_QUESTION: если клиент не назовёт город 5 минут,
     // followup-scheduler.ts сам пришлёт блок «до/после» (sendResultsPhotoOnly).
@@ -1856,13 +2145,16 @@ async function generateAndSendGreenApiReply(
     // Клиент попросил оплату при получении — ждём адрес+телефон следующим
     // сообщением (см. обработку COD_WAIT_ANCHOR_ID_PREFIX в
     // processInboundGreenApiMessageNow, срабатывает раньше общего скрипта).
+    // Ключ — chat_id, не providerMessageId: upsert перезаписывает ту же
+    // строку при каждой новой просьбе о COD в этом чате, а не копится по
+    // одной на сообщение.
     const { error: codAnchorError } = await supabase.from('amocrm_messages').upsert({
-      amo_message_id: `${COD_WAIT_ANCHOR_ID_PREFIX}:${input.providerMessageId}`,
+      amo_message_id: `${COD_WAIT_ANCHOR_ID_PREFIX}:${input.chatId}`,
       chat_id: input.chatId,
       direction: 'out',
       sender: 'bot',
       text: COD_WAIT_ANCHOR_TEXT,
-    }, { onConflict: 'amo_message_id', ignoreDuplicates: true })
+    }, { onConflict: 'amo_message_id' })
     if (codAnchorError) console.error('greenapi bot-reply: cod anchor failed', codAnchorError.message)
   }
 

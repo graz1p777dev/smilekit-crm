@@ -1,12 +1,5 @@
-// Дожим клиента, если он молчит — три шага, как в обычной рассылке:
-// 0. CTA «вам оформить со скидкой?» через 5 минут молчания ПОСЛЕ блока
-//    результата (доставка → фото → голосовое). В конце блока bot-reply.ts
-//    пишет в историю служебный якорь FOLLOWUP_ANCHOR_TEXT; если он так и
-//    остался последней записью чата — шлём этот CTA (реальная скидка 13%
-//    по той же лестнице nextDiscountOffer, а не просто вопрос про доставку —
-//    раз уж CTA сам упоминает скидку, скидку нужно реально дать). Ответил
-//    клиент — якорь сдвинут, CTA не уходит.
-// -1. Аналогично для CITY_QUESTION: если клиент 5 минут не назвал город —
+// Дожим клиента, если он молчит:
+// -1. Если клиент 5 минут не назвал город —
 //    followup-scheduler.ts сам шлёт блок «до/после» (sendResultsPhotoOnly),
 //    без доставки и голосового (город ещё не известен). См.
 //    CITY_WAIT_ANCHOR_ID_PREFIX ниже.
@@ -33,11 +26,9 @@ import { sendGreenApiMessage } from '@/lib/greenapi/client'
 import {
   canSendGreenApiBotReply,
   CITY_WAIT_ANCHOR_ID_PREFIX,
-  FOLLOWUP_ANCHOR_ID_PREFIX,
-  FOLLOWUP_CTA_ID_PREFIX,
   IDLE_NUDGE_ID_PREFIX,
-  nextDiscountOffer,
   nextIdleNudgeReply,
+  POST_RESULTS_STAGE_ANCHOR_ID_PREFIX,
   PROMISED_ANCHOR_ID_PREFIX,
   sendResultsPhotoOnly,
 } from '@/lib/greenapi/bot-reply'
@@ -50,14 +41,9 @@ import {
 const isRealPhoneChatId = (chatId: string): boolean => /^\d+$/.test(chatId)
 
 const TICK_INTERVAL_MS = 60_000
-const FOLLOWUP_CTA_SILENCE_MS = 5 * 60_000
-// Якорь старше суток не обрабатываем: это «хвост» от чатов, где отправка
-// была невозможна (менеджер в чате, бот выключен) — CTA спустя сутки после
-// голосового уже не к месту.
-const FOLLOWUP_CTA_MAX_AGE_MS = 24 * 3600_000
 const NUDGE_SILENCE_MS = 30 * 60_000
 const SECOND_WAVE_SILENCE_MS = 24 * 3600_000
-// Тот же порог, что FOLLOWUP_CTA_SILENCE_MS, но для CITY_QUESTION.
+// Тот же порог, что раньше был у CTA со скидкой, но для CITY_QUESTION.
 const CITY_WAIT_SILENCE_MS = 5 * 60_000
 const CITY_WAIT_MAX_AGE_MS = 24 * 3600_000
 
@@ -184,6 +170,17 @@ async function processIdleNudgeStage(supabase: ReturnType<typeof createAdminClie
     if (!lastRow || lastRow.sender !== 'bot') continue // клиент уже ответил
     if (lastRow.amo_message_id.startsWith('ga:claim:')) continue // технический маркер, не реальный ответ
 
+    // Чат ждёт первого ответа клиента после блока результата (бот сам
+    // больше ничего не пишет, см. bot-reply.ts isAwaitingPostResultsReply) —
+    // обычный дожим тут неуместен, иначе бот всё равно напишет клиенту
+    // первым вопреки прямому запрету.
+    const { data: postResultsAnchor } = await supabase
+      .from('amocrm_messages')
+      .select('id')
+      .eq('amo_message_id', `${POST_RESULTS_STAGE_ANCHOR_ID_PREFIX}:${chatId}`)
+      .maybeSingle()
+    if (postResultsAnchor) continue
+
     const alreadyNudged = lastRow.amo_message_id.startsWith(IDLE_NUDGE_ID_PREFIX)
     const requiredSilenceMs = alreadyNudged ? SECOND_WAVE_SILENCE_MS : NUDGE_SILENCE_MS
     if (new Date(lastRow.created_at).getTime() > Date.now() - requiredSilenceMs) continue // порог ещё не прошёл
@@ -196,46 +193,7 @@ async function processIdleNudgeStage(supabase: ReturnType<typeof createAdminClie
 }
 
 /**
- * Шаг 0: CTA через 5 минут после блока результата. Ищем якоря
- * (ga:claim:followup:*) старше 5 минут и моложе суток; CTA уходит, только
- * если якорь всё ещё последняя запись чата — то есть ни клиент, ни бот с
- * тех пор ничего не писали. Повтор исключён: id CTA привязан к id якоря, а
- * после отправки последней записью становится сам CTA. Текст CTA — реальное
- * предложение скидки 13% (nextDiscountOffer), а не просто вопрос про
- * доставку: раз клиент увидит «со скидкой», скидка должна быть настоящей,
- * а не только словами. Если клиент откажет и на неё — та же лестница,
- * что и на прямую просьбу о скидке (см. NEGATIVE_ONLY в bot-reply.ts).
- */
-async function processFollowupCtaStage(supabase: ReturnType<typeof createAdminClient>): Promise<void> {
-  const now = Date.now()
-  const { data: anchors } = await supabase
-    .from('amocrm_messages')
-    .select('id, chat_id')
-    .like('amo_message_id', `${FOLLOWUP_ANCHOR_ID_PREFIX}:%`)
-    .gte('created_at', new Date(now - FOLLOWUP_CTA_MAX_AGE_MS).toISOString())
-    .lte('created_at', new Date(now - FOLLOWUP_CTA_SILENCE_MS).toISOString())
-    .order('created_at', { ascending: true })
-    .limit(200)
-  if (!anchors?.length) return
-
-  for (const anchor of anchors as { id: number; chat_id: string }[]) {
-    if (!isRealPhoneChatId(anchor.chat_id)) continue
-    const { data: last } = await supabase
-      .from('amocrm_messages')
-      .select('id')
-      .eq('chat_id', anchor.chat_id)
-      .order('created_at', { ascending: false })
-      .order('id', { ascending: false })
-      .limit(1)
-      .maybeSingle()
-    if ((last as { id: number } | null)?.id !== anchor.id) continue // клиент ответил или бот уже писал
-    const discountCta = await nextDiscountOffer(supabase, anchor.chat_id)
-    await sendStageReply(supabase, anchor.chat_id, anchor.id, discountCta, FOLLOWUP_CTA_ID_PREFIX)
-  }
-}
-
-/**
- * Шаг -1: клиент не назвал город 5 минут после CITY_QUESTION. Ищем якоря
+ * Клиент не назвал город 5 минут после CITY_QUESTION. Ищем якоря
  * (ga:claim:city-wait:*) старше 5 минут и моложе суток; если якорь всё ещё
  * последняя запись чата — присылаем блок «до/после» (sendResultsPhotoOnly,
  * без доставки/голосового — город ещё не известен). Если клиент потом всё
@@ -273,6 +231,5 @@ async function processCityWaitStage(supabase: ReturnType<typeof createAdminClien
 async function runOnce(): Promise<void> {
   const supabase = createAdminClient()
   await processCityWaitStage(supabase)
-  await processFollowupCtaStage(supabase)
   await processIdleNudgeStage(supabase)
 }

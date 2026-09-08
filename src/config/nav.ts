@@ -111,6 +111,12 @@ export const NAV_GROUPS: NavGroup[] = [
         roles: ['owner'],
       },
       {
+        href: '/dashboard/instagram-settings',
+        label: 'Instagram',
+        icon: SlidersHorizontal,
+        roles: ['owner'],
+      },
+      {
         href: '/dashboard/laboratory',
         label: 'Лаборатория',
         icon: FlaskConical,

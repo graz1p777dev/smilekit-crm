@@ -23,8 +23,8 @@ CRM-система бренда Smilekit (Кыргызстан) — фиолет
 Тон и границы копирайта задаёт промпт бота (`bot/smilekit_bot/prompts.py` в
 репозитории лендинга) — при правке AI-промптов в CRM сверяться с ним.
 
-**Supabase Project Ref:** `rjzmxgiqleftwcsxgfte`
-**URL:** `https://rjzmxgiqleftwcsxgfte.supabase.co`
+**Supabase Project Ref:** `orvzpeftsdvluhaytpqt`
+**URL:** `https://orvzpeftsdvluhaytpqt.supabase.co`
 
 
 ---

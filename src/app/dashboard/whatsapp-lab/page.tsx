@@ -11,7 +11,7 @@
 
 import { useEffect, useRef, useState } from 'react'
 import { toast } from 'sonner'
-import { Clock, FlaskConical, Mic, RotateCcw, Send, ShieldAlert, User, Bot as BotIcon, Image as ImageIcon } from 'lucide-react'
+import { Clock, FlaskConical, Mic, RotateCcw, Send, ShieldAlert, Sparkles, User, Bot as BotIcon, Image as ImageIcon } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Textarea } from '@/components/ui/textarea'
 import {
@@ -19,6 +19,7 @@ import {
   triggerWhatsappLabIdleNudge,
   type WhatsappLabMessage,
 } from '@/actions/whatsapp-lab'
+import { sendWhatsappLabAiMessage } from '@/actions/whatsapp-lab-ai'
 
 const MEDIA_MARKERS = new Set(['[QR оплаты]', '[фото результата]'])
 
@@ -49,6 +50,10 @@ export default function WhatsappLabPage() {
   const [history, setHistory] = useState<WhatsappLabMessage[]>([])
   const [input, setInput] = useState('')
   const [loading, setLoading] = useState(false)
+  // ИИ-режим: та же песочница, но вместо шаблонов bot-reply.ts модель сама
+  // формулирует ответ по инструкции (whatsapp-lab-ai.ts) — для сравнения
+  // качества. Переключение сбрасывает чат — истории двух режимов не смешать.
+  const [aiMode, setAiMode] = useState(false)
   const bottomRef = useRef<HTMLDivElement>(null)
 
   useEffect(() => {
@@ -57,7 +62,9 @@ export default function WhatsappLabPage() {
 
   async function sendOne(currentChatId: string | undefined, text: string): Promise<string | undefined> {
     setHistory((prev) => [...prev, { sender: 'client', text, createdAt: new Date().toISOString(), isVoice: false }])
-    const result = await sendWhatsappLabMessage(currentChatId, text)
+    const result = aiMode
+      ? await sendWhatsappLabAiMessage(currentChatId, text)
+      : await sendWhatsappLabMessage(currentChatId, text)
     if (!result.success) {
       toast.error(result.error)
       setHistory((prev) => prev.slice(0, -1))
@@ -66,6 +73,14 @@ export default function WhatsappLabPage() {
     setChatId(result.chatId)
     setHistory(result.history)
     return result.chatId
+  }
+
+  function toggleAiMode() {
+    if (loading) return
+    setAiMode((prev) => !prev)
+    setChatId(undefined)
+    setHistory([])
+    setInput('')
   }
 
   async function send() {
@@ -137,11 +152,27 @@ export default function WhatsappLabPage() {
           по городу, QR оплаты и правила из настроек. Отличие только в изоляции: тестовый номер не пересекается с
           реальными, сделка в воронке не создаётся, реальный Green API не дёргается — можно тестировать, даже когда
           общий выключатель бота выключен для настоящих клиентов. Если клиент 5 минут не называет город — сам
-          придёт блок «до/после». Вопрос «вам оформить со скидкой?» — тоже через 5 минут молчания, уже после блока
-          результата. Общий дожим (на любом этапе диалога) — через 1 час молчания на последний ответ бота; кнопка
-          «Промотать» показывает ближайший из этих шагов сразу, не дожидаясь реального времени.
+          придёт блок «до/после». Общий дожим (на любом этапе диалога) — через 30 минут молчания на последний ответ
+          бота; кнопка «Промотать» показывает ближайший из этих шагов сразу, не дожидаясь реального времени. Скидку
+          13%→20% бот сам не предлагает — только в ответ на «дорого»/отказ клиента. После оформления заказа бот
+          молчит на вопросы про доставку/курьера — отвечает менеджер, остальные вопросы бот ведёт как обычно.
         </p>
       </div>
+
+      {aiMode && (
+        <div
+          className="flex items-start gap-2.5 rounded-2xl px-4 py-3"
+          style={{ background: 'var(--surface, #f7f5f5)', border: '1px solid var(--line)' }}
+        >
+          <Sparkles size={16} className="mt-0.5 flex-shrink-0" style={{ color: 'var(--ink-2)' }} />
+          <p className="text-xs leading-relaxed" style={{ color: 'var(--ink-2)' }}>
+            ИИ-версия — экспериментальный режим: вместо шаблонов bot-reply.ts модель сама формулирует каждый ответ по
+            текстовой инструкции (факты о товаре, доставке, оплате, правила оформления заказа). Полностью изолирован
+            от реального бота — только для сравнения качества ответов. «Заказ оформлен» здесь тоже условный, реальная
+            сделка не создаётся.
+          </p>
+        </div>
+      )}
 
       <div className="flex flex-wrap gap-1.5">
         {QUICK_QUESTIONS.map((q) => (
@@ -166,7 +197,25 @@ export default function WhatsappLabPage() {
             <h2 className="text-sm font-semibold" style={{ color: 'var(--ink)' }}>Тестовый чат</h2>
           </div>
           <div className="flex items-center gap-1.5">
-            <Button variant="ghost" size="sm" className="gap-1.5" disabled={!chatId || loading} onClick={() => void skipToIdleNudge()}>
+            <Button
+              variant={aiMode ? 'default' : 'outline'}
+              size="sm"
+              className="gap-1.5"
+              disabled={loading}
+              onClick={toggleAiMode}
+              title="Тестовый режим: вместо шаблонов bot-reply.ts модель сама формулирует ответ по инструкции"
+            >
+              <Sparkles size={14} />
+              ИИ-версия
+            </Button>
+            <Button
+              variant="ghost"
+              size="sm"
+              className="gap-1.5"
+              disabled={!chatId || loading || aiMode}
+              onClick={() => void skipToIdleNudge()}
+              title={aiMode ? 'Недоступно в ИИ-режиме — дожим завязан на шаблоны bot-reply.ts' : undefined}
+            >
               <Clock size={14} />
               Промотать
             </Button>

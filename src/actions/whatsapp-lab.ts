@@ -15,13 +15,14 @@ import { randomUUID } from 'crypto'
 import { createAdminClient } from '@/lib/supabase/admin'
 import {
   CITY_WAIT_ANCHOR_ID_PREFIX,
-  FOLLOWUP_ANCHOR_ID_PREFIX,
-  FOLLOWUP_CTA_ID_PREFIX,
+  DELIVERY_PAYMENT_BISHKEK,
   IDLE_NUDGE_ID_PREFIX,
-  nextDiscountOffer,
   nextIdleNudgeReply,
   ORDER_CHECKLIST_VARIANTS,
   processInboundGreenApiMessage,
+  RESULTS_BLOCK_SAFETY_TEXT,
+  SAFETY_COMPOSITION_HARM_DOUBT,
+  SAFETY_COMPOSITION_VARIANTS,
   sendResultsPhotoOnly,
 } from '@/lib/greenapi/bot-reply'
 import { DEFAULT_DOUBT_RESULT_REPLY, DEFAULT_FIRST_USE_EFFECT } from '@/lib/greenapi/default-templates'
@@ -48,7 +49,7 @@ async function loadHistory(chatId: string): Promise<WhatsappLabMessage[]> {
     .eq('chat_id', chatId)
     .order('created_at', { ascending: true })
     .limit(200)
-  return (data ?? [])
+  const rows = (data ?? [])
     .map((row) => row as { amo_message_id: string; sender: string; text: string; created_at: string })
     .filter((row) => row.sender === 'client' || row.sender === 'bot')
     // ga:claim:* — служебные строки-защёлки (одноразовый захват блока
@@ -57,20 +58,29 @@ async function loadHistory(chatId: string): Promise<WhatsappLabMessage[]> {
     // истории теста показывать их не нужно — иначе кажется, что бот
     // отправил лишнее фото, которого на самом деле не было.
     .filter((row) => !row.amo_message_id.startsWith('ga:claim:'))
-    .map((row) => ({
-      sender: row.sender as 'client' | 'bot',
-      text: row.text,
-      createdAt: row.created_at,
-      // Живой баг: чек-лист оформления рандомизирован (ORDER_CHECKLIST_VARIANTS,
-      // 4 варианта текста), а раньше isVoice сверялся только с одним дефолтным —
-      // в 3 случаях из 4 голосовое в проде уходило верно, а в «Лаборатории»
-      // показывалось как обычный текст, будто голосовое не отправилось.
-      isVoice:
-        row.text === DEFAULT_FIRST_USE_EFFECT ||
-        row.text === DEFAULT_DOUBT_RESULT_REPLY ||
-        row.text === '[голосовое: пояснение по оплате]' ||
-        ORDER_CHECKLIST_VARIANTS.includes(row.text),
-    }))
+  return rows.map((row, index) => ({
+    sender: row.sender as 'client' | 'bot',
+    text: row.text,
+    createdAt: row.created_at,
+    // Живой баг: чек-лист оформления рандомизирован (ORDER_CHECKLIST_VARIANTS,
+    // 4 варианта текста), а раньше isVoice сверялся только с одним дефолтным —
+    // в 3 случаях из 4 голосовое в проде уходило верно, а в «Лаборатории»
+    // показывалось как обычный текст, будто голосовое не отправилось.
+    isVoice:
+      row.text === DEFAULT_FIRST_USE_EFFECT ||
+      row.text === DEFAULT_DOUBT_RESULT_REPLY ||
+      row.text === '[голосовое: пояснение по оплате]' ||
+      row.text === RESULTS_BLOCK_SAFETY_TEXT ||
+      row.text === DELIVERY_PAYMENT_BISHKEK ||
+      ORDER_CHECKLIST_VARIANTS.includes(row.text) ||
+      // Живой баг: SAFETY_COMPOSITION_VARIANTS уходит голосом только на
+      // вопрос через «вред»/«опасно» (SAFETY_COMPOSITION_HARM_DOUBT), не
+      // через «безопасно» — сравнение по одному лишь тексту ответа этого
+      // не различает (текст один и тот же для обеих формулировок вопроса),
+      // поэтому сверяемся с текстом предыдущего (клиентского) сообщения.
+      (SAFETY_COMPOSITION_VARIANTS.includes(row.text) &&
+        SAFETY_COMPOSITION_HARM_DOUBT.test(rows[index - 1]?.text ?? '')),
+  }))
 }
 
 export type SendWhatsappLabMessageResult =
@@ -134,20 +144,6 @@ export async function triggerWhatsappLabIdleNudge(chatId: string): Promise<SendW
   // по клику.
   if (lastRow && lastRow.amo_message_id.startsWith(`${CITY_WAIT_ANCHOR_ID_PREFIX}:`)) {
     await sendResultsPhotoOnly(supabase, chatId, { dryRun: true })
-    return { success: true, chatId, history: await loadHistory(chatId) }
-  }
-  // Якорь после блока результата — в проде через 5 минут молчания уходит
-  // CTA «вам оформить со скидкой?» (реальная скидка 13%, nextDiscountOffer;
-  // followup-scheduler.ts); здесь — по клику.
-  if (lastRow && lastRow.amo_message_id.startsWith(`${FOLLOWUP_ANCHOR_ID_PREFIX}:`)) {
-    const discountCta = await nextDiscountOffer(supabase, chatId)
-    await supabase.from('amocrm_messages').upsert({
-      amo_message_id: `${FOLLOWUP_CTA_ID_PREFIX}:lab:${lastRow.id}`,
-      chat_id: chatId,
-      direction: 'out',
-      sender: 'bot',
-      text: discountCta,
-    }, { onConflict: 'amo_message_id', ignoreDuplicates: true })
     return { success: true, chatId, history: await loadHistory(chatId) }
   }
   if (!lastRow || lastRow.sender !== 'bot' || lastRow.amo_message_id.startsWith('ga:claim:')) {
