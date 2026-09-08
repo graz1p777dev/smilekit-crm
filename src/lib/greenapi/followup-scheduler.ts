@@ -228,8 +228,15 @@ async function processCityWaitStage(supabase: ReturnType<typeof createAdminClien
   }
 }
 
+// Решение владельца 2026-09-08: автоматический дожим при молчании клиента
+// (30 мин → «возвращаясь к разговору», 24 ч → лестница скидок) выключен —
+// бот не должен писать клиенту первым после своего ответа. Вместо дожима
+// молчащий чат передаётся менеджеру (см. handOffToManager в bot-reply.ts).
+// Флаг, а не удаление кода: чтобы откат был в одну строку.
+const IDLE_NUDGES_ENABLED = false
+
 async function runOnce(): Promise<void> {
   const supabase = createAdminClient()
   await processCityWaitStage(supabase)
-  await processIdleNudgeStage(supabase)
+  if (IDLE_NUDGES_ENABLED) await processIdleNudgeStage(supabase)
 }
