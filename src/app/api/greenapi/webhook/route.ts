@@ -1,12 +1,16 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { phoneFromGreenApiChatId } from '@/lib/greenapi/client'
 import { processInboundGreenApiMessage, registerOutgoingGreenApiMessage } from '@/lib/greenapi/bot-reply'
+import { isBodyTooLarge, safeEqual } from '@/lib/webhook-auth'
+import { checkRateLimit, getClientIp } from '@/lib/rate-limit'
 
 // Green API шлёт Authorization: Bearer <webhookUrlToken> (см. setGreenApiWebhook).
+// Без timestamp-поля в payload'е Green API защита от replay-атак здесь не
+// работает — делать её не из чего.
 function isAuthorized(request: NextRequest): boolean {
   const expected = process.env.GREENAPI_WEBHOOK_TOKEN
   const header = request.headers.get('authorization') || ''
-  return Boolean(expected) && header === `Bearer ${expected}`
+  return Boolean(expected) && safeEqual(header, `Bearer ${expected}`)
 }
 
 interface GreenApiWebhookBody {
@@ -32,6 +36,21 @@ function extractText(body: GreenApiWebhookBody): string {
 }
 
 export async function POST(request: NextRequest) {
+  if (isBodyTooLarge(request)) {
+    return NextResponse.json({ error: 'Payload Too Large' }, { status: 413 })
+  }
+
+  const ip = getClientIp(request)
+  const perIp = checkRateLimit(`greenapi-webhook:ip:${ip}`, { windowMs: 60_000, max: 60 })
+  if (!perIp.allowed) {
+    return NextResponse.json({ error: 'Too Many Requests' }, { status: 429, headers: { 'Retry-After': String(perIp.retryAfterSeconds) } })
+  }
+  // Общий предохранитель на все IP разом — на случай распределённой атаки.
+  const global = checkRateLimit('greenapi-webhook:global', { windowMs: 60_000, max: 300 })
+  if (!global.allowed) {
+    return NextResponse.json({ error: 'Too Many Requests' }, { status: 429, headers: { 'Retry-After': String(global.retryAfterSeconds) } })
+  }
+
   if (!isAuthorized(request)) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
 
   const body = (await request.json().catch(() => null)) as GreenApiWebhookBody | null
