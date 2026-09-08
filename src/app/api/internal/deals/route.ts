@@ -11,6 +11,7 @@ import { NextResponse } from 'next/server'
 import { upsertDealFromInbound } from '@/lib/deals/auto-create'
 import { advanceDealFromBotAction } from '@/lib/deals/advance-stage'
 import { recordEvent } from '@/lib/control-center'
+import { matchesRotatableSecret } from '@/lib/webhook-auth'
 import type { DealSource } from '@/types'
 
 export const dynamic = 'force-dynamic'
@@ -25,7 +26,7 @@ export async function POST(request: Request) {
   if (!expectedToken) {
     return NextResponse.json({ error: 'Not configured' }, { status: 503 })
   }
-  if (request.headers.get('x-internal-token') !== expectedToken) {
+  if (!matchesRotatableSecret(request.headers.get('x-internal-token'), 'INTERNAL_NOTIFY_TOKEN')) {
     return NextResponse.json({ error: 'Forbidden' }, { status: 403 })
   }
 
@@ -80,7 +81,7 @@ export async function PATCH(request: Request) {
   if (!expectedToken) {
     return NextResponse.json({ error: 'Not configured' }, { status: 503 })
   }
-  if (request.headers.get('x-internal-token') !== expectedToken) {
+  if (!matchesRotatableSecret(request.headers.get('x-internal-token'), 'INTERNAL_NOTIFY_TOKEN')) {
     return NextResponse.json({ error: 'Forbidden' }, { status: 403 })
   }
 

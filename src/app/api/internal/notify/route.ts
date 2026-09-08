@@ -5,6 +5,7 @@
 
 import { NextResponse } from 'next/server'
 import { notify, type NotificationType } from '@/lib/notifications/notify'
+import { matchesRotatableSecret } from '@/lib/webhook-auth'
 
 export const dynamic = 'force-dynamic'
 export const runtime = 'nodejs'
@@ -22,7 +23,7 @@ export async function POST(request: Request) {
   if (!expectedToken) {
     return NextResponse.json({ error: 'Not configured' }, { status: 503 })
   }
-  if (request.headers.get('x-internal-token') !== expectedToken) {
+  if (!matchesRotatableSecret(request.headers.get('x-internal-token'), 'INTERNAL_NOTIFY_TOKEN')) {
     return NextResponse.json({ error: 'Forbidden' }, { status: 403 })
   }
 

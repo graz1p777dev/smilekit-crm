@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { createAdminClient } from '@/lib/supabase/admin'
 import { upsertDealFromInbound } from '@/lib/deals/auto-create'
-import { isBodyTooLarge, safeEqual } from '@/lib/webhook-auth'
+import { isBodyTooLarge, matchesRotatableSecret } from '@/lib/webhook-auth'
 import { checkRateLimit, getClientIp } from '@/lib/rate-limit'
 
 // Wazzup24 webhook — регистрируется через PATCH https://api.wazzup24.com/v3/webhooks
@@ -39,8 +39,7 @@ export async function POST(request: NextRequest) {
   }
 
   const secret = request.nextUrl.searchParams.get('secret')
-  const expectedSecret = process.env.WAZZUP_WEBHOOK_SECRET
-  if (!secret || !expectedSecret || !safeEqual(secret, expectedSecret)) {
+  if (!matchesRotatableSecret(secret, 'WAZZUP_WEBHOOK_SECRET')) {
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
   }
 

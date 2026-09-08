@@ -1,7 +1,7 @@
 import { after, NextRequest, NextResponse } from 'next/server'
 import { upsertDealFromInbound } from '@/lib/deals/auto-create'
 import { processInboundAmoMessage, registerOutgoingAmoMessage } from '@/lib/amocrm/bot-reply'
-import { isBodyTooLarge, safeEqual } from '@/lib/webhook-auth'
+import { isBodyTooLarge, matchesRotatableSecret } from '@/lib/webhook-auth'
 import { checkRateLimit, getClientIp } from '@/lib/rate-limit'
 
 // Вебхук amoCRM (Настройки → Интеграции → Webhooks на towhite.amocrm.ru).
@@ -32,8 +32,7 @@ export async function POST(request: NextRequest) {
   }
 
   const secret = request.nextUrl.searchParams.get('secret')
-  const expectedSecret = process.env.AMOCRM_WEBHOOK_SECRET
-  if (!secret || !expectedSecret || !safeEqual(secret, expectedSecret)) {
+  if (!matchesRotatableSecret(secret, 'AMOCRM_WEBHOOK_SECRET')) {
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
   }
 

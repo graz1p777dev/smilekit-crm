@@ -1,5 +1,6 @@
 import { after, NextRequest, NextResponse } from 'next/server'
 import { verifySignature, parseIncomingEvents, storeInboundMessage } from '@/lib/instagram/webhook'
+import { matchesRotatableSecret } from '@/lib/webhook-auth'
 
 // GET — верификационный хендшейк Meta при настройке Webhooks в App Dashboard
 // (hub.mode=subscribe, hub.verify_token, hub.challenge — вернуть challenge
@@ -14,7 +15,7 @@ export async function GET(request: NextRequest) {
   const token = request.nextUrl.searchParams.get('hub.verify_token')
   const challenge = request.nextUrl.searchParams.get('hub.challenge')
 
-  if (mode === 'subscribe' && token === process.env.META_WEBHOOK_VERIFY_TOKEN && challenge) {
+  if (mode === 'subscribe' && matchesRotatableSecret(token, 'META_WEBHOOK_VERIFY_TOKEN') && challenge) {
     return new NextResponse(challenge, { status: 200 })
   }
   return NextResponse.json({ error: 'Verification failed' }, { status: 403 })

@@ -1,16 +1,18 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { phoneFromGreenApiChatId } from '@/lib/greenapi/client'
 import { processInboundGreenApiMessage, registerOutgoingGreenApiMessage } from '@/lib/greenapi/bot-reply'
-import { isBodyTooLarge, safeEqual } from '@/lib/webhook-auth'
+import { isBodyTooLarge, matchesRotatableSecret } from '@/lib/webhook-auth'
 import { checkRateLimit, getClientIp } from '@/lib/rate-limit'
 
 // Green API шлёт Authorization: Bearer <webhookUrlToken> (см. setGreenApiWebhook).
 // Без timestamp-поля в payload'е Green API защита от replay-атак здесь не
 // работает — делать её не из чего.
+const BEARER_PREFIX = 'Bearer '
+
 function isAuthorized(request: NextRequest): boolean {
-  const expected = process.env.GREENAPI_WEBHOOK_TOKEN
   const header = request.headers.get('authorization') || ''
-  return Boolean(expected) && safeEqual(header, `Bearer ${expected}`)
+  const provided = header.startsWith(BEARER_PREFIX) ? header.slice(BEARER_PREFIX.length) : null
+  return matchesRotatableSecret(provided, 'GREENAPI_WEBHOOK_TOKEN')
 }
 
 interface GreenApiWebhookBody {

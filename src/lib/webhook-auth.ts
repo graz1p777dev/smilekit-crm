@@ -17,6 +17,21 @@ export function safeEqual(a: string, b: string): boolean {
   return timingSafeEqual(hashA, hashB)
 }
 
+/**
+ * Проверка входящего общего секрета с поддержкой ротации без простоя
+ * (docs/ROTATION.md): значение принимается, если совпадает с process.env[envName]
+ * ИЛИ с process.env[envName + '_NEXT'] (когда тот задан и непуст). Оба сравнения
+ * timing-safe. Пустое/отсутствующее provided или незаданный env → false.
+ */
+export function matchesRotatableSecret(provided: string | null | undefined, envName: string): boolean {
+  if (!provided) return false
+  const current = process.env[envName]
+  const next = process.env[`${envName}_NEXT`]
+  const matchesCurrent = Boolean(current) && safeEqual(provided, current as string)
+  const matchesNext = Boolean(next) && safeEqual(provided, next as string)
+  return matchesCurrent || matchesNext
+}
+
 /** Больше этого размера тела вебхука быть не должно — все payload'ы маленькие. */
 export const MAX_WEBHOOK_BODY_BYTES = 1_000_000
 

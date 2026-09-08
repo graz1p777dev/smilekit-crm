@@ -10,6 +10,7 @@
 
 import { NextResponse } from 'next/server'
 import { createAdminClient } from '@/lib/supabase/admin'
+import { matchesRotatableSecret } from '@/lib/webhook-auth'
 
 export const dynamic = 'force-dynamic'
 export const runtime = 'nodejs'
@@ -17,7 +18,7 @@ export const runtime = 'nodejs'
 export async function POST(request: Request) {
   const expectedToken = process.env.INTERNAL_NOTIFY_TOKEN
   if (!expectedToken) return NextResponse.json({ error: 'Not configured' }, { status: 503 })
-  if (request.headers.get('x-internal-token') !== expectedToken) {
+  if (!matchesRotatableSecret(request.headers.get('x-internal-token'), 'INTERNAL_NOTIFY_TOKEN')) {
     return NextResponse.json({ error: 'Forbidden' }, { status: 403 })
   }
 
