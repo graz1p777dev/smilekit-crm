@@ -1123,7 +1123,7 @@ export async function canSendGreenApiBotReply(
   // Общий с amoCRM-каналом аварийный выключатель (integrations.amoCRM) —
   // это переключатель «бот продаж SmileKit включён», а не именно amoCRM.
   const [integrationResult, managerControls, handedOff] = await Promise.all([
-    supabase.from('integrations').select('is_active, paused_until').eq('name', 'amoCRM').maybeSingle(),
+    supabase.from('integrations').select('*').eq('name', 'amoCRM').maybeSingle(),
     isManagerControllingChat(supabase, chatId),
     isHandedOffToManager(supabase, chatId),
   ])
@@ -1565,7 +1565,7 @@ async function processInboundGreenApiMessageNow(
   const externalKey = await resolveGreenApiExternalKey(supabase, input.chatId)
   const { data: integration } = await supabase
     .from('integrations')
-    .select('is_active, paused_until')
+    .select('*')
     .eq('name', 'amoCRM')
     .maybeSingle()
   const botEnabled = opts.skipIntegrationCheck

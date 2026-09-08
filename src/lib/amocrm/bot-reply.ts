@@ -359,7 +359,7 @@ async function canSendAmoBotReply(
   const [integrationResult, managerControls] = await Promise.all([
     supabase
       .from('integrations')
-      .select('is_active, paused_until')
+      .select('*')
       .eq('name', 'amoCRM')
       .maybeSingle(),
     isManagerControllingChat(supabase, chatId),
@@ -478,7 +478,7 @@ async function processInboundAmoMessageNow(input: InboundAmoMessage, alreadyStor
   // и сделки продолжаем вести, но клиенту не отвечаем и этапы не двигаем.
   const { data: integration } = await supabase
     .from('integrations')
-    .select('is_active, paused_until')
+    .select('*')
     .eq('name', 'amoCRM')
     .maybeSingle()
   const botEnabled = isIntegrationBotEnabled(integration)
