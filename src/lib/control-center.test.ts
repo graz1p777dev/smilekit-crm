@@ -98,3 +98,108 @@ describe('control-center client', () => {
     })
   })
 })
+
+describe('control-center prompt sync', () => {
+  beforeEach(() => {
+    vi.resetModules()
+    vi.spyOn(console, 'warn').mockImplementation(() => {})
+  })
+
+  afterEach(() => {
+    vi.unstubAllEnvs()
+    vi.restoreAllMocks()
+  })
+
+  function enable() {
+    vi.stubEnv('CONTROL_CENTER_URL', 'https://cc.example.com')
+    vi.stubEnv('CONTROL_CENTER_TOKEN', 'test-token')
+  }
+
+  function promptResponse(status: number, body?: unknown) {
+    return {
+      ok: status >= 200 && status < 300,
+      status,
+      json: async () => body,
+    }
+  }
+
+  it('200 кэширует промпт, а следующий запрос шлёт If-None-Match с versionId', async () => {
+    enable()
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce(promptResponse(200, { ok: true, versionId: 'v3', compiled: 'REMOTE' }))
+      .mockResolvedValueOnce(promptResponse(304))
+    vi.stubGlobal('fetch', fetchMock)
+
+    const { fetchPromptIfChanged, getRemotePrompt, currentPrompt } = await import('./control-center')
+
+    await fetchPromptIfChanged()
+    expect(getRemotePrompt()).toEqual({ compiled: 'REMOTE', versionId: 'v3' })
+    expect(currentPrompt('local')).toBe('REMOTE')
+
+    const [firstUrl, firstOptions] = fetchMock.mock.calls[0] as [string, RequestInit]
+    expect(firstUrl).toBe('https://cc.example.com/api/v1/connector/prompt')
+    expect((firstOptions.headers as Record<string, string>).authorization).toBe('Bearer test-token')
+    expect((firstOptions.headers as Record<string, string>)['if-none-match']).toBeUndefined()
+
+    await fetchPromptIfChanged()
+    const [, secondOptions] = fetchMock.mock.calls[1] as [string, RequestInit]
+    expect((secondOptions.headers as Record<string, string>)['if-none-match']).toBe('"v3"')
+  })
+
+  it('304 сохраняет кэш', async () => {
+    enable()
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce(promptResponse(200, { ok: true, versionId: 'v3', compiled: 'REMOTE' }))
+      .mockResolvedValueOnce(promptResponse(304))
+    vi.stubGlobal('fetch', fetchMock)
+
+    const { fetchPromptIfChanged, getRemotePrompt } = await import('./control-center')
+
+    await fetchPromptIfChanged()
+    await fetchPromptIfChanged()
+    expect(getRemotePrompt()).toEqual({ compiled: 'REMOTE', versionId: 'v3' })
+  })
+
+  it('404 → getRemotePrompt() null, currentPrompt возвращает локальный fallback', async () => {
+    enable()
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(promptResponse(404, { error: 'not found' })))
+
+    const { fetchPromptIfChanged, getRemotePrompt, currentPrompt } = await import('./control-center')
+
+    await fetchPromptIfChanged()
+    expect(getRemotePrompt()).toBeNull()
+    expect(currentPrompt('local')).toBe('local')
+  })
+
+  it('сетевая ошибка сохраняет последнее удачное значение и не бросает', async () => {
+    enable()
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce(promptResponse(200, { ok: true, versionId: 'v3', compiled: 'REMOTE' }))
+      .mockRejectedValueOnce(new Error('ECONNREFUSED'))
+    vi.stubGlobal('fetch', fetchMock)
+
+    const { fetchPromptIfChanged, getRemotePrompt, currentPrompt } = await import('./control-center')
+
+    await fetchPromptIfChanged()
+    await expect(fetchPromptIfChanged()).resolves.toBeUndefined()
+    expect(getRemotePrompt()).toEqual({ compiled: 'REMOTE', versionId: 'v3' })
+    expect(currentPrompt('local')).toBe('REMOTE')
+  })
+
+  it('без CONTROL_CENTER_URL/CONTROL_CENTER_TOKEN fetch не вызывается, промпт локальный', async () => {
+    vi.stubEnv('CONTROL_CENTER_URL', '')
+    vi.stubEnv('CONTROL_CENTER_TOKEN', '')
+    const fetchMock = vi.fn()
+    vi.stubGlobal('fetch', fetchMock)
+
+    const { fetchPromptIfChanged, getRemotePrompt, currentPrompt } = await import('./control-center')
+
+    await fetchPromptIfChanged()
+    expect(fetchMock).not.toHaveBeenCalled()
+    expect(getRemotePrompt()).toBeNull()
+    expect(currentPrompt('local')).toBe('local')
+  })
+})

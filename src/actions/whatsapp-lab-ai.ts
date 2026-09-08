@@ -11,6 +11,7 @@
 import { randomUUID } from 'crypto'
 import { createAdminClient } from '@/lib/supabase/admin'
 import { AI_LAB_SYSTEM_PROMPT } from '@/lib/greenapi/ai-lab-prompt'
+import { currentPrompt } from '@/lib/control-center'
 import { requireOwner } from '@/actions/whatsapp-settings'
 import type { WhatsappLabMessage } from '@/actions/whatsapp-lab'
 
@@ -71,8 +72,11 @@ export async function sendWhatsappLabAiMessage(
     text: trimmed,
   })
 
+  // Промпт берём в момент вызова: если Control Center (Prompt Studio) опубликовал
+  // версию — используется она, иначе локальный AI_LAB_SYSTEM_PROMPT. Промпт
+  // проекта общий с Telegram-ботом (один токен = один проект), см. control-center.ts.
   const messages = [
-    { role: 'system', content: AI_LAB_SYSTEM_PROMPT },
+    { role: 'system', content: currentPrompt(AI_LAB_SYSTEM_PROMPT) },
     ...priorHistory.map((m) => ({ role: m.sender === 'client' ? 'user' : 'assistant', content: m.text })),
     { role: 'user', content: trimmed },
   ]

@@ -50,10 +50,68 @@ export interface HeartbeatEntry {
   uptimeSeconds?: number
   details?: Record<string, unknown>
   security?: { envPresent: string[] }
+  /** versionId промпта из GET /connector/prompt, который бот реально использует (ACK для Prompt Studio). */
+  promptVersionId?: string
 }
 
 export function sendHeartbeat(entry: HeartbeatEntry): void {
   void post('/api/v1/connector/heartbeat', entry)
+}
+
+// ─── prompt: системный промпт из Prompt Studio ───────────────────────────────
+// GET /api/v1/connector/prompt с If-None-Match: "<versionId>" → 304 (без
+// изменений) или 200 {compiled, versionId}. 404 — в Control Center ничего не
+// опубликовано, остаёмся на локальном промпте. Кэш только в памяти процесса:
+// после рестарта первый heartbeat загрузит его заново.
+//
+// Промпт проекта в Control Center общий для всех каналов: один токен = один
+// проект, и Telegram-бот Smilekit (bot/smilekit_bot) получает ту же версию по
+// тому же эндпоинту. Версия, опубликованная в Prompt Studio, применяется и к
+// Telegram, и к WhatsApp одновременно.
+
+interface RemotePrompt {
+  compiled: string
+  versionId: string
+}
+
+let remotePrompt: RemotePrompt | null = null
+
+export async function fetchPromptIfChanged(): Promise<void> {
+  if (!ENABLED) return
+  try {
+    const headers: Record<string, string> = { authorization: `Bearer ${TOKEN}` }
+    if (remotePrompt) headers['if-none-match'] = `"${remotePrompt.versionId}"`
+    const res = await fetch(`${BASE_URL}/api/v1/connector/prompt`, {
+      method: 'GET',
+      headers,
+      signal: AbortSignal.timeout(TIMEOUT_MS),
+    })
+    // 304 — не менялся; 404 — в Prompt Studio ничего не опубликовано: по
+    // контракту остаёмся на последней полученной версии (или локальной, если
+    // ещё ничего не получали).
+    if (res.status === 304 || res.status === 404) return
+    if (!res.ok) {
+      console.warn(`control-center: /api/v1/connector/prompt вернул HTTP ${res.status}`)
+      return
+    }
+    const data = (await res.json()) as { compiled?: unknown; versionId?: unknown }
+    if (typeof data.compiled !== 'string' || typeof data.versionId !== 'string' || !data.versionId) {
+      console.warn('control-center: /api/v1/connector/prompt вернул неожиданный payload')
+      return
+    }
+    remotePrompt = { compiled: data.compiled, versionId: data.versionId }
+  } catch (error) {
+    console.warn('control-center: /api/v1/connector/prompt не удался', error)
+  }
+}
+
+export function getRemotePrompt(): RemotePrompt | null {
+  return remotePrompt
+}
+
+/** Промпт из Control Center, если загружен; иначе локальный fallback (byte-identical к текущему поведению). */
+export function currentPrompt(localFallback: string): string {
+  return remotePrompt ? remotePrompt.compiled : localFallback
 }
 
 // ─── usage / events: батч в памяти, флаш раз в FLUSH_INTERVAL_MS ────────────
