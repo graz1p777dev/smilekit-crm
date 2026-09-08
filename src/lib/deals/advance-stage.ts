@@ -11,6 +11,7 @@
 // (src/lib/orders/ingest.ts), которая подхватывает deal_id сама.
 
 import { createAdminClient } from '@/lib/supabase/admin'
+import { recordEvent } from '@/lib/control-center'
 
 /** action → название этапа (supabase/migrations/036_deals.sql, 039_...sql). */
 const ACTION_STAGE_NAME: Record<string, string> = {
@@ -93,5 +94,6 @@ export async function advanceDealFromBotAction(
     .eq('id', d.id)
   if (updateError) return { ok: false, error: updateError.message }
 
+  recordEvent({ type: 'deal', level: 'info', title: 'Deal advanced', payload: { dealId: d.id } })
   return { ok: true, id: d.id }
 }

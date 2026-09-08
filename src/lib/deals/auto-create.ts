@@ -12,6 +12,7 @@
 // сообщение того же клиента не создаёт вторую сделку.
 
 import { createAdminClient } from '@/lib/supabase/admin'
+import { recordEvent } from '@/lib/control-center'
 import type { DealSource } from '@/types'
 
 export interface InboundDeal {
@@ -98,5 +99,8 @@ export async function upsertDealFromInbound(input: InboundDeal): Promise<UpsertD
   if (error) return { created: false, id: null, error: error.message }
 
   const row = (inserted ?? [])[0] as { id: string } | undefined
+  if (row) {
+    recordEvent({ type: 'deal', level: 'info', title: 'Deal created', payload: { dealId: row.id } })
+  }
   return { created: Boolean(row), id: row?.id ?? null }
 }
