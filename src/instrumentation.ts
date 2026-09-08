@@ -18,5 +18,7 @@ export async function register() {
     startCampaignScheduler()
     const { startFollowupScheduler } = await import('@/lib/greenapi/followup-scheduler')
     startFollowupScheduler()
+    const { startControlCenterHeartbeat } = await import('@/lib/control-center-heartbeat')
+    startControlCenterHeartbeat()
   }
 }

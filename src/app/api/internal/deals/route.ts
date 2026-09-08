@@ -10,6 +10,7 @@
 import { NextResponse } from 'next/server'
 import { upsertDealFromInbound } from '@/lib/deals/auto-create'
 import { advanceDealFromBotAction } from '@/lib/deals/advance-stage'
+import { recordEvent } from '@/lib/control-center'
 import type { DealSource } from '@/types'
 
 export const dynamic = 'force-dynamic'
@@ -62,6 +63,7 @@ export async function POST(request: Request) {
 
   if (result.error) {
     console.error('internal/deals upsert failed', result.error)
+    recordEvent({ type: 'error', level: 'error', title: 'internal/deals upsert failed' })
     return NextResponse.json({ error: result.error }, { status: 500 })
   }
 
@@ -106,6 +108,7 @@ export async function PATCH(request: Request) {
       return NextResponse.json({ error: `Unknown action: ${payload.action}` }, { status: 400 })
     }
     console.error('internal/deals advance failed', result.error)
+    recordEvent({ type: 'error', level: 'error', title: 'internal/deals advance failed' })
     return NextResponse.json({ error: result.error || 'Advance failed' }, { status: 500 })
   }
 

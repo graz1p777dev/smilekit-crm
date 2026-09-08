@@ -6,6 +6,8 @@
 // работал никогда. Вместо несуществующего бэкенда отвечаем прямо здесь через
 // DeepSeek. Контракт ответа повторяет старый бэкенд, страница не менялась.
 
+import { recordUsage } from '@/lib/control-center'
+
 interface CopilotMessage {
   role: 'user' | 'assistant'
   content: string
@@ -34,6 +36,7 @@ const SYSTEM_PROMPT = `Ты — ИИ-помощник CRM-системы SmileKi
 
 interface DeepSeekResponse {
   choices?: { message?: { content?: string } }[]
+  usage?: { prompt_tokens?: number; completion_tokens?: number }
 }
 
 export interface CopilotChatResult {
@@ -66,11 +69,12 @@ export async function localCopilotChat(
     { role: 'user', content: `${userMessage}${contextNote}` },
   ]
 
+  const model = process.env.DEEPSEEK_MODEL || 'deepseek-v4-flash'
   const res = await fetch('https://api.deepseek.com/chat/completions', {
     method: 'POST',
     headers: { 'content-type': 'application/json', authorization: `Bearer ${apiKey}` },
     body: JSON.stringify({
-      model: process.env.DEEPSEEK_MODEL || 'deepseek-v4-flash',
+      model,
       messages,
       // Справочные ответы — рассуждения не нужны, а на V4 thinking может
       // съесть весь лимит (см. ПЕРЕДАЧА-ПРОГРАММИСТУ.md, грабля №8).
@@ -82,6 +86,14 @@ export async function localCopilotChat(
   })
   if (!res.ok) throw new Error(`DeepSeek: HTTP ${res.status}`)
   const data = (await res.json()) as DeepSeekResponse
+  if (data.usage) {
+    recordUsage({
+      provider: 'deepseek',
+      model,
+      inputTokens: data.usage.prompt_tokens ?? 0,
+      outputTokens: data.usage.completion_tokens ?? 0,
+    })
+  }
   const content = data.choices?.[0]?.message?.content?.trim()
   if (!content) throw new Error('DeepSeek вернул пустой ответ')
 

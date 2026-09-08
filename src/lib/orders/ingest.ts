@@ -15,6 +15,7 @@
 
 import { createAdminClient } from '@/lib/supabase/admin'
 import { notify } from '@/lib/notifications/notify'
+import { recordEvent } from '@/lib/control-center'
 import type { OrderCurrency, OrderSource } from '@/types'
 
 const CURRENCIES: readonly OrderCurrency[] = ['KGS', 'USD', 'RUB']
@@ -213,5 +214,6 @@ export async function ingestOrder(input: InboundOrder): Promise<IngestOrderResul
     sourceId: row.id,
   })
 
+  recordEvent({ type: 'order', level: 'info', title: 'Order ingested', payload: { orderId: row.id } })
   return { created: true, id: row.id }
 }

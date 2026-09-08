@@ -9,6 +9,7 @@
 
 import { NextResponse } from 'next/server'
 import { ingestOrder } from '@/lib/orders/ingest'
+import { recordEvent } from '@/lib/control-center'
 
 export const dynamic = 'force-dynamic'
 export const runtime = 'nodejs'
@@ -59,11 +60,13 @@ export async function POST(request: Request) {
     })
   } catch (err) {
     console.error('internal/orders ingest threw', err)
+    recordEvent({ type: 'error', level: 'error', title: 'internal/orders ingest threw' })
     return NextResponse.json({ error: 'Internal error' }, { status: 500 })
   }
 
   if (result.error) {
     console.error('internal/orders ingest failed', result.error)
+    recordEvent({ type: 'error', level: 'error', title: 'internal/orders ingest failed' })
     return NextResponse.json({ error: result.error }, { status: 500 })
   }
 
