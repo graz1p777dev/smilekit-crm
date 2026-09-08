@@ -1,0 +1,49 @@
+# CI smilekit-crm: типы, линт, тесты, сборка. Без деплоя — деплой делает Railway.
+name: CI
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  ci:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - run: npm ci
+
+      - name: Type check
+        run: npx tsc --noEmit
+
+      # continue-on-error: на момент добавления CI `npm run lint` падает на
+      # 11 ранее существовавших ошибках, не связанных с текущими изменениями
+      # (не исправлялись, чтобы не трогать чужой код):
+      #   src/actions/campaigns.ts:65                        @typescript-eslint/no-explicit-any (x2)
+      #   src/app/dashboard/bot-reports/page.tsx:67          react-hooks/set-state-in-effect
+      #   src/app/dashboard/calendar/CalendarAnalytics.tsx:45 react-hooks/set-state-in-effect
+      #   src/app/dashboard/employees/page.tsx:122           react-hooks/set-state-in-effect
+      #   src/app/dashboard/salary/page.tsx:23               react-hooks/set-state-in-effect
+      #   src/components/CommandPalette.tsx:50               react-hooks/set-state-in-effect
+      #   src/components/campaigns/CampaignsClient.tsx:77    react-hooks/set-state-in-effect
+      #   src/components/deals/DealsBoard.tsx:65             react-hooks/set-state-in-effect
+      #   src/components/tasks/TasksBoard.tsx:50             react-hooks/refs
+      #   src/hooks/use-mobile.ts:14                         react-hooks/set-state-in-effect
+      # После их исправления continue-on-error убрать.
+      - name: Lint
+        run: npm run lint
+        continue-on-error: true
+
+      - name: Test
+        run: npm test
+
+      # Сборка проходит без переменных окружения: все маршруты динамические,
+      # Supabase-клиенты создаются только на запросе. Проверено локально
+      # без .env.local.
+      - name: Build
+        run: npm run build
