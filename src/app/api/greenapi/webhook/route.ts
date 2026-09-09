@@ -42,13 +42,20 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ error: 'Payload Too Large' }, { status: 413 })
   }
 
+  // Живой баг: Green API шлёт вебхук на КАЖДОЕ событие (входящее сообщение,
+  // статус отправки, доставки, прочтения) с одного своего IP — 60/мин
+  // оказался ниже реального фонового трафика уже при умеренной активности
+  // чатов, и часть вебхуков (в т.ч. с входящими сообщениями клиентов)
+  // получала 429 и терялась — бот переставал отвечать без единой ошибки в
+  // коде. Секрет (isAuthorized) — основная защита, лимит здесь только против
+  // явного флуда, поэтому поднимаем с большим запасом, а не убираем совсем.
   const ip = getClientIp(request)
-  const perIp = checkRateLimit(`greenapi-webhook:ip:${ip}`, { windowMs: 60_000, max: 60 })
+  const perIp = checkRateLimit(`greenapi-webhook:ip:${ip}`, { windowMs: 60_000, max: 1200 })
   if (!perIp.allowed) {
     return NextResponse.json({ error: 'Too Many Requests' }, { status: 429, headers: { 'Retry-After': String(perIp.retryAfterSeconds) } })
   }
   // Общий предохранитель на все IP разом — на случай распределённой атаки.
-  const global = checkRateLimit('greenapi-webhook:global', { windowMs: 60_000, max: 300 })
+  const global = checkRateLimit('greenapi-webhook:global', { windowMs: 60_000, max: 3000 })
   if (!global.allowed) {
     return NextResponse.json({ error: 'Too Many Requests' }, { status: 429, headers: { 'Retry-After': String(global.retryAfterSeconds) } })
   }
