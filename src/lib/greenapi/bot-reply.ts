@@ -840,6 +840,26 @@ function stageActionForInbound(text: string): string | null {
 
 /** Исходящее сообщение из вебхука (outgoingMessageReceived/outgoingAPIMessageReceived
  * с чужим providerMessageId) — живой менеджер написал в WhatsApp напрямую. */
+// Живой баг (09.09): массовая рассылка «Кстати, остались 3 пачки...» (не
+// через наши campaigns — отправлена мимо CRM напрямую с номера) ушла ~400
+// клиентам за час. Каждая такая отправка ловилась вебхуком как обычное
+// сообщение живого менеджера (sender='operator') — и isManagerControllingChat
+// решала, что менеджер теперь ведёт ВСЕ эти чаты сам, бот замолкал у всех
+// разом. Отличить рассылку от реального ответа человека можно по факту: один
+// и тот же текст слово-в-слово улетает в много РАЗНЫХ чатов почти
+// одновременно — человек так не печатает. Помечаем совпавшие по этому
+// признаку отправки отдельным author_name, чтобы isManagerControllingChat их
+// не считала передачей менеджеру.
+export const BULK_BROADCAST_AUTHOR_MARKER = '[система: похоже на массовую рассылку]'
+const BULK_BROADCAST_DETECT_WINDOW_MS = 3 * 60_000
+const BULK_BROADCAST_DISTINCT_CHATS_THRESHOLD = 3
+
+/** Тот же текст ушёл (или уходит) хотя бы в столько же ДРУГИХ чатов за окно
+ * BULK_BROADCAST_DETECT_WINDOW_MS — человек так писать не может, это рассылка. */
+export function isBulkBroadcast(distinctOtherChatsWithSameText: number): boolean {
+  return distinctOtherChatsWithSameText >= BULK_BROADCAST_DISTINCT_CHATS_THRESHOLD - 1
+}
+
 export async function registerOutgoingGreenApiMessage(input: InboundGreenApiMessage): Promise<void> {
   const supabase = createAdminClient()
   // Окно эха расширено с 5 минут до суток: под нагрузкой (см. AmoBotToggle,
@@ -880,13 +900,23 @@ export async function registerOutgoingGreenApiMessage(input: InboundGreenApiMess
     .limit(1)
   if (!anyClientMessage?.length) return
 
+  const { data: recentSameTextOtherChats } = await supabase
+    .from('amocrm_messages')
+    .select('chat_id')
+    .eq('direction', 'out')
+    .eq('text', input.text)
+    .neq('chat_id', input.chatId)
+    .gte('created_at', new Date(Date.now() - BULK_BROADCAST_DETECT_WINDOW_MS).toISOString())
+    .limit(20)
+  const distinctOtherChats = new Set((recentSameTextOtherChats ?? []).map((row) => row.chat_id as string)).size
+
   await supabase.from('amocrm_messages').upsert(
     {
       amo_message_id: `ga:${input.providerMessageId}`,
       chat_id: input.chatId,
       direction: 'out',
       sender: 'operator',
-      author_name: input.authorName,
+      author_name: isBulkBroadcast(distinctOtherChats) ? BULK_BROADCAST_AUTHOR_MARKER : input.authorName,
       text: input.text,
     },
     { onConflict: 'amo_message_id', ignoreDuplicates: true }
@@ -910,22 +940,27 @@ async function isManagerControllingChat(
   chatId: string
 ): Promise<boolean> {
   const [lastOperatorResult, controlResult] = await Promise.all([
+    // limit(20), не 1: часть последних «operator»-записей может быть
+    // отмечена как массовая рассылка (BULK_BROADCAST_AUTHOR_MARKER) — её
+    // пропускаем, ищем последнюю ПОХОЖУЮ НА РЕАЛЬНОГО человека.
     supabase
       .from('amocrm_messages')
-      .select('created_at')
+      .select('created_at, author_name')
       .eq('chat_id', chatId)
       .eq('sender', 'operator')
       .order('created_at', { ascending: false })
-      .limit(1)
-      .maybeSingle(),
+      .limit(20),
     supabase
       .from('amocrm_chat_control')
       .select('bot_enabled, updated_at')
       .eq('chat_id', chatId)
       .maybeSingle(),
   ])
-  const lastOperatorAt = lastOperatorResult.data?.created_at
-    ? new Date(lastOperatorResult.data.created_at as string).getTime()
+  const lastGenuineOperatorRow = (
+    lastOperatorResult.data as { created_at: string; author_name: string | null }[] | null
+  )?.find((row) => row.author_name !== BULK_BROADCAST_AUTHOR_MARKER)
+  const lastOperatorAt = lastGenuineOperatorRow?.created_at
+    ? new Date(lastGenuineOperatorRow.created_at).getTime()
     : null
   const control = controlResult.data as { bot_enabled: boolean; updated_at: string } | null
   if (!control) return lastOperatorAt !== null

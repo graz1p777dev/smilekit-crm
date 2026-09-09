@@ -7,6 +7,7 @@ import {
   AI_IMPROVISED_CHECKLIST,
   AI_IMPROVISED_DISCOUNT,
   FUTURE_ORDER_QUESTION,
+  isBulkBroadcast,
   NOT_A_LOCATION_REPLY,
   PAY_ON_DELIVERY_REQUEST,
   PICKUP_QUESTION,
@@ -15,6 +16,17 @@ import {
   SCAM_DOUBT,
   UNSUPPORTED_COUNTRY,
 } from './bot-reply'
+
+describe('isBulkBroadcast — рассылка мимо CRM не должна выглядеть как передача менеджеру', () => {
+  it('живой баг 09.09: один и тот же текст ушёл ~400 клиентам за час, помеченным sender=operator — бот замолчал у всех разом', () => {
+    // Тот же текст уже ушёл двум другим чатам — с этим уже три подряд.
+    expect(isBulkBroadcast(2)).toBe(true)
+  })
+  it('первая пара отправок ещё не считается рассылкой — не хватает сигнала', () => {
+    expect(isBulkBroadcast(0)).toBe(false)
+    expect(isBulkBroadcast(1)).toBe(false)
+  })
+})
 
 describe('UNSUPPORTED_COUNTRY — бот больше не врёт про доставку в дальнее зарубежье', () => {
   it('ловит вопрос про Германию (реальный живой баг сессии)', () => {
