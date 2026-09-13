@@ -1,8 +1,43 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { phoneFromGreenApiChatId } from '@/lib/greenapi/client'
-import { processInboundGreenApiMessage, registerOutgoingGreenApiMessage } from '@/lib/greenapi/bot-reply'
+import { processInboundGreenApiMessage, registerOutgoingGreenApiMessage, type InboundGreenApiMessage } from '@/lib/greenapi/bot-reply'
 import { isBodyTooLarge, matchesRotatableSecret } from '@/lib/webhook-auth'
 import { checkRateLimit, getClientIp } from '@/lib/rate-limit'
+
+// Клиент часто пишет мыслями через несколько сообщений подряд («Здравствуйте»,
+// «Хотел узнать», «о товаре») — без этого окна каждое такое сообщение уходило
+// в отдельный независимый вызов бота, и клиенту прилетало по несколько
+// ответов подряд вместо одного цельного (тот же приём, что в Telegram-боте,
+// см. DEBOUNCE_SECONDS в smilekit_bot/__main__.py). Только текстовые
+// сообщения без вложений — голосовые/фото обрабатываются сразу, как раньше.
+const TEXT_DEBOUNCE_MS = 20_000
+
+interface PendingTextBatch {
+  texts: string[]
+  latest: Omit<InboundGreenApiMessage, 'text'>
+  timer: ReturnType<typeof setTimeout>
+}
+
+const pendingTextBatches = new Map<string, PendingTextBatch>()
+
+function flushPendingText(chatId: string): void {
+  const pending = pendingTextBatches.get(chatId)
+  if (!pending) return
+  pendingTextBatches.delete(chatId)
+  void processInboundGreenApiMessage({ ...pending.latest, text: pending.texts.join('\n') })
+}
+
+function scheduleTextMessage(message: InboundGreenApiMessage): void {
+  const existing = pendingTextBatches.get(message.chatId)
+  if (existing) clearTimeout(existing.timer)
+  const texts = existing ? [...existing.texts, message.text] : [message.text]
+  const { text: _text, ...latest } = message
+  pendingTextBatches.set(message.chatId, {
+    texts,
+    latest,
+    timer: setTimeout(() => flushPendingText(message.chatId), TEXT_DEBOUNCE_MS),
+  })
+}
 
 // Green API шлёт Authorization: Bearer <webhookUrlToken> (см. setGreenApiWebhook).
 // Без timestamp-поля в payload'е Green API защита от replay-атак здесь не
@@ -88,14 +123,19 @@ export async function POST(request: NextRequest) {
     // текста, ни файла.
     const hasMedia = Boolean(body.messageData?.fileMessageData?.downloadUrl)
     if (!text && !hasMedia) return NextResponse.json({ ok: true })
-    void processInboundGreenApiMessage({
+    const inbound: InboundGreenApiMessage = {
       providerMessageId,
       chatId: phone,
       authorName,
       text,
       messageType: typeMessage,
       mediaUrl: body.messageData?.fileMessageData?.downloadUrl ?? null,
-    })
+    }
+    if (hasMedia) {
+      void processInboundGreenApiMessage(inbound)
+    } else {
+      scheduleTextMessage(inbound)
+    }
   } else if (body.typeWebhook === 'outgoingMessageReceived') {
     // Только сообщения, отправленные с самого телефона — это живой менеджер.
     // outgoingAPIMessageReceived сюда не попадает: через API шлём только мы,
