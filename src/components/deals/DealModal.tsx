@@ -1,7 +1,7 @@
 'use client'
 
 import { useEffect, useState, useTransition } from 'react'
-import { X, Trash2, MessagesSquare, RefreshCw, Bot, UserRound } from 'lucide-react'
+import { X, Trash2, MessagesSquare, RefreshCw, Bot, UserRound, ShoppingBag } from 'lucide-react'
 import { toast } from 'sonner'
 import { Button } from '../ui/button'
 import { Input } from '../ui/input'
@@ -24,7 +24,9 @@ import {
   getDealBotControl,
   setDealBotControl,
   sendDealMessage,
+  getDealPurchases,
 } from '@/actions/deals'
+import type { DealPurchase } from '@/actions/deals'
 import type {
   Deal,
   DealCurrency,
@@ -61,6 +63,14 @@ interface FormState {
 }
 
 const AMO_MEDIA_MESSAGE = /^\[([^\]]+)]\s+(https:\/\/\S+)$/i
+
+const ORDER_STATUS_LABELS: Record<string, string> = {
+  new: 'новый',
+  confirmed: 'подтверждён',
+  shipped: 'отправлен',
+  delivered: 'доставлен',
+  cancelled: 'отменён',
+}
 
 function ChatMessageContent({ text, mediaUrl }: { text: string; mediaUrl?: string | null }) {
   if (mediaUrl) {
@@ -113,6 +123,9 @@ export default function DealModal({
   const [togglingBotControl, setTogglingBotControl] = useState(false)
   const [replyText, setReplyText] = useState('')
   const [sendingReply, setSendingReply] = useState(false)
+  const [purchases, setPurchases] = useState<DealPurchase[] | null>(null)
+  const [purchasesFailed, setPurchasesFailed] = useState(false)
+  const [purchasesReload, setPurchasesReload] = useState(0)
 
   async function handleSendReply() {
     if (!deal || !replyText.trim() || sendingReply) return
@@ -149,6 +162,33 @@ export default function DealModal({
   const set = <K extends keyof FormState>(k: K, v: FormState[K]) =>
     setForm((f) => ({ ...f, [k]: v }))
 
+  // Что клиент покупал — заказы, привязанные к сделке или к его номеру.
+  // С таймаутом: под нагрузкой ответ может не прийти вовсе, и без него
+  // блок навсегда застревал на «Загружаем покупки…».
+  useEffect(() => {
+    if (isNew || !deal) return
+    let alive = true
+    const timeout = window.setTimeout(() => {
+      if (!alive) return
+      alive = false
+      setPurchases([])
+      setPurchasesFailed(true)
+    }, 12_000)
+    void getDealPurchases(deal.id)
+      .then((rows) => {
+        if (!alive) return
+        window.clearTimeout(timeout)
+        setPurchases(rows)
+      })
+      .catch(() => {
+        if (!alive) return
+        window.clearTimeout(timeout)
+        setPurchases([])
+        setPurchasesFailed(true)
+      })
+    return () => { alive = false; window.clearTimeout(timeout) }
+  }, [isNew, deal, purchasesReload])
+
   // Переписка живёт во внешней системе — тянем её только для открытой сделки.
   useEffect(() => {
     if (isNew || !deal) return
@@ -182,7 +222,9 @@ export default function DealModal({
   // Тумблер «кто ведёт чат» — только для сделок amoCRM, только когда в чате
   // уже писал живой менеджер (иначе бот и так ведёт диалог, переключать нечего).
   useEffect(() => {
-    if (isNew || !deal || deal.source !== 'amocrm') return
+    // Раньше тумблер показывался только для сделок amoCRM. Канал теперь
+    // один — WhatsApp через Green API, и ключ чата это номер клиента.
+    if (isNew || !deal || !deal.customer_phone) return
     let alive = true
     void getDealBotControl(deal.id).then((status) => {
       if (alive) setBotControl(status)
@@ -196,7 +238,7 @@ export default function DealModal({
     if (!botControl?.chatId) return
     const nextBotEnabled = botControl.managerControls // сейчас у менеджера → включаем бота
     setTogglingBotControl(true)
-    // Сервер иногда не отвечает вовсе (см. AmoBotToggle.tsx) — без таймаута
+    // Сервер иногда не отвечает вовсе (см. BotToggle.tsx) — без таймаута
     // кнопка оставалась disabled до перезагрузки страницы.
     const timedOut = Symbol('timeout')
     const res = await Promise.race([
@@ -266,6 +308,11 @@ export default function DealModal({
       }
     })
   }
+
+  // Отменённые заказы в итог не идут — это не покупка.
+  const paidPurchases = (purchases ?? []).filter((p) => p.status !== 'cancelled')
+  const purchasesTotal = paidPurchases.reduce((sum, p) => sum + Number(p.total_amount ?? 0), 0)
+  const purchasesBoxes = paidPurchases.reduce((sum, p) => sum + (p.quantity ?? 0), 0)
 
   const source = deal ? DEAL_SOURCE[deal.source] : DEAL_SOURCE.manual
   const SourceIcon = source.icon
@@ -449,6 +496,77 @@ export default function DealModal({
               rows={3}
             />
           </div>
+
+          {/* Что покупал — история заказов этого клиента */}
+          {!isNew && (
+            <div className="space-y-2">
+              <div className="flex items-center gap-2">
+                <ShoppingBag size={14} className="text-gray-400" />
+                <Label>Покупки</Label>
+                {purchasesTotal > 0 && (
+                  <span className="text-[11px] font-semibold text-[#5115a4]">
+                    {purchasesBoxes} кор. · {purchasesTotal.toLocaleString('ru-RU')} сом
+                  </span>
+                )}
+              </div>
+              {purchases === null ? (
+                <p className="text-[12px] text-gray-400">Загружаем покупки…</p>
+              ) : purchases.length === 0 ? (
+                <div className="flex flex-col items-center gap-2 rounded-xl border border-dashed border-gray-200 px-4 py-3 text-center text-[12px] text-gray-400">
+                  <span>{purchasesFailed ? 'Сервер не ответил вовремя.' : 'Ещё ничего не покупал'}</span>
+                  {purchasesFailed && (
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setPurchases(null)
+                        setPurchasesFailed(false)
+                        setPurchasesReload((value) => value + 1)
+                      }}
+                      className="inline-flex items-center gap-1.5 rounded-lg bg-[#f1ebfa] px-3 py-1.5 font-semibold text-[#5115a4] transition-colors hover:bg-[#e7dcf6]"
+                    >
+                      <RefreshCw size={13} />
+                      Повторить
+                    </button>
+                  )}
+                </div>
+              ) : (
+                <div className="space-y-1.5">
+                  {purchases.map((p) => (
+                    <div key={p.id} className="rounded-xl bg-gray-50/70 px-3 py-2">
+                      <div className="flex items-center justify-between gap-2 text-[12px]">
+                        <span className="text-gray-500">
+                          {new Date(p.created_at).toLocaleDateString('ru-RU')}
+                        </span>
+                        <span className="font-medium text-gray-900">
+                          {p.quantity ? `${p.quantity} кор.` : '— кор.'}
+                        </span>
+                        <span className="font-medium text-gray-900">
+                          {p.total_amount !== null
+                            ? `${Number(p.total_amount).toLocaleString('ru-RU')} ${p.currency}`
+                            : '—'}
+                        </span>
+                        <span
+                          className="rounded-full px-2 py-0.5 text-[10px] font-semibold"
+                          style={
+                            p.status === 'cancelled'
+                              ? { background: '#fee2e2', color: '#b91c1c' }
+                              : p.status === 'delivered'
+                                ? { background: '#dcfce7', color: '#15803d' }
+                                : { background: '#f1ebfa', color: '#5115a4' }
+                          }
+                        >
+                          {ORDER_STATUS_LABELS[p.status] ?? p.status}
+                        </span>
+                      </div>
+                      {p.summary && (
+                        <p className="mt-1 text-[11px] leading-snug text-gray-500">{p.summary}</p>
+                      )}
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+          )}
 
           {/* Переписка — только чтение, вести её продолжают там, где начали */}
           {!isNew && (

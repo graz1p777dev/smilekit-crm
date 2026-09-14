@@ -353,3 +353,57 @@ export async function getEmployeeKpiPlan(
   if (!data) return null
   return data as KpiPlanFormData
 }
+
+// ─── Сколько лидов обслужил сотрудник ────────────────────────────────────────
+
+/**
+ * Считает, скольким РАЗНЫМ клиентам сотрудник ответил из CRM.
+ *
+ * «Ответил из CRM» — это исходящее сообщение, отправленное его руками через
+ * интерфейс (страница клиентов, карточка сделки, чат). В базе такие следы
+ * двух видов:
+ *   whatsapp_messages.sent_by  — прямая ссылка на сотрудника (канал Wazzup);
+ *   amocrm_messages            — sender='operator' + author_name, имя сюда
+ *                                кладут sendCustomerMessage и sendDealMessage.
+ * Ответы бота (sender='bot') не считаются — они ничьи.
+ *
+ * Ключ результата — id сотрудника, значение — число разных чатов.
+ */
+export async function getEmployeeLeadReplies(): Promise<Record<string, number>> {
+  const supabase = await createClient()
+  const { data: { session } } = await supabase.auth.getSession()
+  if (!session) return {}
+
+  const admin = createAdminClient()
+
+  const [{ data: emps }, { data: wazzup }, { data: amo }] = await Promise.all([
+    admin.from('employees').select('id, name'),
+    admin.from('whatsapp_messages').select('phone, sent_by').not('sent_by', 'is', null),
+    admin.from('amocrm_messages').select('chat_id, author_name').eq('sender', 'operator'),
+  ])
+
+  const employees = (emps ?? []) as { id: string; name: string }[]
+  // Имя → id: в amocrm_messages сотрудник записан именем, а не ссылкой.
+  const idByName = new Map(employees.map((e) => [e.name.trim().toLowerCase(), e.id]))
+  const chatsByEmployee = new Map<string, Set<string>>()
+
+  const add = (employeeId: string | null | undefined, chat: string) => {
+    if (!employeeId || !chat) return
+    const set = chatsByEmployee.get(employeeId) ?? new Set<string>()
+    set.add(chat)
+    chatsByEmployee.set(employeeId, set)
+  }
+
+  for (const row of (wazzup ?? []) as { phone: string; sent_by: string | null }[]) {
+    add(row.sent_by, row.phone.replace(/\D/g, '').slice(-9))
+  }
+  for (const row of (amo ?? []) as { chat_id: string; author_name: string | null }[]) {
+    add(idByName.get((row.author_name ?? '').trim().toLowerCase()), String(row.chat_id))
+  }
+
+  const result: Record<string, number> = {}
+  for (const employee of employees) {
+    result[employee.id] = chatsByEmployee.get(employee.id)?.size ?? 0
+  }
+  return result
+}

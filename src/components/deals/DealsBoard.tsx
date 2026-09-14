@@ -1,17 +1,18 @@
 'use client'
 
-import { useCallback, useEffect, useMemo, useRef, useState, useTransition } from 'react'
-import { Plus, RefreshCw, Search } from 'lucide-react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { Plus, Search } from 'lucide-react'
 import { toast } from 'sonner'
 import { createClient } from '@/lib/supabase/client'
 import { cn } from '@/lib/utils'
 import { formatMoney } from '@/lib/formatters'
 import type { Deal, DealEmployee, DealStage, DealViewer } from '@/types'
-import { getDealsData, moveDeal, reconcileDealsFromShop } from '@/actions/deals'
-import { stageSoft } from './deal-config'
+import { getDealsData, moveDeal } from '@/actions/deals'
+import { DEAL_SOURCE, stageSoft } from './deal-config'
+import { DEAL_SORTS, DEAL_VIEWS, sortDeals, type DealSort, type DealView } from './deal-view'
 import DealCard from './DealCard'
 import DealModal from './DealModal'
-import { AmoBotToggle } from './AmoBotToggle'
+import { BotToggle } from './BotToggle'
 
 interface Props {
   initialStages: DealStage[]
@@ -28,6 +29,16 @@ interface ModalState {
   isNew: boolean
   stageId: string
 }
+
+/**
+ * Сколько карточек колонка рисует сразу. В первом этапе воронки лежит почти
+ * вся база (сотни сделок), и доска раньше вставляла в DOM их все — браузер
+ * собирал больше тысячи карточек на каждый рендер, из-за чего страница
+ * заметно подвисала при открытии, вводе в поиск и любом перетаскивании.
+ * Остальное догружается кнопкой «Показать ещё» — итог и счётчик колонки
+ * при этом всегда считаются по ПОЛНОМУ списку, а не по видимой части.
+ */
+const COLUMN_PAGE = 25
 
 /** Итог колонки: сумма по валютам, поэтому не одно число, а несколько. */
 function columnTotals(deals: Deal[]): string[] {
@@ -48,7 +59,13 @@ export default function DealsBoard({ initialStages, initialDeals, employees, me,
   const [modal, setModal] = useState<ModalState>({
     open: false, deal: null, isNew: false, stageId: '',
   })
-  const [syncing, startSync] = useTransition()
+  const [shownPerStage, setShownPerStage] = useState<Record<string, number>>({})
+  // Вкладки и сортировка — приём с доски DemiResults: на тысяче сделок
+  // закрытые только мешают, а порядок «что дольше всех висит» важнее
+  // порядка создания.
+  const [view, setView] = useState<DealView>('active')
+  const [sort, setSort] = useState<DealSort>('stage-asc')
+  const [sourceFilter, setSourceFilter] = useState<string>('all')
 
   // Переход со страницы «Заказы» — открываем карточку сразу, не дожидаясь
   // клика по колонке. Зависимость от initialOpenDealId обязательна: при
@@ -79,6 +96,13 @@ export default function DealsBoard({ initialStages, initialDeals, employees, me,
     setDragId(id)
   }
 
+  // Показываем в фильтре только те источники, что реально есть в сделках,
+  // — пустые варианты в списке только мешают.
+  const sources = useMemo(
+    () => [...new Set(deals.map((d) => d.source))].sort(),
+    [deals]
+  )
+
   const employeeMap = useMemo(() => {
     const m = new Map<string, DealEmployee>()
     for (const e of employees) m.set(e.id, e)
@@ -90,43 +114,48 @@ export default function DealsBoard({ initialStages, initialDeals, employees, me,
     setDeals(data.deals)
   }, [])
 
-  // ─── Сверка с витриной ─────────────────────────────────────────────────────
-  // Push от витрины может потеряться (CRM перезапускалась, сеть моргнула),
-  // поэтому сверяемся при открытии страницы и по кнопке.
-  const sync = useCallback(
-    (silent: boolean) =>
-      startSync(async () => {
-        const res = await reconcileDealsFromShop()
-        if (!res.success) {
-          if (!silent) toast.error(res.error)
-          return
-        }
-        await refresh()
-        if (!silent) {
-          toast.success(
-            res.data?.created
-              ? `Добавлено сделок: ${res.data.created}`
-              : 'Новых диалогов нет — всё уже в воронке'
-          )
-        }
-      }),
-    [refresh]
-  )
-
-  useEffect(() => {
-    sync(true)
-    // Разовая сверка при открытии страницы.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [])
+  // Сверки с внешними системами больше нет: канал один — Green API, и
+  // сделки заводит он сам на входящем сообщении.
 
   // ─── Realtime ──────────────────────────────────────────────────────────────
+  // Раньше любое изменение одной сделки запускало refresh() — то есть
+  // повторное чтение ВСЕХ сделок (1000+ строк) ради одной строки. При живом
+  // потоке вебхуков amoCRM это молотило постоянно и подвешивало доску.
+  // Теперь строку из payload применяем на месте, а полный перезапрос
+  // оставлен запасным вариантом — когда в событии нет самой строки.
   useEffect(() => {
     const supabase = createClient()
     let timer: ReturnType<typeof setTimeout> | null = null
     const channel = supabase
       .channel('deals-board')
-      .on('postgres_changes', { event: '*', schema: 'public', table: 'deals' }, () => {
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'deals' }, (payload) => {
         if (dragIdRef.current) return // не мешаем текущему перетаскиванию
+
+        if (payload.eventType === 'DELETE') {
+          const removedId = (payload.old as { id?: string } | null)?.id
+          if (removedId) {
+            setDeals((prev) => prev.filter((d) => d.id !== removedId))
+            return
+          }
+        } else {
+          const row = payload.new as Deal | null
+          if (row?.id) {
+            setDeals((prev) => {
+              const index = prev.findIndex((d) => d.id === row.id)
+              // Мягкое удаление приезжает как UPDATE — убираем с доски.
+              if ((row as Deal & { deleted_at?: string | null }).deleted_at) {
+                return index === -1 ? prev : prev.filter((d) => d.id !== row.id)
+              }
+              if (index === -1) return [row, ...prev]
+              const next = [...prev]
+              next[index] = row
+              return next
+            })
+            return
+          }
+        }
+
+        // Строки в событии нет — только тогда перечитываем доску целиком.
         if (timer) clearTimeout(timer)
         timer = setTimeout(refresh, 400)
       })
@@ -149,6 +178,10 @@ export default function DealsBoard({ initialStages, initialDeals, employees, me,
   const filtered = useMemo(() => {
     const q = search.trim().toLowerCase()
     return deals.filter((d) => {
+      if (view === 'active' && d.status !== 'open') return false
+      if (view === 'won' && d.status !== 'won') return false
+      if (view === 'lost' && d.status !== 'lost') return false
+      if (sourceFilter !== 'all' && d.source !== sourceFilter) return false
       if (employeeFilter !== 'all') {
         if (employeeFilter === 'none') {
           if (d.responsible_employee_id) return false
@@ -161,14 +194,15 @@ export default function DealsBoard({ initialStages, initialDeals, employees, me,
         .toLowerCase()
         .includes(q)
     })
-  }, [deals, search, employeeFilter])
+  }, [deals, search, employeeFilter, view, sourceFilter])
 
   const columns = useMemo(() => {
     const map = new Map<string, Deal[]>()
     for (const s of stages) map.set(s.id, [])
     for (const d of filtered) map.get(d.stage_id)?.push(d)
+    for (const list of map.values()) sortDeals(list, sort)
     return map
-  }, [filtered, stages])
+  }, [filtered, stages, sort])
 
   // ─── Перетаскивание ────────────────────────────────────────────────────────
   const endDrag = () => {
@@ -214,16 +248,60 @@ export default function DealsBoard({ initialStages, initialDeals, employees, me,
           <span className="span-rule" aria-hidden />
           <p className="mt-1.5 text-[13px] text-gray-400">
             {me.role === 'owner' || me.role === 'rop'
-              ? `Все сделки магазина · ${deals.length}`
-              : `Ваши сделки · ${deals.length}`}
+              ? `Все сделки магазина · ${filtered.length} из ${deals.length}`
+              : `Ваши сделки · ${filtered.length} из ${deals.length}`}
           </p>
         </div>
 
         <div className="flex flex-wrap items-center gap-2">
-          <AmoBotToggle />
+          <BotToggle />
+
+          {/* В работе / Успешные / Отказ */}
+          <div className="flex gap-0.5 rounded-xl border border-gray-200 bg-white/80 p-0.5">
+            {DEAL_VIEWS.map((item) => (
+              <button
+                key={item.key}
+                onClick={() => { setView(item.key); setShownPerStage({}) }}
+                className={cn(
+                  'rounded-lg px-2.5 py-1.5 text-[12px] font-semibold transition-colors',
+                  view === item.key ? 'text-white brand-gradient' : 'text-gray-500 hover:text-gray-700'
+                )}
+              >
+                {item.label}
+              </button>
+            ))}
+          </div>
+
+          <select
+            value={sort}
+            onChange={(e) => setSort(e.target.value as DealSort)}
+            className="h-9 rounded-xl border border-gray-200 bg-white/80 px-3 text-[13px] text-gray-600 outline-none transition-colors focus:border-gray-300"
+            title="Порядок карточек в колонке"
+          >
+            {DEAL_SORTS.map((item) => (
+              <option key={item.key} value={item.key}>{item.label}</option>
+            ))}
+          </select>
+
+          <select
+            value={sourceFilter}
+            onChange={(e) => { setSourceFilter(e.target.value); setShownPerStage({}) }}
+            className="h-9 rounded-xl border border-gray-200 bg-white/80 px-3 text-[13px] text-gray-600 outline-none transition-colors focus:border-gray-300"
+            title="Фильтр по источнику"
+          >
+            <option value="all">Все источники</option>
+            {sources.map((item) => (
+              <option key={item} value={item}>{DEAL_SOURCE[item]?.label ?? item}</option>
+            ))}
+          </select>
+
           <select
             value={employeeFilter}
-            onChange={(e) => setEmployeeFilter(e.target.value)}
+            onChange={(e) => {
+              setEmployeeFilter(e.target.value)
+              // Состав колонок поменялся — показываем снова первую страницу.
+              setShownPerStage({})
+            }}
             className="h-9 rounded-xl border border-gray-200 bg-white/80 px-3 text-[13px] text-gray-600 outline-none transition-colors focus:border-gray-300"
             title="Фильтр по ответственному"
           >
@@ -237,21 +315,14 @@ export default function DealsBoard({ initialStages, initialDeals, employees, me,
             <Search size={15} className="absolute left-2.5 top-1/2 -translate-y-1/2 text-gray-400" />
             <input
               value={search}
-              onChange={(e) => setSearch(e.target.value)}
+              onChange={(e) => {
+                setSearch(e.target.value)
+                setShownPerStage({})
+              }}
               placeholder="Клиент, телефон, название…"
               className="h-9 w-56 rounded-xl border border-gray-200 bg-white/80 pl-8 pr-3 text-[13px] outline-none transition-colors focus:border-gray-300"
             />
           </div>
-
-          <button
-            onClick={() => sync(false)}
-            disabled={syncing}
-            className="flex h-9 items-center gap-1.5 rounded-xl border border-gray-200 bg-white/80 px-3 text-[13px] font-medium text-gray-600 transition-colors hover:bg-gray-50 disabled:opacity-60"
-            title="Забрать новые диалоги с витрины"
-          >
-            <RefreshCw size={15} className={cn(syncing && 'animate-spin')} />
-            Синхронизировать
-          </button>
 
           <button
             onClick={() => openNew(defaultStageId)}
@@ -268,6 +339,8 @@ export default function DealsBoard({ initialStages, initialDeals, employees, me,
         {stages.map((stage) => {
           const list = columns.get(stage.id) ?? []
           const totals = columnTotals(list)
+          const shown = shownPerStage[stage.id] ?? COLUMN_PAGE
+          const visible = list.length > shown ? list.slice(0, shown) : list
           const isTarget = dragOverStage === stage.id
           return (
             <div
@@ -321,7 +394,7 @@ export default function DealsBoard({ initialStages, initialDeals, employees, me,
 
               {/* Карточки */}
               <div className="flex-1 space-y-2 overflow-y-auto px-2.5 pb-3 scroll-hidden">
-                {list.map((deal) => (
+                {visible.map((deal) => (
                   <DealCard
                     key={deal.id}
                     deal={deal}
@@ -343,6 +416,20 @@ export default function DealsBoard({ initialStages, initialDeals, employees, me,
                     onClick={() => openEdit(deal)}
                   />
                 ))}
+
+                {list.length > visible.length && (
+                  <button
+                    onClick={() =>
+                      setShownPerStage((prev) => ({
+                        ...prev,
+                        [stage.id]: (prev[stage.id] ?? COLUMN_PAGE) + COLUMN_PAGE,
+                      }))
+                    }
+                    className="w-full rounded-xl border border-dashed border-gray-200 py-2.5 text-center text-[12px] font-medium text-gray-500 transition-colors hover:border-gray-300 hover:text-gray-700"
+                  >
+                    Показать ещё {Math.min(COLUMN_PAGE, list.length - visible.length)} из {list.length - visible.length}
+                  </button>
+                )}
 
                 {dragId && isTarget && <div className="h-[3px] rounded-full bg-[#5115a4]" />}
 

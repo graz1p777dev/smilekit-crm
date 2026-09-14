@@ -53,8 +53,9 @@ export default async function DashboardPage() {
     }
   }
 
-  // Бухгалтер видит только финансы
-  if (permissionLevel === 'accountant') redirect('/dashboard/finance')
+  // Страницы «Финансы» больше нет — бухгалтера уводим на «Зарплату»,
+  // единственный оставшийся денежный раздел, доступный его роли.
+  if (permissionLevel === 'accountant') redirect('/dashboard/salary')
 
   // Нет сессии — middleware должен поймать раньше, но на всякий случай
   if (!accessToken) redirect('/auth/login')

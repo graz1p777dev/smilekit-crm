@@ -69,15 +69,13 @@ export default function Sidebar({ mobileOpen = false, onClose }: SidebarProps) {
 
   return (
     <>
-      {/* Панель fixed, поэтому отдельная колонка синхронно резервирует её ширину
-          и сдвигает страницу при раскрытии на десктопе. */}
-      <div
-        aria-hidden
-        className={cn(
-          'hidden flex-shrink-0 transition-[width] duration-200 ease-out md:block',
-          hovered ? 'w-48' : 'w-16',
-        )}
-      />
+      {/* Колонка-распорка под fixed-панель. Ширина ПОСТОЯННА (w-16): раньше
+          она анимировалась до w-48 на каждое наведение мыши и вместе с
+          сайдбаром двигала всю страницу — то есть браузер пересчитывал
+          раскладку всего содержимого 200 мс подряд каждый раз, когда курсор
+          просто проходил над меню. Теперь раскрытая панель накрывает контент
+          сверху (у неё уже есть тень), а страница не шевелится. */}
+      <div aria-hidden className="hidden w-16 flex-shrink-0 md:block" />
 
       <aside
         onMouseEnter={() => setHovered(true)}
@@ -168,6 +166,11 @@ export default function Sidebar({ mobileOpen = false, onClose }: SidebarProps) {
                     const active = isActiveLink(pathname, item.href, item.exact)
                     const Icon = item.icon
                     const LinkTag = Link
+                    // Золотой акцент (accent: 'gold'): на фиолетовом фоне —
+                    // янтарь #f5a623, на белой подсветке активного пункта
+                    // янтаря не хватает по контрасту, там #b45309.
+                    const gold = item.accent === 'gold'
+                    const goldText = active ? '#b45309' : '#f5a623'
 
                     return (
                       <li key={item.href}>
@@ -180,21 +183,27 @@ export default function Sidebar({ mobileOpen = false, onClose }: SidebarProps) {
                           // на сервер, под которой другие запросы (например
                           // server actions вроде переключателя бота) могут
                           // зависать без ответа и без ошибки, блокируя UI
-                          // до перезагрузки страницы (см. AmoBotToggle).
+                          // до перезагрузки страницы (см. BotToggle).
                           prefetch={false}
                           title={expanded ? undefined : item.label}
                           className={cn(
                             'relative flex items-center gap-2.5 px-2.5 py-2 rounded-md transition-colors duration-150 outline-none',
-                            active
-                              ? 'text-[#5115a4] font-medium'
-                              : 'text-white hover:bg-white/[0.14] hover:text-white focus-visible:bg-white/[0.14] focus-visible:text-white'
+                            gold
+                              ? 'font-medium hover:bg-white/[0.14] focus-visible:bg-white/[0.14]'
+                              : active
+                                ? 'text-[#5115a4] font-medium'
+                                : 'text-white hover:bg-white/[0.14] hover:text-white focus-visible:bg-white/[0.14] focus-visible:text-white'
                           )}
-                          style={{ zIndex: 1 }}
+                          style={{ zIndex: 1, color: gold ? goldText : undefined }}
                         >
                           <span
                             className="relative flex h-6 w-6 shrink-0 items-center justify-center overflow-hidden rounded-lg"
                             style={{
-                              background: active ? 'rgba(81, 21, 164,0.10)' : 'rgba(255,255,255,0.16)',
+                              background: gold
+                                ? 'rgba(245,166,35,0.20)'
+                                : active
+                                  ? 'rgba(81, 21, 164,0.10)'
+                                  : 'rgba(255,255,255,0.16)',
                               boxShadow: 'none',
                             }}
                             aria-hidden
@@ -208,7 +217,11 @@ export default function Sidebar({ mobileOpen = false, onClose }: SidebarProps) {
                                 width: 18,
                                 height: 18,
                                 borderRadius: 999,
-                                backgroundColor: active ? 'rgba(81, 21, 164,0.08)' : 'rgba(255,255,255,0.10)',
+                                backgroundColor: gold
+                                  ? 'rgba(245,166,35,0.16)'
+                                  : active
+                                    ? 'rgba(81, 21, 164,0.08)'
+                                    : 'rgba(255,255,255,0.10)',
                               }}
                             />
                             <Icon
@@ -216,7 +229,7 @@ export default function Sidebar({ mobileOpen = false, onClose }: SidebarProps) {
                                 position: 'relative',
                                 width: 14,
                                 height: 14,
-                                color: active ? '#5115a4' : '#ffffff',
+                                color: gold ? goldText : active ? '#5115a4' : '#ffffff',
                                 flexShrink: 0,
                               }}
                             />
@@ -226,7 +239,7 @@ export default function Sidebar({ mobileOpen = false, onClose }: SidebarProps) {
                               'truncate whitespace-nowrap transition-opacity duration-200',
                               expanded ? 'opacity-100' : 'opacity-0',
                             )}
-                            style={{ fontSize: 13, fontWeight: active ? 500 : 400 }}
+                            style={{ fontSize: 13, fontWeight: active || gold ? 500 : 400 }}
                           >
                             {item.label}
                           </span>

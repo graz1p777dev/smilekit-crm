@@ -1,6 +1,5 @@
 import type { LucideIcon } from 'lucide-react'
 import type { UserRole } from '@/types'
-import { FinanceNavIcon } from '@/components/finance/FinanceDesignerIcons'
 
 export interface NavItem {
   href: string
@@ -8,6 +7,8 @@ export interface NavItem {
   icon: LucideIcon
   roles: UserRole[]
   exact?: boolean
+  /** 'gold' — золотая подсветка в сайдбаре: пункт, за которым следят каждый день. */
+  accent?: 'gold'
 }
 
 export interface NavGroup {
@@ -18,22 +19,16 @@ export interface NavGroup {
 import {
   LayoutDashboard,
   BarChart3,
-  Megaphone,
   DollarSign,
   Users,
   Calendar,
   Bell,
-  FileText,
   Settings,
-  FileBarChart2,
-  SlidersHorizontal,
-  FlaskConical,
-  HelpCircle,
   KanbanSquare,
-  Sparkles,
   Handshake,
   Package,
   Send,
+  TrendingUp,
 } from 'lucide-react'
 
 export const NAV_GROUPS: NavGroup[] = [
@@ -49,18 +44,22 @@ export const NAV_GROUPS: NavGroup[] = [
       },
       {
         // Воронка продаж. Сделки заводятся сами, как только клиент написал
-        // боту витрины или в WhatsApp/Instagram — бухгалтеру не нужна.
+        // боту витрины или в WhatsApp/Instagram.
         href: '/dashboard/deals',
         label: 'Сделки',
         icon: Handshake,
         roles: ['owner', 'rop', 'mp', 'lmai'],
       },
       {
-        // Заказы из Telegram-бота. Бухгалтеру не нужны — он работает
-        // с итогами в «Финансах», а не с отгрузками.
         href: '/dashboard/orders',
         label: 'Заказы',
         icon: Package,
+        roles: ['owner', 'rop', 'mp', 'lmai'],
+      },
+      {
+        href: '/dashboard/customers',
+        label: 'Клиенты',
+        icon: Users,
         roles: ['owner', 'rop', 'mp', 'lmai'],
       },
       {
@@ -69,69 +68,24 @@ export const NAV_GROUPS: NavGroup[] = [
         icon: Send,
         roles: ['owner', 'rop'],
       },
-      {
-        href: '/dashboard/customers',
-        label: 'Клиенты',
-        icon: Handshake,
-        roles: ['owner', 'rop', 'mp', 'lmai'],
-      },
-      {
-        href: '/dashboard/copilot',
-        label: 'ИИ-помощник',
-        icon: Sparkles,
-        roles: ['owner', 'rop', 'mp', 'lmai', 'accountant'],
-      },
-    ],
-  },
-  {
-    label: 'AI Бот',
-    items: [
-      {
-        href: '/dashboard/bot-analytics',
-        label: 'Аналитика бота',
-        icon: BarChart3,
-        roles: ['owner', 'rop'],
-      },
-      {
-        href: '/dashboard/bot-reports',
-        label: 'Отчёты бота',
-        icon: FileBarChart2,
-        roles: ['owner', 'rop'],
-      },
-      {
-        href: '/dashboard/bot-settings',
-        label: 'Настройки бота',
-        icon: SlidersHorizontal,
-        roles: ['owner'],
-      },
-      {
-        href: '/dashboard/whatsapp-settings',
-        label: 'WhatsApp: шаблоны и доставка',
-        icon: SlidersHorizontal,
-        roles: ['owner'],
-      },
-      {
-        href: '/dashboard/instagram-settings',
-        label: 'Instagram',
-        icon: SlidersHorizontal,
-        roles: ['owner'],
-      },
-      {
-        href: '/dashboard/laboratory',
-        label: 'Лаборатория',
-        icon: FlaskConical,
-        roles: ['owner'],
-      },
-      {
-        href: '/dashboard/whatsapp-lab',
-        label: 'Лаборатория WhatsApp',
-        icon: FlaskConical,
-        roles: ['owner'],
-      },
     ],
   },
   {
     label: 'Аналитика',
+    items: [
+      {
+        // Одна страница на всю аналитику: конверсии и продажи, покупки, бот.
+        // Раньше это были три отдельных пункта меню.
+        href: '/dashboard/analytics',
+        label: 'Аналитика',
+        icon: TrendingUp,
+        roles: ['owner', 'rop'],
+        accent: 'gold',
+      },
+    ],
+  },
+  {
+    label: 'Другое',
     items: [
       {
         href: '/dashboard/decomposition',
@@ -145,29 +99,6 @@ export const NAV_GROUPS: NavGroup[] = [
         icon: DollarSign,
         roles: ['owner', 'rop', 'mp', 'lmai', 'accountant'],
       },
-      {
-        href: '/dashboard/finance',
-        label: 'Финансы',
-        icon: FinanceNavIcon,
-        roles: ['owner', 'accountant'],
-      },
-      {
-        href: '/dashboard/marketing',
-        label: 'Маркетинг',
-        icon: Megaphone,
-        roles: ['owner', 'rop'],
-      },
-      {
-        href: '/dashboard/purchase-analytics',
-        label: 'Аналитика покупок',
-        icon: BarChart3,
-        roles: ['owner', 'rop'],
-      },
-    ],
-  },
-  {
-    label: 'Управление',
-    items: [
       {
         href: '/dashboard/tasks',
         label: 'Задачи',
@@ -192,28 +123,18 @@ export const NAV_GROUPS: NavGroup[] = [
         icon: Bell,
         roles: ['owner', 'rop', 'mp', 'lmai', 'accountant'],
       },
-      {
-        href: '/dashboard/documents',
-        label: 'Документы',
-        icon: FileText,
-        roles: ['owner', 'accountant', 'rop'],
-      },
     ],
   },
   {
     label: 'Система',
     items: [
       {
+        // Настройки бота переехали внутрь «Настроек» отдельной вкладкой —
+        // отдельного пункта меню у них больше нет.
         href: '/dashboard/settings',
         label: 'Настройки',
         icon: Settings,
         roles: ['owner'],
-      },
-      {
-        href: '/dashboard/help',
-        label: 'Помощь',
-        icon: HelpCircle,
-        roles: ['owner', 'rop', 'mp', 'lmai', 'accountant'],
       },
     ],
   },

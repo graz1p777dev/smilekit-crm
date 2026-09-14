@@ -17,7 +17,7 @@ import {
   type SmilekitLabMessage,
 } from '@/lib/models/smilekit-bot'
 
-const PAGE = '/dashboard/bot-settings'
+const PAGE = '/dashboard/settings'
 
 export async function getBotSettings(): Promise<
   { ok: true; data: SmilekitBotSettings } | { ok: false; error: string }

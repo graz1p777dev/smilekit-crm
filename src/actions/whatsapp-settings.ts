@@ -33,7 +33,7 @@ export async function updateWhatsappSettings(
 ): Promise<{ success: true } | { success: false; error: string }> {
   if (!(await requireOwner())) return { success: false, error: 'Нет доступа' }
   const result = await saveWhatsappBotConfig(patch)
-  if (result.success) revalidatePath('/dashboard/whatsapp-settings')
+  if (result.success) revalidatePath('/dashboard/settings')
   return result
 }
 

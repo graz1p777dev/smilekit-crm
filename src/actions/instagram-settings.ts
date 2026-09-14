@@ -22,6 +22,6 @@ export async function getInstagramStatus(): Promise<InstagramIntegration | null>
 export async function disconnectInstagramAction(): Promise<ActionResult> {
   if (!(await requireOwner())) return { success: false, error: 'Недостаточно прав' }
   await disconnectInstagram()
-  revalidatePath('/dashboard/instagram-settings')
+  revalidatePath('/dashboard/settings')
   return { success: true }
 }

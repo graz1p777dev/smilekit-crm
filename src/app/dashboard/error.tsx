@@ -1,6 +1,7 @@
 'use client'
 import { useEffect } from 'react'
 import { AlertTriangle, RefreshCw } from 'lucide-react'
+import { recoverFromStaleAction } from '@/lib/stale-action'
 
 interface DashboardErrorProps {
   error: Error & { digest?: string }
@@ -10,6 +11,12 @@ interface DashboardErrorProps {
 export default function DashboardError({ error, reset }: DashboardErrorProps) {
   useEffect(() => {
     console.error('[Dashboard error]', error)
+    // Вкладка, открытая до деплоя, зовёт серверное действие по старому
+    // идентификатору и падает с «Server Action … was not found». Чинится
+    // перезагрузкой — делаем её сами, один раз, вместо того чтобы показывать
+    // пользователю техническую ошибку. Здесь, в общей границе ошибок, это
+    // прикрывает сразу все страницы дашборда.
+    recoverFromStaleAction(error)
   }, [error])
 
   return (

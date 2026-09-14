@@ -1,5 +1,0 @@
-export { default as MarketingHeader }       from './MarketingHeader'
-export { default as MarketingKpiCards }     from './MarketingKpiCards'
-export { default as MarketingKpiDashboard } from './MarketingKpiDashboard'
-export { default as MarketingCharts }       from './MarketingCharts'
-export { default as MarketingDailyTable }   from './MarketingDailyTable'

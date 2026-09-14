@@ -862,7 +862,7 @@ export function isBulkBroadcast(distinctOtherChatsWithSameText: number): boolean
 
 export async function registerOutgoingGreenApiMessage(input: InboundGreenApiMessage): Promise<void> {
   const supabase = createAdminClient()
-  // Окно эха расширено с 5 минут до суток: под нагрузкой (см. AmoBotToggle,
+  // Окно эха расширено с 5 минут до суток: под нагрузкой (см. BotToggle,
   // getDealConversation — тот же класс зависаний сервера) собственная
   // отправка бота иногда фактически уходит клиенту с большой задержкой —
   // на живых данных зафиксирован разрыв 21+ минуту между сообщением клиента

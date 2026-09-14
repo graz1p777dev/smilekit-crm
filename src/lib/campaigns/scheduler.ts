@@ -1,7 +1,18 @@
-import { sendAmoChatMessage } from '@/lib/amocrm/chat'
-import { sendGreenApiMessage, toGreenApiChatId } from '@/lib/greenapi/client'
+import { sendGreenApiMessage, sendGreenApiVoice, toGreenApiChatId } from '@/lib/greenapi/client'
 import { smilekitBotFetch } from '@/lib/smilekit-bot-api'
 import { createAdminClient } from '@/lib/supabase/admin'
+import { voiceById, type VoiceMessage } from '@/config/voice-messages'
+
+/**
+ * Голосовое Green API забирает САМ по ссылке, поэтому она должна быть
+ * публичной и абсолютной. Домен берём из Railway, иначе из явной переменной.
+ */
+function voiceUrl(voice: VoiceMessage): string {
+  const host = process.env.PUBLIC_APP_URL || process.env.RAILWAY_PUBLIC_DOMAIN
+  if (!host) throw new Error('Не задан публичный адрес CRM — голосовое отправить не по чему')
+  const base = host.startsWith('http') ? host : `https://${host}`
+  return `${base}/voice/${voice.file}`
+}
 
 const POLL_INTERVAL_MS = 30_000
 // Green API — это мост к WhatsApp Web, а не официальный Business API: слишком
@@ -11,7 +22,9 @@ const POLL_INTERVAL_MS = 30_000
 const SEND_INTERVAL_MS = 3_000
 let started = false
 
-type Campaign = { id: string; message: string }
+// voice_id помечен необязательным намеренно: пока миграция 042 не применена,
+// такой колонки в базе нет и в строке её просто не будет.
+type Campaign = { id: string; message: string | null; voice_id?: string | null }
 type Recipient = {
   id: number
   channel: 'telegram' | 'whatsapp' | 'instagram'
@@ -36,10 +49,17 @@ async function recoverInterruptedCampaigns() {
 }
 
 async function send(recipient: Recipient, campaign: Campaign) {
+  const voice = voiceById(campaign.voice_id)
+  // В историю чата и в Telegram уходит текст; для голосовой рассылки без
+  // текста подписываем её названием — иначе в переписке будет пустая строка.
+  const text = campaign.message?.trim() || (voice ? `🎤 ${voice.label}` : '')
+
   if (recipient.channel === 'telegram') {
+    // Голосовые пока умеет только WhatsApp (Green API). В Telegram у бота
+    // своя ручка broadcast, и она принимает текст — шлём подпись.
     const result = await smilekitBotFetch<{ ok: true }>(
       `/internal/chats/${encodeURIComponent(recipient.chat_id)}/broadcast`,
-      { method: 'POST', body: { text: campaign.message } }
+      { method: 'POST', body: { text } }
     )
     if (!result.ok) throw new Error(result.error)
     return
@@ -57,21 +77,27 @@ async function send(recipient: Recipient, campaign: Campaign) {
     contact_id: recipient.contact_id,
     direction: 'out',
     sender: 'bot',
-    text: campaign.message,
+    text,
   }, { onConflict: 'amo_message_id', ignoreDuplicates: true })
   // Только цифры в chat_id — это номер телефона, значит адресат подобран под
   // Green API (см. eligibleRecipients). UUID-подобный chat_id — старый путь
   // через amojo для чатов, у которых есть переписка в amoCRM.
   if (/^\d{9,}$/.test(recipient.chat_id)) {
-    await sendGreenApiMessage(toGreenApiChatId(recipient.chat_id), campaign.message)
+    const chatId = toGreenApiChatId(recipient.chat_id)
+    if (voice) {
+      await sendGreenApiVoice(chatId, voiceUrl(voice), voice.file)
+      // Текст рядом с голосовым шлём, только если менеджер его написал:
+      // подпись-заглушка клиенту не нужна.
+      if (campaign.message?.trim()) await sendGreenApiMessage(chatId, campaign.message.trim())
+      return
+    }
+    await sendGreenApiMessage(chatId, text)
     return
   }
-  await sendAmoChatMessage({
-    chatId: recipient.chat_id,
-    leadId: recipient.lead_id,
-    contactId: recipient.contact_id,
-    text: campaign.message,
-  })
+  // Канал один — Green API, он адресуется номером. Получатель без номера
+  // (старый чат amoCRM) теперь недостижим — помечаем ошибкой, а не делаем
+  // вид, что отправили.
+  throw new Error('У получателя нет номера — отправить через WhatsApp нечем')
 }
 
 async function finishCampaign(campaignId: string) {
@@ -129,7 +155,7 @@ async function poll() {
   const admin = createAdminClient()
   const { data } = await admin
     .from('campaigns')
-    .select('id, message')
+    .select('*')
     .eq('status', 'scheduled')
     .lte('scheduled_at', new Date().toISOString())
     .order('scheduled_at')
@@ -141,7 +167,7 @@ async function poll() {
     .update({ status: 'running', started_at: new Date().toISOString() })
     .eq('id', data.id)
     .eq('status', 'scheduled')
-    .select('id, message')
+    .select('*')
     .maybeSingle()
   if (claimed) await processCampaign(claimed as Campaign)
 }

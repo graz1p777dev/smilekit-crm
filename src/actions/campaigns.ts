@@ -4,11 +4,15 @@ import { revalidatePath } from 'next/cache'
 import { z } from 'zod'
 import { createClient } from '@/lib/supabase/server'
 import { createAdminClient } from '@/lib/supabase/admin'
+import { voiceById } from '@/config/voice-messages'
 
 export interface CampaignRow {
   id: string
   title: string
-  message: string
+  /** null — рассылка голосовая, текста у неё нет. */
+  message: string | null
+  /** id из src/config/voice-messages.ts, если рассылка голосовая. */
+  voice_id: string | null
   scheduled_at: string
   status: 'scheduled' | 'running' | 'completed' | 'cancelled' | 'failed'
   recipient_count: number
@@ -19,7 +23,8 @@ export interface CampaignRow {
 
 export interface CampaignsData {
   campaigns: CampaignRow[]
-  eligibleCount: number
+  /** null — ещё не посчитано: число едет отдельным запросом с клиента. */
+  eligibleCount: number | null
   optOuts: OptOutRow[]
 }
 
@@ -226,16 +231,29 @@ async function eligibleRecipients(filter?: AudienceFilter): Promise<Recipient[]>
   })
 }
 
+/**
+ * Данные страницы рассылок. Здесь НЕТ подсчёта аудитории, и это принципиально.
+ *
+ * eligibleRecipients() вычитывает всю таблицу amocrm_messages (тысячи строк,
+ * постранично по 1000 — то есть десяток последовательных запросов), потому что
+ * ей нужно «последнее сообщение в каждом чате». Пока это стояло в рендере
+ * страницы, открытие «Рассылок» ждало весь этот перебор и часто не дожидалось:
+ * в логах прода — `Error: The destination stream closed early`, в браузере —
+ * бесконечный логотип-загрузчик.
+ *
+ * Теперь страница отдаётся сразу, а число получателей клиент запрашивает
+ * отдельно через getEligibleCountForRange() и показывает «считаем…», пока
+ * оно едет. Тот же самый вызов уже использовался при смене фильтров.
+ */
 export async function getCampaignsData(): Promise<CampaignsData> {
   const me = await viewer()
-  if (!me || !['owner', 'rop'].includes(me.role)) return { campaigns: [], eligibleCount: 0, optOuts: [] }
+  if (!me || !['owner', 'rop'].includes(me.role)) return { campaigns: [], eligibleCount: null, optOuts: [] }
   const admin = createAdminClient()
-  const [{ data }, recipients, optOuts] = await Promise.all([
+  const [{ data }, optOuts] = await Promise.all([
     admin.from('campaigns').select('*').order('created_at', { ascending: false }).limit(50),
-    eligibleRecipients(),
     getOptOutPhones(),
   ])
-  return { campaigns: (data ?? []) as CampaignRow[], eligibleCount: recipients.length, optOuts }
+  return { campaigns: (data ?? []) as CampaignRow[], eligibleCount: null, optOuts }
 }
 
 /** Живой пересчёт аудитории под выбранные фильтры (для UI, до создания рассылки). */
@@ -256,18 +274,28 @@ export async function getEligibleCountForRange(
 
 const CampaignSchema = z.object({
   title: z.string().trim().min(1).max(160),
-  message: z.string().trim().min(1).max(4000),
+  // Пусто допустимо только для голосовой рассылки — проверка ниже, в refine:
+  // у голосового свой смысл, дублировать его текстом не обязательно.
+  message: z.string().trim().max(4000),
+  voiceId: z.string().trim().optional(),
   scheduledAt: z.string().datetime(),
   dateFrom: z.string().optional(),
   dateTo: z.string().optional(),
   audience: z.enum(['not_purchased', 'purchased', 'all']).optional(),
-})
+}).refine(
+  (data) => data.message.length > 0 || Boolean(data.voiceId),
+  { message: 'Нужен текст или голосовое' }
+)
 
 export async function scheduleCampaign(input: unknown): Promise<{ success: true; count: number } | { success: false; error: string }> {
   const me = await viewer()
   if (!me || !['owner', 'rop'].includes(me.role)) return { success: false, error: 'Нет доступа' }
   const parsed = CampaignSchema.safeParse(input)
-  if (!parsed.success) return { success: false, error: 'Заполните название, сообщение и время отправки' }
+  if (!parsed.success) return { success: false, error: 'Заполните название, сообщение (или голосовое) и время отправки' }
+  // id голосового проверяем по реестру, а не доверяем клиенту: иначе в базу
+  // попадёт ссылка на несуществующий файл и рассылка молча не уйдёт.
+  const voice = voiceById(parsed.data.voiceId)
+  if (parsed.data.voiceId && !voice) return { success: false, error: 'Такого голосового нет' }
   const scheduledAt = new Date(parsed.data.scheduledAt)
   if (scheduledAt.getTime() < Date.now() - 60_000) return { success: false, error: 'Время отправки уже прошло' }
   const recipients = await eligibleRecipients({
@@ -278,14 +306,31 @@ export async function scheduleCampaign(input: unknown): Promise<{ success: true;
   if (!recipients.length) return { success: false, error: 'Нет клиентов под выбранные фильтры' }
 
   const admin = createAdminClient()
+  // voice_id кладём в insert ТОЛЬКО для голосовой рассылки. Колонки может
+  // ещё не быть (миграция 042_campaign_voice.sql), и упоминание её имени
+  // уронило бы вообще любую рассылку, включая обычную текстовую.
+  const voiceColumn = voice ? { voice_id: voice.id } : {}
   const { data: campaign, error } = await admin.from('campaigns').insert({
     title: parsed.data.title,
-    message: parsed.data.message,
+    message: parsed.data.message || null,
+    ...voiceColumn,
     scheduled_at: scheduledAt.toISOString(),
     recipient_count: recipients.length,
     created_by: me.id,
   }).select('id').single()
-  if (error || !campaign) return { success: false, error: error?.message ?? 'Не удалось создать рассылку' }
+  if (error || !campaign) {
+    // Пока миграция 042_campaign_voice.sql не применена, в базе нет ни
+    // колонки voice_id, ни разрешения на пустой текст. Говорим об этом
+    // прямо, а не «не удалось создать рассылку».
+    const raw = error?.message ?? ''
+    if (voice && (raw.includes('voice_id') || raw.includes('campaigns_message_check') || raw.includes('null value in column "message"'))) {
+      return {
+        success: false,
+        error: 'Голосовые рассылки ещё не включены в базе: примените миграцию 042_campaign_voice.sql',
+      }
+    }
+    return { success: false, error: raw || 'Не удалось создать рассылку' }
+  }
   const { error: recipientError } = await admin.from('campaign_recipients').insert(
     recipients.map((row) => ({ ...row, campaign_id: campaign.id }))
   )

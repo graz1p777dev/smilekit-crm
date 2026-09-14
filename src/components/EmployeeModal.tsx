@@ -127,6 +127,11 @@ export default function EmployeeModal({ employee, isNew, departments, roles, sch
     return digits.length > 3 ? '+' + digits : null
   }
 
+  // setErrors применится только к следующему рендеру, а сообщение нужно
+  // прямо сейчас — держим последний результат проверки ещё и в ref.
+  const errorsRef = useRef<Partial<Record<keyof FormState, string>>>({})
+  const passwordRef = useRef<HTMLDivElement | null>(null)
+
   const buildPayload = (): EmployeeFormData => ({
     name:             form.name,
     email:            form.email,
@@ -154,11 +159,23 @@ export default function EmployeeModal({ employee, isNew, departments, roles, sch
       else if (form.initial_password !== form.confirm_password) e.confirm_password = 'Пароли не совпадают'
     }
     setErrors(e)
+    errorsRef.current = e
     return Object.keys(e).length === 0
   }
 
   const handleSave = () => {
-    if (!validate()) return
+    if (!validate()) {
+      // Раньше здесь был молчаливый return. Обязательный пароль живёт в самом
+      // низу длинной формы, поэтому при пустом пароле кнопка «Сохранить»
+      // выглядела просто нерабочей: ошибка рисовалась за пределами экрана.
+      // Теперь говорим вслух и подкручиваем к проблемному месту.
+      const first = Object.values(errorsRef.current)[0]
+      if (first) toast.error(first)
+      if (errorsRef.current.initial_password || errorsRef.current.confirm_password) {
+        passwordRef.current?.scrollIntoView({ behavior: 'smooth', block: 'center' })
+      }
+      return
+    }
     startTransition(async () => {
       const payload = buildPayload()
       const result = isNew
@@ -314,6 +331,79 @@ export default function EmployeeModal({ employee, isNew, departments, roles, sch
               </Select>
             </div>
           </div>
+          {/* ─── Пароль (только для нового сотрудника) ─── */}
+          {isNew && (
+            <div
+              ref={passwordRef}
+              className="rounded-xl p-4 space-y-3"
+              style={{ backgroundColor: '#fdfbfb', border: '1px solid #ebebee' }}
+            >
+              <p className="text-[10px] font-bold text-gray-400 uppercase tracking-widest">
+                Доступ в систему
+              </p>
+
+              <div className="space-y-1">
+                <Label className="text-xs font-semibold text-gray-500">Начальный пароль *</Label>
+                <div className="relative">
+                  <Input
+                    type={showPassword ? 'text' : 'password'}
+                    value={form.initial_password}
+                    onChange={e => set('initial_password', e.target.value)}
+                    placeholder={`Мин. ${PASSWORD_MIN_LENGTH} символов, заглавная, цифра`}
+                    className={inputClass}
+                    style={{ paddingRight: 36 }}
+                  />
+                  <button
+                    type="button"
+                    onClick={() => setShowPassword(v => !v)}
+                    className="absolute right-2 top-1/2 -translate-y-1/2 text-gray-400 hover:text-gray-600"
+                    tabIndex={-1}
+                  >
+                    {showPassword
+                      ? <EyeOff style={{ width: 15, height: 15 }} />
+                      : <Eye style={{ width: 15, height: 15 }} />
+                    }
+                  </button>
+                </div>
+                {errors.initial_password && <p className={errorClass}>{errors.initial_password}</p>}
+
+                {/* Индикатор силы пароля */}
+                {form.initial_password.length > 0 && (() => {
+                  const strength = passwordStrength(form.initial_password)
+                  const map = {
+                    weak:   { label: 'Слабый',   color: '#5115a4', width: '33%' },
+                    medium: { label: 'Средний',   color: '#b45309', width: '66%' },
+                    strong: { label: 'Сильный',   color: '#15803d', width: '100%' },
+                  }
+                  const s = map[strength]
+                  return (
+                    <div className="space-y-1">
+                      <div className="h-1 rounded-full bg-gray-200 overflow-hidden">
+                        <div
+                          className="h-full rounded-full transition-all duration-300"
+                          style={{ width: s.width, backgroundColor: s.color }}
+                        />
+                      </div>
+                      <p className="text-[11px]" style={{ color: s.color }}>{s.label}</p>
+                    </div>
+                  )
+                })()}
+              </div>
+
+              <div className="space-y-1">
+                <Label className="text-xs font-semibold text-gray-500">Подтвердить пароль *</Label>
+                <Input
+                  type={showPassword ? 'text' : 'password'}
+                  value={form.confirm_password}
+                  onChange={e => set('confirm_password', e.target.value)}
+                  placeholder="Повторите пароль"
+                  className={inputClass}
+                />
+                {errors.confirm_password && <p className={errorClass}>{errors.confirm_password}</p>}
+              </div>
+            </div>
+          )}
+
 
           {/* ─── Даты ─── */}
           <p className="text-[10px] font-bold text-gray-400 uppercase tracking-widest">Даты</p>
@@ -389,77 +479,7 @@ export default function EmployeeModal({ employee, isNew, departments, roles, sch
             />
           </div>
 
-          {/* ─── Пароль (только для нового сотрудника) ─── */}
-          {isNew && (
-            <div
-              className="rounded-xl p-4 space-y-3"
-              style={{ backgroundColor: '#fdfbfb', border: '1px solid #ebebee' }}
-            >
-              <p className="text-[10px] font-bold text-gray-400 uppercase tracking-widest">
-                Доступ в систему
-              </p>
 
-              <div className="space-y-1">
-                <Label className="text-xs font-semibold text-gray-500">Начальный пароль *</Label>
-                <div className="relative">
-                  <Input
-                    type={showPassword ? 'text' : 'password'}
-                    value={form.initial_password}
-                    onChange={e => set('initial_password', e.target.value)}
-                    placeholder={`Мин. ${PASSWORD_MIN_LENGTH} символов, заглавная, цифра`}
-                    className={inputClass}
-                    style={{ paddingRight: 36 }}
-                  />
-                  <button
-                    type="button"
-                    onClick={() => setShowPassword(v => !v)}
-                    className="absolute right-2 top-1/2 -translate-y-1/2 text-gray-400 hover:text-gray-600"
-                    tabIndex={-1}
-                  >
-                    {showPassword
-                      ? <EyeOff style={{ width: 15, height: 15 }} />
-                      : <Eye style={{ width: 15, height: 15 }} />
-                    }
-                  </button>
-                </div>
-                {errors.initial_password && <p className={errorClass}>{errors.initial_password}</p>}
-
-                {/* Индикатор силы пароля */}
-                {form.initial_password.length > 0 && (() => {
-                  const strength = passwordStrength(form.initial_password)
-                  const map = {
-                    weak:   { label: 'Слабый',   color: '#5115a4', width: '33%' },
-                    medium: { label: 'Средний',   color: '#b45309', width: '66%' },
-                    strong: { label: 'Сильный',   color: '#15803d', width: '100%' },
-                  }
-                  const s = map[strength]
-                  return (
-                    <div className="space-y-1">
-                      <div className="h-1 rounded-full bg-gray-200 overflow-hidden">
-                        <div
-                          className="h-full rounded-full transition-all duration-300"
-                          style={{ width: s.width, backgroundColor: s.color }}
-                        />
-                      </div>
-                      <p className="text-[11px]" style={{ color: s.color }}>{s.label}</p>
-                    </div>
-                  )
-                })()}
-              </div>
-
-              <div className="space-y-1">
-                <Label className="text-xs font-semibold text-gray-500">Подтвердить пароль *</Label>
-                <Input
-                  type={showPassword ? 'text' : 'password'}
-                  value={form.confirm_password}
-                  onChange={e => set('confirm_password', e.target.value)}
-                  placeholder="Повторите пароль"
-                  className={inputClass}
-                />
-                {errors.confirm_password && <p className={errorClass}>{errors.confirm_password}</p>}
-              </div>
-            </div>
-          )}
         </div>
 
         {/* Футер */}

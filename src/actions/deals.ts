@@ -9,11 +9,7 @@ import { revalidatePath } from 'next/cache'
 import { z } from 'zod'
 import { createClient } from '@/lib/supabase/server'
 import { createAdminClient } from '@/lib/supabase/admin'
-import { shopFetch, isShopConfigured } from '@/lib/shop-api'
-import { upsertDealFromInbound } from '@/lib/deals/auto-create'
-import { syncAmoChatHistory } from '@/lib/amocrm/history'
-import { getAmoChatControlStatus, setAmoChatBotEnabled } from '@/lib/amocrm/bot-reply'
-import { sendAmoChatMessage } from '@/lib/amocrm/chat'
+import { getChatControlStatus, setChatBotEnabled } from '@/lib/chat-control'
 import { sendGreenApiMessage, toGreenApiChatId } from '@/lib/greenapi/client'
 import { recordAudit } from '@/actions/audit'
 import { isAllowedBotControlRole } from '@/lib/bot-control-roles'
@@ -65,13 +61,21 @@ export interface DealsData {
  * и не находился по прямой ссылке (?deal=...), хотя переход по ссылке
  * технически срабатывал.
  */
+// Доске нужны не все поля строки: note может быть длинным текстом, а на
+// тысяче сделок это лишние сотни килобайт в каждом ответе (и на первой
+// загрузке страницы, и на каждом обновлении по Realtime). Читаем ровно то,
+// что рисует карточка и открывает модалка до своих собственных запросов.
+// Одной строкой, без конкатенации: supabase-js выводит типы результата из
+// литерала, а склейка через + превращает его в обычный string и ломает вывод.
+const DEAL_BOARD_COLUMNS = 'id, title, stage_id, amount, currency, customer_name, customer_phone, customer_username, city, address, source, external_key, responsible_employee_id, note, status, stage_changed_at, created_at, updated_at'
+
 async function fetchAllDeals(supabase: Awaited<ReturnType<typeof createClient>>): Promise<Deal[]> {
   const PAGE_SIZE = 1000
   const rows: Deal[] = []
   for (let from = 0; ; from += PAGE_SIZE) {
     const { data, error } = await supabase
       .from('deals')
-      .select('*')
+      .select(DEAL_BOARD_COLUMNS)
       .is('deleted_at', null)
       .order('created_at', { ascending: false })
       .range(from, from + PAGE_SIZE - 1)
@@ -251,136 +255,20 @@ export async function deleteDeal(id: string): Promise<DealActionResult> {
 // ─── Сверка с витриной ───────────────────────────────────────────────────────
 
 /** Диалог витрины в ответе GET /api/admin/crm/conversations. */
-interface ShopConversation {
-  id: number
-  externalKey: string | null
-  source: string
-  customerName: string | null
-  customerUsername: string | null
-  customerPhone: string | null
-}
 
-interface ShopMessage {
-  id: number
-  direction: string
-  text: string
-  createdAt: string
-}
 
 // В воронке нет канала «amocrm»: через amoCRM у этого магазина приходят
 // WhatsApp и Instagram, неопознанный origin считаем WhatsApp.
-function shopSource(source: string): DealSource {
-  if (source === 'telegram') return 'telegram'
-  if (source === 'instagram') return 'instagram'
-  return 'whatsapp'
-}
 
 /**
  * Страховка на случай, если push от витрины не дошёл (CRM перезапускалась,
  * сеть моргнула): проходим по всем диалогам витрины и заводим недостающие
  * сделки. Идемпотентно — существующие не трогаем.
  */
-export async function reconcileDealsFromShop(): Promise<
-  DealActionResult<{ created: number; checked: number }>
-> {
-  const me = await getViewer()
-  if (!me) return { success: false, error: 'Нет авторизации' }
-  // У SmileKit витрины нет — сделки живут в amoCRM: сверяемся с ним.
-  if (process.env.AMOCRM_DOMAIN && process.env.AMOCRM_ACCESS_TOKEN) {
-    return reconcileDealsFromAmo()
-  }
-  if (!isShopConfigured()) {
-    return { success: false, error: 'Интеграция с витриной не настроена' }
-  }
-
-  const result = await shopFetch<{ conversations: ShopConversation[] }>('/crm/conversations')
-  if (!result.ok) return { success: false, error: result.error }
-
-  const conversations = result.data.conversations ?? []
-  let created = 0
-  for (const conversation of conversations) {
-    if (!conversation.externalKey) continue
-    const upsert = await upsertDealFromInbound({
-      externalKey: conversation.externalKey,
-      source: shopSource(conversation.source),
-      customerName: conversation.customerName,
-      customerPhone: conversation.customerPhone,
-      customerUsername: conversation.customerUsername,
-    })
-    if (upsert.created) created += 1
-  }
-
-  revalidatePath('/dashboard/deals')
-  return { success: true, data: { created, checked: conversations.length } }
-}
-
-/**
- * Сверка с amoCRM: все лиды + неразобранные заявки → сделки у нас.
- * Идемпотентно по external_key `amocrm:<lead_id>` — дублей не создаёт,
- * существующие сделки не трогает. То же, что делает вебхук, но разом
- * по всей базе амо (страховка от пропущенных вебхуков).
- */
-async function reconcileDealsFromAmo(): Promise<DealActionResult<{ created: number; checked: number }>> {
-  const domain = process.env.AMOCRM_DOMAIN
-  const token = process.env.AMOCRM_ACCESS_TOKEN
-  const headers = { authorization: `Bearer ${token}` }
-
-  const fetchAll = async (path: string, embeddedKey: string) => {
-    const items: Record<string, unknown>[] = []
-    for (let page = 1; page <= 40; page++) {
-      const res = await fetch(`https://${domain}${path}?limit=250&page=${page}`, { headers })
-      if (res.status === 204) break
-      if (!res.ok) throw new Error(`amoCRM ${path}: HTTP ${res.status}`)
-      const data = await res.json()
-      const batch = data?._embedded?.[embeddedKey] ?? []
-      if (!batch.length) break
-      items.push(...batch)
-      if (!data._links?.next) break
-    }
-    return items
-  }
-
-  try {
-    const [unsorted, leads] = await Promise.all([
-      fetchAll('/api/v4/leads/unsorted', 'unsorted'),
-      fetchAll('/api/v4/leads', 'leads'),
-    ])
-
-    const rows = new Map<string, { title: string; phone: string | null }>()
-    for (const item of unsorted) {
-      const embedded = item['_embedded'] as { leads?: { id?: number }[] } | undefined
-      const leadId = embedded?.leads?.[0]?.id
-      if (!leadId) continue
-      const metadata = item['metadata'] as { from?: string; client?: { name?: string } } | undefined
-      const phone = metadata?.from ?? null
-      rows.set(String(leadId), {
-        title: metadata?.client?.name || phone || `Заявка amoCRM ${leadId}`,
-        phone,
-      })
-    }
-    for (const lead of leads) {
-      const id = String(lead['id'])
-      if (rows.has(id)) continue
-      rows.set(id, { title: (lead['name'] as string) || `Сделка amoCRM ${id}`, phone: null })
-    }
-
-    let created = 0
-    for (const [leadId, row] of rows) {
-      const upsert = await upsertDealFromInbound({
-        externalKey: `amocrm:${leadId}`,
-        source: 'amocrm',
-        customerName: row.title,
-        customerPhone: row.phone,
-      })
-      if (upsert.created) created += 1
-    }
-
-    revalidatePath('/dashboard/deals')
-    return { success: true, data: { created, checked: rows.size } }
-  } catch (error) {
-    return { success: false, error: error instanceof Error ? error.message : 'Сбой сверки с amoCRM' }
-  }
-}
+// Сверка с внешними системами убрана вместе с интеграцией amoCRM: канал
+// один — Green API, и сделки заводит он сам на входящем сообщении
+// (upsertDealFromInbound в src/lib/greenapi/bot-reply.ts). Тянуть лидов
+// неоткуда, поэтому кнопки «Синхронизировать» на доске больше нет.
 
 // ─── Переписка по сделке ─────────────────────────────────────────────────────
 
@@ -443,64 +331,42 @@ export async function sendDealMessage(dealId: string, text: string): Promise<Dea
   const admin = createAdminClient()
   const { data: deal } = await admin
     .from('deals')
-    .select('external_key')
+    .select('external_key, customer_phone')
     .eq('id', dealId)
     .maybeSingle()
-  const externalKey = (deal as { external_key: string | null } | null)?.external_key
-  if (!externalKey) return { success: false, error: 'У сделки нет привязанного чата' }
+  const row = deal as { external_key: string | null; customer_phone: string | null } | null
+
+  // Канал отправки теперь один — Green API, а адресуется он номером.
+  // Для сделок с ключом greenapi:<phone> номер лежит прямо в ключе; у старых
+  // сделок, заведённых из amoCRM, берём телефон клиента. Отправка через amojo
+  // убрана вместе с интеграцией, но история этих сделок осталась на месте.
+  const phone = row?.external_key?.startsWith('greenapi:')
+    ? row.external_key.slice('greenapi:'.length).replace(/\D/g, '')
+    : (row?.customer_phone ?? '').replace(/\D/g, '')
+
+  if (!phone) {
+    return { success: false, error: 'У клиента нет номера — написать из CRM нечем' }
+  }
 
   const messageId = `manager:${dealId}:${Date.now()}`
 
-  if (externalKey.startsWith('greenapi:')) {
-    const phone = externalKey.slice('greenapi:'.length)
-    await admin.from('amocrm_messages').insert({
-      amo_message_id: `ga:${messageId}`,
-      chat_id: phone,
-      direction: 'out',
-      sender: 'operator',
-      author_name: me.name,
-      text: trimmed,
-    })
-    try {
-      await sendGreenApiMessage(toGreenApiChatId(phone), trimmed)
-    } catch (error) {
-      return { success: false, error: error instanceof Error ? error.message : 'Не удалось отправить' }
-    }
-    revalidatePath('/dashboard/deals')
-    return { success: true }
+  // Пишем в историю ДО отправки: та же запись служит сигналом «менеджер ведёт
+  // чат», и бот сразу перестаёт отвечать этому номеру.
+  await admin.from('amocrm_messages').insert({
+    amo_message_id: `ga:${messageId}`,
+    chat_id: phone,
+    direction: 'out',
+    sender: 'operator',
+    author_name: me.name,
+    text: trimmed,
+  })
+  try {
+    await sendGreenApiMessage(toGreenApiChatId(phone), trimmed)
+  } catch (error) {
+    return { success: false, error: error instanceof Error ? error.message : 'Не удалось отправить' }
   }
-
-  if (externalKey.startsWith('amocrm:')) {
-    const leadId = externalKey.slice('amocrm:'.length)
-    const { data: chatRow } = await admin
-      .from('amocrm_messages')
-      .select('chat_id, contact_id')
-      .eq('lead_id', leadId)
-      .order('id', { ascending: false })
-      .limit(1)
-      .maybeSingle()
-    const chat = chatRow as { chat_id: string; contact_id: string | null } | null
-    if (!chat) return { success: false, error: 'Чат ещё не начался — нет истории amoCRM' }
-    await admin.from('amocrm_messages').insert({
-      amo_message_id: messageId,
-      chat_id: chat.chat_id,
-      lead_id: leadId,
-      contact_id: chat.contact_id,
-      direction: 'out',
-      sender: 'operator',
-      author_name: me.name,
-      text: trimmed,
-    })
-    try {
-      await sendAmoChatMessage({ chatId: chat.chat_id, leadId, contactId: chat.contact_id, text: trimmed })
-    } catch (error) {
-      return { success: false, error: error instanceof Error ? error.message : 'Не удалось отправить' }
-    }
-    revalidatePath('/dashboard/deals')
-    return { success: true }
-  }
-
-  return { success: false, error: 'Канал сделки не поддерживает отправку из CRM' }
+  revalidatePath('/dashboard/deals')
+  return { success: true }
 }
 
 export async function getDealConversation(dealId: string): Promise<DealConversation> {
@@ -559,12 +425,11 @@ async function loadDealConversation(dealId: string): Promise<DealConversation> {
 
   if (deal.external_key?.startsWith('amocrm:')) {
     // Переписка WhatsApp-канала amoCRM живёт у нас (amocrm_messages,
-    // миграция 041) — сервер мастер истории, см. src/lib/amocrm/bot-reply.ts.
+    // миграция 041) — сервер мастер истории, см. src/lib/greenapi/bot-reply.ts.
     const leadId = deal.external_key.slice('amocrm:'.length)
-    // Системная история amoCRM не принадлежит конкретному сотруднику.
+    // Системная история чата не принадлежит конкретному сотруднику.
     // Авторизация уже проверена выше, поэтому читаем её admin-клиентом:
-    // пользовательский RLS-клиент возвращал пусто и запускал медленную
-    // синхронизацию amojo при каждом открытии сделки.
+    // пользовательский RLS-клиент возвращал пусто.
     const admin = createAdminClient()
     const readStoredMessages = () => admin
       .from('amocrm_messages')
@@ -573,98 +438,52 @@ async function loadDealConversation(dealId: string): Promise<DealConversation> {
       .order('created_at')
       .order('id')
       .limit(200)
-    let { data: rows } = await readStoredMessages()
-    // Вебхук уже поддерживает живую историю. amojo нужен только для старого
-    // диалога, которого ещё нет локально — не задерживаем им обычное открытие.
-    // amojo иногда подвисает дольше клиентского таймаута карточки (12с):
-    // getChatSession может уйти в 3 ретрая по 8с = до ~27с. Ограничиваем
-    // ожидание синхронизации отдельным потолком и не блокируем открытие
-    // сделки дольше него — sync доводим до конца в фоне, следующее открытие
-    // застанет уже сохранённые сообщения.
-    if (!rows?.length) {
-      const { data: chatRow } = await admin
-        .from('amocrm_messages')
-        .select('chat_id')
-        .eq('lead_id', leadId)
-        .limit(1)
-        .maybeSingle()
-      if (chatRow?.chat_id) {
-        const chatId = String(chatRow.chat_id)
-        const sync = syncAmoChatHistory(chatId, leadId).catch((error) => {
-          console.error('deal conversation: amo history sync failed', error)
-        })
-        const timedOut = Symbol('timeout')
-        const raced = await Promise.race([
-          sync.then(() => 'done' as const),
-          new Promise<typeof timedOut>((resolve) => setTimeout(() => resolve(timedOut), 6_000)),
-        ])
-        if (raced === 'done') {
-          const refreshed = await readStoredMessages()
-          rows = refreshed.data
-        } else {
-          return {
-            messages: [],
-            note: 'amoCRM отвечает медленнее обычного — история подгружается в фоне, откройте сделку ещё раз через несколько секунд.',
-          }
-        }
-      }
-    }
+    const { data: rows } = await readStoredMessages()
+    // Догрузки истории из amoCRM больше нет — интеграция снята. Уже
+    // сохранённая переписка осталась на месте, новые сообщения пишет
+    // Green API через вебхук.
     const messages = toDealMessages(rows)
     return { messages, note: messages.length ? null : 'Сообщений пока нет' }
   }
 
-  if (!deal.external_key) {
-    return { messages: [], note: 'Сделка заведена вручную — переписки нет' }
+  return {
+    messages: [],
+    note: deal.external_key
+      ? 'Переписки по этому каналу нет'
+      : 'Сделка заведена вручную — переписки нет',
   }
-  if (!isShopConfigured()) {
-    return { messages: [], note: 'Интеграция с витриной не настроена' }
-  }
-
-  // У витрины диалог адресуется числовым id, а в сделке лежит external_key —
-  // сначала находим id в списке диалогов.
-  const list = await shopFetch<{ conversations: ShopConversation[] }>('/crm/conversations')
-  if (!list.ok) return { messages: [], note: list.error }
-
-  const found = (list.data.conversations ?? []).find(c => c.externalKey === deal.external_key)
-  if (!found) return { messages: [], note: 'Диалог на витрине не найден' }
-
-  const detail = await shopFetch<{ messages: ShopMessage[] }>(
-    `/crm/conversations/${found.id}`
-  )
-  if (!detail.ok) return { messages: [], note: detail.error }
-
-  const messages: DealMessage[] = (detail.data.messages ?? []).map(m => ({
-    id: String(m.id),
-    direction: m.direction === 'incoming' ? 'in' : 'out',
-    text: m.text,
-    created_at: m.createdAt,
-  }))
-  return { messages, note: messages.length ? null : 'Сообщений пока нет' }
 }
 
-// ─── Управление ботом по конкретному чату amoCRM ─────────────────────────────
+// ─── Управление ботом в конкретном чате ─────────────────────────────
 // Как только в чат вступил живой менеджер, бот больше не отвечает в нём —
 // это правило по умолчанию. Тумблер в карточке сделки — явный override:
 // «вернуть чат боту» действует до следующего сообщения менеджера в этом же
 // чате (тогда управление снова у человека), см. isManagerControllingChat
-// в src/lib/amocrm/bot-reply.ts.
+// в src/lib/chat-control.ts.
 
 export interface DealBotControl {
-  /** null — у сделки ещё нет ни одного сообщения amoCRM, тумблер показывать нечего. */
+  /** null — у клиента нет номера, переключать нечего. */
   chatId: string | null
   managerControls: boolean
 }
 
+// Канал один — Green API (WhatsApp), и адресуется он номером телефона.
+// Раньше тумблер искал чат по lead_id amoCRM; после отказа от amoCRM ключом
+// стал сам номер клиента из сделки.
 export async function getDealBotControl(dealId: string): Promise<DealBotControl> {
   const me = await getViewer()
   if (!me) return { chatId: null, managerControls: false }
 
   const supabase = await createClient()
-  const { data } = await supabase.from('deals').select('external_key').eq('id', dealId).maybeSingle()
-  const externalKey = (data as { external_key: string | null } | null)?.external_key
-  if (!externalKey?.startsWith('amocrm:')) return { chatId: null, managerControls: false }
+  const { data } = await supabase
+    .from('deals')
+    .select('customer_phone')
+    .eq('id', dealId)
+    .maybeSingle()
+  const phone = (data as { customer_phone: string | null } | null)?.customer_phone
+  if (!phone) return { chatId: null, managerControls: false }
 
-  return getAmoChatControlStatus(externalKey.slice('amocrm:'.length))
+  return getChatControlStatus(phone)
 }
 
 export async function setDealBotControl(chatId: string, botEnabled: boolean): Promise<DealActionResult> {
@@ -679,12 +498,12 @@ export async function setDealBotControl(chatId: string, botEnabled: boolean): Pr
       .eq('chat_id', chatId)
       .maybeSingle()
 
-    await setAmoChatBotEnabled(chatId, botEnabled, me.id)
+    await setChatBotEnabled(chatId, botEnabled, me.id)
 
     const beforeEnabled = (before as { bot_enabled?: boolean } | null)?.bot_enabled
     await recordAudit({
       action: 'update',
-      resourceType: 'amocrm_chat_control',
+      resourceType: 'chat_control',
       resourceId: chatId,
       summary: `Управление ботом в чате ${chatId}: ${beforeEnabled ?? '—'} → ${botEnabled}`,
     })
@@ -693,4 +512,54 @@ export async function setDealBotControl(chatId: string, botEnabled: boolean): Pr
   } catch (error) {
     return { success: false, error: error instanceof Error ? error.message : 'Не удалось переключить управление' }
   }
+}
+
+// ─── Что клиент покупал ──────────────────────────────────────────────────────
+
+/** Строка истории покупок в карточке сделки. */
+export interface DealPurchase {
+  id: string
+  quantity: number | null
+  total_amount: number | null
+  currency: string
+  status: string
+  city: string | null
+  summary: string | null
+  created_at: string
+}
+
+/**
+ * История покупок клиента для карточки сделки. Заказ привязан к сделке
+ * через orders.deal_id, но бот заводит заказ и по клиентам, у которых
+ * сделка появилась отдельно (другой канал, ручное заведение) — поэтому
+ * добираем ещё и по номеру телефона: телефон здесь и есть клиент.
+ */
+export async function getDealPurchases(dealId: string): Promise<DealPurchase[]> {
+  const me = await getViewer()
+  if (!me) return []
+
+  const supabase = await createClient()
+  const { data: deal } = await supabase
+    .from('deals')
+    .select('customer_phone')
+    .eq('id', dealId)
+    .maybeSingle()
+
+  const phone = (deal as { customer_phone?: string | null } | null)?.customer_phone?.replace(/\D/g, '') ?? ''
+  // last4/last9 — номера у нас лежат в разном формате (996…, 0…, +996…),
+  // поэтому сравниваем по хвосту, как это делают рассылки.
+  const tail = phone.slice(-9)
+
+  const filters = [`deal_id.eq.${dealId}`]
+  if (tail) filters.push(`customer_phone.like.%${tail}`)
+
+  const { data } = await supabase
+    .from('orders')
+    .select('id, quantity, total_amount, currency, status, city, summary, created_at')
+    .or(filters.join(','))
+    .is('deleted_at', null)
+    .order('created_at', { ascending: false })
+    .limit(50)
+
+  return (data ?? []) as DealPurchase[]
 }

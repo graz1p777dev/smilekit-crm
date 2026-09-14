@@ -2,7 +2,7 @@
 
 import { useEffect, useMemo, useRef, useState, useTransition } from 'react'
 import { useRouter } from 'next/navigation'
-import { Bot, CalendarClock, CheckCircle2, Clock3, Send, ShieldCheck, ShieldX, Trash2, UsersRound, XCircle } from 'lucide-react'
+import { Bot, CalendarClock, CheckCircle2, Clock3, Mic, Send, ShieldCheck, ShieldX, Trash2, UsersRound, XCircle } from 'lucide-react'
 import { toast } from 'sonner'
 import {
   addOptOutPhone,
@@ -15,6 +15,7 @@ import {
   type CampaignRow,
 } from '@/actions/campaigns'
 import PageHeader from '@/components/PageHeader'
+import { VOICE_MESSAGES, voiceById, voiceSrc } from '@/config/voice-messages'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
@@ -46,11 +47,12 @@ export default function CampaignsClient({ initialData }: { initialData: Campaign
   const [pending, startTransition] = useTransition()
   const [title, setTitle] = useState('')
   const [message, setMessage] = useState('')
+  const [voiceId, setVoiceId] = useState('')
   const [scheduledAt, setScheduledAt] = useState(defaultSchedule)
   const [dateFrom, setDateFrom] = useState('')
   const [dateTo, setDateTo] = useState('')
   const [audience, setAudience] = useState<CampaignAudience>('not_purchased')
-  const [eligibleCount, setEligibleCount] = useState(initialData.eligibleCount)
+  const [eligibleCount, setEligibleCount] = useState<number | null>(initialData.eligibleCount)
   const requestSeq = useRef(0)
   const [countLoading, setCountLoading] = useState(false)
   const [optOutPhone, setOptOutPhone] = useState('')
@@ -62,9 +64,9 @@ export default function CampaignsClient({ initialData }: { initialData: Campaign
     return () => clearInterval(timer)
   }, [router])
 
-  // Аудитория пересчитывается под введённые вручную даты «последнее
-  // сообщение клиента от … до …» — без диапазона используется дефолтное
-  // значение с сервера (initialData.eligibleCount).
+  // Аудиторию считаем здесь, а не на сервере при рендере страницы: перебор
+  // всей переписки занимает секунды и раньше держал открытие «Рассылок»
+  // до обрыва соединения. Пока число едет — в карточке стоит «…».
   //
   // requestSeq защищает от гонки: быстрый повторный клик по «Кто купил» /
   // «Всем» шлёт новый запрос раньше, чем ответит предыдущий — без проверки
@@ -72,20 +74,15 @@ export default function CampaignsClient({ initialData }: { initialData: Campaign
   // быстрого нового и переписать eligibleCount неверным числом (в UI это
   // выглядело как «то 9, то 0» при переключении кнопок).
   useEffect(() => {
-    if (!dateFrom && !dateTo && audience === 'not_purchased') {
-      requestSeq.current += 1
-      setEligibleCount(initialData.eligibleCount)
-      return
-    }
-    setCountLoading(true)
     const seq = ++requestSeq.current
     const timer = setTimeout(() => {
+      setCountLoading(true)
       getEligibleCountForRange(dateFrom || undefined, dateTo || undefined, audience)
         .then((count) => { if (seq === requestSeq.current) setEligibleCount(count) })
         .finally(() => { if (seq === requestSeq.current) setCountLoading(false) })
     }, 400)
     return () => clearTimeout(timer)
-  }, [dateFrom, dateTo, audience, initialData.eligibleCount])
+  }, [dateFrom, dateTo, audience])
 
   const scheduleLabel = useMemo(() => {
     const date = new Date(scheduledAt)
@@ -97,6 +94,7 @@ export default function CampaignsClient({ initialData }: { initialData: Campaign
       const result = await scheduleCampaign({
         title,
         message,
+        voiceId: voiceId || undefined,
         scheduledAt: new Date(scheduledAt).toISOString(),
         dateFrom: dateFrom || undefined,
         dateTo: dateTo || undefined,
@@ -109,6 +107,7 @@ export default function CampaignsClient({ initialData }: { initialData: Campaign
       toast.success(`Рассылка запланирована для ${result.count} клиентов`)
       setTitle('')
       setMessage('')
+      setVoiceId('')
       setScheduledAt(defaultSchedule())
       setDateFrom('')
       setDateTo('')
@@ -158,7 +157,11 @@ export default function CampaignsClient({ initialData }: { initialData: Campaign
     })
   }
 
-  const valid = title.trim() && message.trim() && scheduledAt && eligibleCount > 0
+  // Пока аудитория не посчитана (eligibleCount === null), планировать нельзя —
+  // иначе рассылка уйдёт в неизвестно какое число получателей.
+  // Голосовая рассылка может уйти без текста — тогда достаточно выбранного
+  // голосового.
+  const valid = title.trim() && (message.trim() || voiceId) && scheduledAt && (eligibleCount ?? 0) > 0
 
   return (
     <div className="min-h-full" style={{ background: 'var(--surface-2)' }}>
@@ -186,7 +189,56 @@ export default function CampaignsClient({ initialData }: { initialData: Campaign
                   <Label htmlFor="campaign-message">Сообщение клиенту</Label>
                   <span className="text-xs tabular-nums" style={{ color: 'var(--ink-3)' }}>{message.length}/4000</span>
                 </div>
-                <Textarea id="campaign-message" value={message} onChange={(event) => setMessage(event.target.value)} placeholder="Напишите текст акции…" maxLength={4000} className="min-h-44 resize-y leading-relaxed" />
+                <Textarea id="campaign-message" value={message} onChange={(event) => setMessage(event.target.value)} placeholder={voiceId ? 'Необязательно: текст рядом с голосовым…' : 'Напишите текст акции…'} maxLength={4000} className="min-h-44 resize-y leading-relaxed" />
+              </div>
+
+              {/* Голосовая рассылка: выбрать и тут же послушать */}
+              <div className="space-y-2">
+                <div className="flex items-center gap-2">
+                  <Mic className="size-4" style={{ color: 'var(--ink-3)' }} />
+                  <Label>Голосовое сообщение</Label>
+                </div>
+                <div className="space-y-2">
+                  {VOICE_MESSAGES.map((voice) => {
+                    const active = voiceId === voice.id
+                    return (
+                      <div
+                        key={voice.id}
+                        className="rounded-xl p-3 transition-colors"
+                        style={{
+                          background: active ? '#f1ebfa' : 'var(--surface-2)',
+                          border: `1px solid ${active ? '#5115a4' : 'transparent'}`,
+                        }}
+                      >
+                        <label className="flex cursor-pointer items-center gap-2">
+                          <input
+                            type="radio"
+                            name="campaign-voice"
+                            className="size-4"
+                            checked={active}
+                            onChange={() => setVoiceId(voice.id)}
+                          />
+                          <span className="text-sm font-semibold" style={{ color: 'var(--ink)' }}>{voice.label}</span>
+                        </label>
+                        {/* Послушать до отправки — клиенту уйдёт ровно это */}
+                        <audio controls preload="none" src={voiceSrc(voice)} className="mt-2 w-full" style={{ height: 36 }} />
+                      </div>
+                    )
+                  })}
+                  {voiceId && (
+                    <button
+                      type="button"
+                      onClick={() => setVoiceId('')}
+                      className="text-xs font-semibold"
+                      style={{ color: 'var(--ink-3)' }}
+                    >
+                      Отправить без голосового
+                    </button>
+                  )}
+                </div>
+                <p className="text-xs" style={{ color: 'var(--ink-3)' }}>
+                  Голосовое уходит только в WhatsApp по номеру. В Telegram вместо него — текст.
+                </p>
               </div>
               <div className="space-y-2">
                 <Label htmlFor="campaign-time">Дата и время</Label>
@@ -238,7 +290,7 @@ export default function CampaignsClient({ initialData }: { initialData: Campaign
             <div className="p-6">
               <p className="text-xs font-semibold uppercase tracking-[.16em] text-white/60">Аудитория</p>
               <div className="mt-4 flex items-end gap-2">
-                <strong className="text-5xl leading-none tabular-nums" style={{ opacity: countLoading ? 0.5 : 1 }}>{eligibleCount}</strong>
+                <strong className="text-5xl leading-none tabular-nums" style={{ opacity: countLoading || eligibleCount === null ? 0.5 : 1 }}>{eligibleCount ?? '…'}</strong>
                 <span className="pb-1 text-sm text-white/70">клиентов</span>
               </div>
               <p className="mt-3 text-sm leading-relaxed text-white/75">
@@ -276,7 +328,21 @@ export default function CampaignsClient({ initialData }: { initialData: Campaign
                       <h3 className="truncate font-semibold" style={{ color: 'var(--ink)' }}>{campaign.title}</h3>
                       <span className="rounded-full px-2.5 py-1 text-[11px] font-semibold" style={{ color: meta.color, background: meta.bg }}>{meta.label}</span>
                     </div>
-                    <p className="mt-1 truncate text-sm" style={{ color: 'var(--ink-3)' }}>{campaign.message}</p>
+                    {campaign.message && (
+                      <p className="mt-1 text-sm" style={{ color: 'var(--ink-3)' }}>{campaign.message}</p>
+                    )}
+                    {(() => {
+                      const voice = voiceById(campaign.voice_id)
+                      if (!voice) return null
+                      return (
+                        <div className="mt-2">
+                          <span className="flex items-center gap-1.5 text-xs font-semibold" style={{ color: '#5115a4' }}>
+                            <Mic className="size-3.5" /> {voice.label}
+                          </span>
+                          <audio controls preload="none" src={voiceSrc(voice)} className="mt-1.5 w-full max-w-sm" style={{ height: 34 }} />
+                        </div>
+                      )
+                    })()}
                   </div>
                   <div className="text-sm tabular-nums md:text-right">
                     <p className="font-semibold" style={{ color: 'var(--ink)' }}>{formatDate(campaign.scheduled_at)}</p>

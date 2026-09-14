@@ -1,7 +1,7 @@
 'use client'
-import { usePathname, useRouter } from 'next/navigation'
+import { usePathname } from 'next/navigation'
 import { useEffect, useState, useMemo } from 'react'
-import { Bell, Menu, Sparkles } from 'lucide-react'
+import { Bell, Menu } from 'lucide-react'
 import Link from 'next/link'
 import { useAuth } from '@/contexts/AuthContext'
 import { NAV_GROUPS } from '@/config/nav'
@@ -15,12 +15,9 @@ const STATIC_PAGE_TITLES: Record<string, string> = {
   '/dashboard': 'Дашборд',
   '/dashboard/decomposition': 'Декомпозиция',
   '/dashboard/salary': 'Зарплата',
-  '/dashboard/finance': 'Финансы',
-  '/dashboard/marketing': 'Маркетинг',
   '/dashboard/employees': 'Сотрудники',
   '/dashboard/calendar': 'Рабочий календарь',
   '/dashboard/notifications': 'Уведомления',
-  '/dashboard/documents': 'Документы',
   '/dashboard/settings': 'Настройки',
 }
 
@@ -39,42 +36,6 @@ function getPageTitle(pathname: string): string {
     return PAGE_TITLES[base] ? PAGE_TITLES[base] + ' / Детали' : 'Страница'
   }
   return 'Страница'
-}
-
-function AskAiInput({ pathname }: { pathname: string }) {
-  const router = useRouter()
-  const [value, setValue] = useState('')
-
-  const submit = () => {
-    const text = value.trim()
-    if (!text) return
-    const params = new URLSearchParams({ q: text, context_path: pathname })
-    router.push(`/dashboard/copilot?${params.toString()}`)
-    setValue('')
-  }
-
-  return (
-    <div className="relative w-full max-w-md">
-      <Sparkles
-        style={{ width: 14, height: 14, color: '#7d7174' }}
-        className="absolute left-2.5 top-1/2 -translate-y-1/2 pointer-events-none"
-      />
-      <input
-        value={value}
-        onChange={e => setValue(e.target.value)}
-        onKeyDown={e => { if (e.key === 'Enter') submit() }}
-        placeholder="Спросите ИИ-помощника…"
-        className="w-full rounded-md outline-none transition-colors"
-        style={{
-          fontSize: 13,
-          padding: '6px 10px 6px 28px',
-          background: '#f6f2f2',
-          border: '1px solid #ece5e5',
-          color: '#1b1517',
-        }}
-      />
-    </div>
-  )
 }
 
 export default function Topbar({ onMenuClick }: { onMenuClick?: () => void }) {
@@ -144,32 +105,18 @@ export default function Topbar({ onMenuClick }: { onMenuClick?: () => void }) {
         <Menu style={{ width: 19, height: 19 }} />
       </button>
 
-      {/* Хлебные крошки / поле ввода ИИ-помощника */}
-      <div className={pathname.startsWith('/dashboard/copilot') ? 'flex-1 min-w-0' : 'flex-1 min-w-0 flex justify-center'}>
-        {pathname.startsWith('/dashboard/copilot') ? (
-          <h1
-            className="font-semibold truncate"
-            style={{ fontSize: 14, color: '#1b1517' }}
-          >
-            {getPageTitle(pathname)}
-          </h1>
-        ) : (
-          <AskAiInput pathname={pathname} />
-        )}
+      {/* Текущая страница */}
+      <div className="flex-1 min-w-0">
+        <h1
+          className="font-semibold truncate"
+          style={{ fontSize: 14, color: '#1b1517' }}
+        >
+          {getPageTitle(pathname)}
+        </h1>
       </div>
 
       {/* Правая часть */}
       <div className="flex items-center gap-3 flex-shrink-0">
-        {/* Текущая страница */}
-        {!pathname.startsWith('/dashboard/copilot') && (
-          <span
-            className="hidden sm:block font-medium truncate"
-            style={{ fontSize: 12, color: '#1b1517', maxWidth: 220 }}
-          >
-            {getPageTitle(pathname)}
-          </span>
-        )}
-
         {/* Дата */}
         {today && (
           <span

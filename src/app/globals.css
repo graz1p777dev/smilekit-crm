@@ -206,17 +206,121 @@ tbody tr { transition: background-color 150ms ease; }
    поверхность делаем почти непрозрачной — текст должен быть чётким. */
 
 .glass {
-  background: rgba(255, 255, 255, 0.92);
-  backdrop-filter: blur(12px) saturate(120%);
-  -webkit-backdrop-filter: blur(12px) saturate(120%);
+  /* Без backdrop-filter: под панелью всё равно почти непрозрачный белый,
+     а размытие фона заставляло браузер пересобирать слой под топбаром
+     на каждый скролл. */
+  background: rgba(255, 255, 255, 0.97);
   border: 1px solid var(--line);
   box-shadow: 0 1px 2px rgba(54, 14, 127, 0.05), 0 8px 24px -16px rgba(54, 14, 127, 0.12);
 }
 
 .glass-dark {
-  background: rgba(30, 14, 60, 0.86);
-  backdrop-filter: blur(16px) saturate(130%);
-  -webkit-backdrop-filter: blur(16px) saturate(130%);
+  background: rgba(30, 14, 60, 0.94);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+}
+
+.gradient-text {
+  background: linear-gradient(92deg, var(--accent-deep), var(--accent-from) 92%);
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
+}
+
+/* === Фон приложения ===
+   Не «цветные пятна», а подкрашенная бумага витрины (#FBFAFE → #F4F1FA)
+   с еле заметным фиолетовым свечением в углах. Механика прежняя
+   (fixed-слой + мягкое движение), но амплитуда цвета почти нулевая —
+   фон не должен спорить с данными. */
+.gradient-mesh {
+  position: fixed;
+  inset: 0;
+  z-index: -1;
+  overflow: hidden;
+  background:
+    linear-gradient(180deg, #fbfafe 0%, #faf9fc 55%, #f4f1fa 100%);
+}
+/* Свечение в углах рисуем самими radial-gradient-ами: их края и так мягкие.
+   Раньше поверх лежал ещё filter: blur(100px) на пятнах по 768px, и все три
+   бесконечно ездили по keyframes — браузер перерисовывал огромные размытые
+   слои в каждом кадре на КАЖДОЙ странице, и от этого тормозил весь интерфейс,
+   а не какой-то один экран. Картинка почти та же, стоимость — ноль. */
+.gradient-mesh::before,
+.gradient-mesh::after,
+.gradient-mesh .mesh-blob {
+  content: '';
+  position: absolute;
+  border-radius: 9999px;
+}
+.gradient-mesh::before {
+  width: 48rem; height: 48rem;
+  top: -22rem; left: -16rem;
+  background: radial-gradient(circle, rgba(81, 21, 164, 0.10), transparent 70%);
+}
+.gradient-mesh::after {
+  width: 40rem; height: 40rem;
+  bottom: -18rem; right: -12rem;
+  background: radial-gradient(circle, rgba(138, 104, 173, 0.09), transparent 70%);
+}
+/* Третье пятно — янтарь витрины: единственное тёплое место в фоне. */
+.gradient-mesh .mesh-blob {
+  width: 34rem; height: 34rem;
+  top: 34%; left: 52%;
+  background: radial-gradient(circle, rgba(245, 166, 35, 0.06), transparent 70%);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after {
+    animation-duration: 0.01ms !important;
+    transition-duration: 0.01ms !important;
+  }
+}
+
+/* === Скроллбары — холодный нейтральный с фиолетовым подтоном === */
+
+::-webkit-scrollbar { width: 5px; height: 5px; }
+::-webkit-scrollbar-track { background: transparent; }
+::-webkit-scrollbar-thumb { background: #d8d0e6; border-radius: 99px; }
+::-webkit-scrollbar-thumb:hover { background: #b0a5c4; }
+
+/* Скрытая прокрутка — класс для модальных окон */
+.scroll-hidden {
+  scrollbar-width: none;
+  -ms-overflow-style: none;
+}
+.scroll-hidden::-webkit-scrollbar { display: none; }
+
+tbody tr { transition: background-color 150ms ease; }
+
+/* Recharts красит подписи легенды и долей в цвет серии — янтарь и лиловый
+   на белом дают 2:1. Цвет остаётся на маркере (он и опознаёт серию),
+   а текст переводим в читаемый графит. */
+.recharts-legend-item-text,
+.recharts-pie-label-text {
+  fill: var(--ink-2) !important;
+  color: var(--ink-2) !important;
+}
+
+.card-hover { transition: transform 150ms ease, box-shadow 150ms ease; }
+.card-hover:hover {
+  transform: translateY(-1px);
+  box-shadow: 0 10px 30px -12px rgba(54, 14, 127, 0.18);
+}
+
+/* === Поверхности ===
+   «Стекло» здесь не декоративное: под ним белая бумага, поэтому
+   поверхность делаем почти непрозрачной — текст должен быть чётким. */
+
+.glass {
+  /* Без backdrop-filter: под панелью всё равно почти непрозрачный белый,
+     а размытие фона заставляло браузер пересобирать слой под топбаром
+     на каждый скролл. */
+  background: rgba(255, 255, 255, 0.97);
+  border: 1px solid var(--line);
+  box-shadow: 0 1px 2px rgba(54, 14, 127, 0.05), 0 8px 24px -16px rgba(54, 14, 127, 0.12);
+}
+
+.glass-dark {
+  background: rgba(30, 14, 60, 0.94);
   border: 1px solid rgba(255, 255, 255, 0.08);
 }
 
@@ -246,37 +350,22 @@ tbody tr { transition: background-color 150ms ease; }
   content: '';
   position: absolute;
   border-radius: 9999px;
-  filter: blur(100px);
-  will-change: transform;
 }
 .gradient-mesh::before {
   width: 48rem; height: 48rem;
   top: -22rem; left: -16rem;
   background: radial-gradient(circle, rgba(81, 21, 164, 0.10), transparent 70%);
-  animation: meshFloat 34s ease-in-out infinite;
 }
 .gradient-mesh::after {
   width: 40rem; height: 40rem;
   bottom: -18rem; right: -12rem;
   background: radial-gradient(circle, rgba(138, 104, 173, 0.09), transparent 70%);
-  animation: meshFloat 42s ease-in-out infinite reverse;
 }
 /* Третье пятно — янтарь витрины: единственное тёплое место в фоне. */
 .gradient-mesh .mesh-blob {
   width: 34rem; height: 34rem;
   top: 34%; left: 52%;
   background: radial-gradient(circle, rgba(245, 166, 35, 0.06), transparent 70%);
-  animation: meshFloat 50s ease-in-out infinite;
-}
-
-@keyframes meshFloat {
-  0%, 100% { transform: translate(0, 0) scale(1); }
-  33% { transform: translate(3%, 4%) scale(1.05); }
-  66% { transform: translate(-2%, -3%) scale(0.97); }
-}
-
-@media (prefers-reduced-motion: reduce) {
-  .gradient-mesh::before, .gradient-mesh::after, .gradient-mesh .mesh-blob { animation: none; }
 }
 
 /* === Акцентная тема — переключается в Настройках, хранится в cookie устройства === */

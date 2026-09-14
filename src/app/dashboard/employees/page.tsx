@@ -5,7 +5,7 @@ import { useRouter } from 'next/navigation'
 import { useAuth } from '@/contexts/AuthContext'
 import type { Employee, Department } from '@/types'
 import { ROLE_LABELS } from '@/lib/constants'
-import { getEmployees } from '@/actions/employees'
+import { getEmployees, getEmployeeLeadReplies } from '@/actions/employees'
 import { archiveEmployee, restoreEmployee } from '@/actions/employees'
 import { startImpersonation } from '@/actions/auth'
 import { Button } from '@/components/ui/button'
@@ -46,7 +46,7 @@ const STATUS_BADGE: Record<string, { bg: string; color: string; label: string }>
 
 // ─── Вспомогательные компоненты ──────────────────────────────────────────────
 
-type SortKey = 'name' | 'role' | 'status' | 'hireDate'
+type SortKey = 'name' | 'role' | 'status' | 'hireDate' | 'leads'
 type SortDir = 'asc' | 'desc'
 
 function SortIcon({ active, dir }: { active: boolean; dir: SortDir }) {
@@ -116,6 +116,10 @@ export default function EmployeesPage() {
   const [schedules, setSchedules]     = useState<{ value: string; label: string }[]>([])
   const [loadingCrud, setLoadingCrud] = useState(true)
   const [reloadKey, setReloadKey]     = useState(0)
+  // Сколько разных клиентов сотрудник обслужил своими руками из CRM.
+  // Едет отдельным запросом: перебор переписки заметно тяжелее списка
+  // сотрудников, и таблица не должна его ждать.
+  const [leadReplies, setLeadReplies] = useState<Record<string, number>>({})
 
   useEffect(() => {
     let cancelled = false
@@ -128,6 +132,11 @@ export default function EmployeesPage() {
       setSchedules(schedList)
       setLoadingCrud(false)
     })
+    // Счётчик лидов не блокирует таблицу: приезжает следом и дозаполняет
+    // колонку. Пока не приехал — в ячейках 0.
+    getEmployeeLeadReplies()
+      .then((counts) => { if (!cancelled) setLeadReplies(counts) })
+      .catch(() => { /* колонка просто останется нулевой */ })
     return () => { cancelled = true }
   }, [showArchived, reloadKey])
 
@@ -172,12 +181,13 @@ export default function EmployeesPage() {
         case 'role':     return dir * a.role.localeCompare(b.role)
         case 'status':   return dir * a.status.localeCompare(b.status)
         case 'hireDate': return dir * ((a.hire_date ?? '').localeCompare(b.hire_date ?? ''))
+        case 'leads':    return dir * ((leadReplies[a.id] ?? 0) - (leadReplies[b.id] ?? 0))
         default: return 0
       }
     })
 
     return rows
-  }, [employees, search, filterRole, filterStatus, showArchived, sortKey, sortDir])
+  }, [employees, search, filterRole, filterStatus, showArchived, sortKey, sortDir, leadReplies])
 
   const totalPages = Math.ceil(filtered.length / PAGE_SIZE)
   const paged      = filtered.slice(page * PAGE_SIZE, (page + 1) * PAGE_SIZE)
@@ -353,7 +363,8 @@ export default function EmployeesPage() {
                   <ThCell label="Сотрудник"   col="name"     {...thProps} />
                   <ThCell label="Роль"        col="role"     {...thProps} />
                   <ThCell label="Статус"      col="status"   {...thProps} />
-                  <ThCell label="Дата приёма" col="hireDate" {...thProps} />
+                  <ThCell label="Лидов ответил" col="leads"    {...thProps} />
+                  <ThCell label="Дата приёма"  col="hireDate" {...thProps} />
                   <th className="px-4 py-3" />
                 </tr>
               </thead>
@@ -361,7 +372,7 @@ export default function EmployeesPage() {
                 {loadingCrud ? (
                   [...Array(5)].map((_, i) => (
                     <tr key={i} style={{ borderBottom: '1px solid #fdfbfb' }}>
-                      {[...Array(5)].map((__, j) => (
+                      {[...Array(6)].map((__, j) => (
                         <td key={j} className="px-4 py-3">
                           <div className="animate-pulse rounded" style={{ height: 14, backgroundColor: '#fdfbfb' }} />
                         </td>
@@ -370,7 +381,7 @@ export default function EmployeesPage() {
                   ))
                 ) : paged.length === 0 ? (
                   <tr>
-                    <td colSpan={5} className="px-4 py-8">
+                    <td colSpan={6} className="px-4 py-8">
                       <EmptyState
                         icon={Users}
                         title={search || filterRole ? 'Под фильтры никто не подходит' : 'Сотрудников пока нет'}
@@ -419,6 +430,21 @@ export default function EmployeesPage() {
                         <td className="px-4 py-3">
                           <span className="px-2 py-0.5 rounded-full text-[11px] font-medium" style={{ backgroundColor: statusInfo.bg, color: statusInfo.color }}>
                             {statusInfo.label}
+                          </span>
+                        </td>
+
+                        {/* Лидов ответил — разных клиентов, которым писал сам */}
+                        <td className="px-4 py-3">
+                          <span
+                            className="inline-flex items-center rounded-full px-2 py-0.5 text-[11px] font-semibold tabular-nums"
+                            style={
+                              (leadReplies[emp.id] ?? 0) > 0
+                                ? { backgroundColor: '#f1ebfa', color: '#5115a4' }
+                                : { backgroundColor: '#fdfbfb', color: '#7d7174' }
+                            }
+                            title="Скольким разным клиентам сотрудник ответил из CRM"
+                          >
+                            {leadReplies[emp.id] ?? 0}
                           </span>
                         </td>
 
