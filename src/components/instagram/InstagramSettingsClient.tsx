@@ -24,7 +24,7 @@ export default function InstagramSettingsClient({ initialIntegration }: Props) {
     const error = searchParams.get('error')
     if (connected) toast.success('Instagram подключён')
     if (error) toast.error(humanInstagramError(error as InstagramErrorCode))
-    if (connected || error) router.replace('/dashboard/instagram-settings')
+    if (connected || error) router.replace('/dashboard/settings?tab=instagram')
   }, [searchParams, router])
 
   function handleDisconnect() {

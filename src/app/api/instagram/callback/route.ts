@@ -10,7 +10,7 @@ import { saveInstagramIntegration } from '@/lib/instagram/config'
 import { InstagramApiError } from '@/lib/instagram/errors'
 
 const STATE_COOKIE = 'ig_oauth_state'
-const SETTINGS_PATH = '/dashboard/instagram-settings'
+const SETTINGS_PATH = '/dashboard/settings?tab=instagram'
 
 // Шаг 2 OAuth: Meta редиректит сюда с `code`+`state`. `state` сверяется с
 // httpOnly cookie из /connect (CSRF), затем code → короткий токен →

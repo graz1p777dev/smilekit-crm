@@ -6,9 +6,16 @@
 // внутренний токен не должен попадать в браузер.
 
 import { useState } from 'react'
+import { useSearchParams } from 'next/navigation'
 import { Settings, Bot, MessageCircle, Camera } from 'lucide-react'
 
 type Tab = 'system' | 'bot' | 'whatsapp' | 'instagram'
+
+const TABS: Tab[] = ['system', 'bot', 'whatsapp', 'instagram']
+
+function isTab(value: string | null): value is Tab {
+  return TABS.includes(value as Tab)
+}
 
 export default function SettingsTabs({
   system,
@@ -21,7 +28,9 @@ export default function SettingsTabs({
   whatsapp: React.ReactNode
   instagram: React.ReactNode
 }) {
-  const [tab, setTab] = useState<Tab>('system')
+  // ?tab=instagram — сюда возвращает OAuth-callback Instagram после подключения.
+  const requestedTab = useSearchParams().get('tab')
+  const [tab, setTab] = useState<Tab>(isTab(requestedTab) ? requestedTab : 'system')
 
   const tabs: { key: Tab; label: string; icon: typeof Settings }[] = [
     { key: 'system', label: 'Система', icon: Settings },
