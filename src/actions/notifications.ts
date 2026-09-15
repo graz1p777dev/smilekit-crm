@@ -35,7 +35,7 @@ export async function getNotifications(filter: 'all' | 'important' = 'all'): Pro
 
   const admin = createAdminClient()
   const { data: messages } = await admin
-    .from('amocrm_messages')
+    .from('chat_messages')
     .select('id, chat_id, lead_id, contact_id, sender, author_name, text, created_at')
     .order('created_at', { ascending: false })
     .limit(200)

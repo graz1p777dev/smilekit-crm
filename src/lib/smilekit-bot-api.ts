@@ -9,6 +9,21 @@
 
 const DEFAULT_TIMEOUT_MS = 15_000
 
+/**
+ * Сколько ждать генерацию ответа (/internal/lab). ОБЯЗАНО быть больше
+ * внутреннего лимита самого бота (bot/smilekit_bot/service.py):
+ * роутер 8с + черновик 20с + ревью 15с ≈ 43с.
+ *
+ * Живой инцидент: /internal/lab шёл с общими 15с. Каждый медленный ответ
+ * нейросети кончался тем, что CRM бросала запрос, повторяла его (запуская у
+ * бота вторую генерацию поверх первой) и слала клиенту заглушку «не
+ * расслышала». Проверка чеков и транскрибация уже шли со своими длинными
+ * таймаутами (45с и 75с прямо в вызовах) — у них этой ошибки не было.
+ */
+export const BOT_TIMEOUTS_MS = {
+  lab: 50_000,
+} as const
+
 export interface SmilekitBotApiFailure {
   ok: false
   error: string
@@ -61,7 +76,14 @@ export async function smilekitBotFetch<T>(
       cache: 'no-store',
       signal: AbortSignal.timeout(init.timeoutMs ?? DEFAULT_TIMEOUT_MS),
     })
-  } catch {
+  } catch (error) {
+    // Раньше ЛЮБАЯ ошибка превращалась в «Бот недоступен». Но чаще всего бот
+    // жив и работает — просто не уложился в наш таймаут. Разные причины
+    // требуют разной реакции (таймаут бессмысленно повторять — это удвоит
+    // нагрузку на ту же медленную нейросеть), поэтому различаем их.
+    if (error instanceof Error && error.name === 'TimeoutError') {
+      return { ok: false, status: 504, error: 'Бот не успел ответить за отведённое время' }
+    }
     return { ok: false, status: 502, error: 'Бот недоступен — проверьте, что smilekit-bot запущен' }
   }
 

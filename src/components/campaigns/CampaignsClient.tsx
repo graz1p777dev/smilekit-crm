@@ -15,6 +15,8 @@ import {
   type CampaignRow,
 } from '@/actions/campaigns'
 import PageHeader from '@/components/PageHeader'
+import CampaignProgress from './CampaignProgress'
+import RecurringCampaigns from './RecurringCampaigns'
 import { VOICE_MESSAGES, voiceById, voiceSrc } from '@/config/voice-messages'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
@@ -27,6 +29,27 @@ const statusMeta: Record<CampaignRow['status'], { label: string; color: string; 
   completed: { label: 'Завершена', color: '#087a55', bg: '#ddf8ed' },
   cancelled: { label: 'Отменена', color: '#6b6570', bg: '#f1eef3' },
   failed: { label: 'Ошибка', color: '#b42318', bg: '#fee4e2' },
+}
+
+// Периоды считаем по Бишкеку (UTC+6 круглый год), а не по часовому поясу
+// браузера: рассылка и клиенты живут в Кыргызстане.
+const BISHKEK_OFFSET_MS = 6 * 3600_000
+
+function bishkekNow() {
+  return new Date(Date.now() + BISHKEK_OFFSET_MS)
+}
+
+/** Дата в формате поля <input type="date">. */
+function asDateInput(date: Date) {
+  return date.toISOString().slice(0, 10)
+}
+
+/** Понедельник текущей недели по Бишкеку. */
+function weekStart() {
+  const now = bishkekNow()
+  const weekday = now.getUTCDay() // 0 — воскресенье
+  const backToMonday = weekday === 0 ? 6 : weekday - 1
+  return new Date(now.getTime() - backToMonday * 86400_000)
 }
 
 function defaultSchedule() {
@@ -51,6 +74,10 @@ export default function CampaignsClient({ initialData }: { initialData: Campaign
   const [scheduledAt, setScheduledAt] = useState(defaultSchedule)
   const [dateFrom, setDateFrom] = useState('')
   const [dateTo, setDateTo] = useState('')
+  // Какую кнопку нажали. Раньше «активность» выводилась из самих дат, и в
+  // понедельник подсвечивались обе: начало недели совпадает с сегодняшним
+  // днём, диапазоны получаются одинаковые. Храним выбор явно.
+  const [preset, setPreset] = useState<'today' | 'week' | null>(null)
   const [audience, setAudience] = useState<CampaignAudience>('not_purchased')
   const [eligibleCount, setEligibleCount] = useState<number | null>(initialData.eligibleCount)
   const requestSeq = useRef(0)
@@ -60,9 +87,12 @@ export default function CampaignsClient({ initialData }: { initialData: Campaign
   const [optOutBlockBot, setOptOutBlockBot] = useState(false)
 
   useEffect(() => {
-    const timer = setInterval(() => router.refresh(), 15_000)
+    // Пока рассылка отправляется, счётчик должен двигаться на глазах —
+    // 15 секунд для этого слишком долго.
+    const active = initialData.campaigns.some((c) => c.status === 'running')
+    const timer = setInterval(() => router.refresh(), active ? 3_000 : 15_000)
     return () => clearInterval(timer)
-  }, [router])
+  }, [router, initialData.campaigns])
 
   // Аудиторию считаем здесь, а не на сервере при рендере страницы: перебор
   // всей переписки занимает секунды и раньше держал открытие «Рассылок»
@@ -161,7 +191,40 @@ export default function CampaignsClient({ initialData }: { initialData: Campaign
   // иначе рассылка уйдёт в неизвестно какое число получателей.
   // Голосовая рассылка может уйти без текста — тогда достаточно выбранного
   // голосового.
-  const valid = title.trim() && (message.trim() || voiceId) && scheduledAt && (eligibleCount ?? 0) > 0
+  //
+  // Раньше незаполненная форма просто гасила кнопку, и было не видно, ЧЕГО
+  // не хватает. Теперь считаем причины поимённо: поле подсвечивается красным
+  // и под ним пишется, что не так.
+  const problems = {
+    title: !title.trim() ? 'Введите название — по нему рассылка видна в истории' : null,
+    message: !message.trim() && !voiceId ? 'Напишите текст или выберите голосовое' : null,
+    // «Время уже прошло» здесь не проверяем: Date.now() в рендере — нечистый
+    // вызов, и результат зависел бы от момента отрисовки. Эта проверка живёт
+    // в обработчике нажатия, где ей самое место.
+    scheduledAt: !scheduledAt
+      ? 'Укажите дату и время'
+      : Number.isNaN(new Date(scheduledAt).getTime())
+        ? 'Некорректная дата'
+        : null,
+    audience: eligibleCount === null
+      ? null
+      : eligibleCount === 0
+        ? 'Под выбранные фильтры не попал ни один клиент'
+        : null,
+  }
+  const valid = !problems.title && !problems.message && !problems.scheduledAt
+    && !problems.audience && (eligibleCount ?? 0) > 0
+
+  // Красную рамку показываем только после первой попытки отправить: подсвечивать
+  // пустые поля сразу при открытии формы — это ругань на пустом месте.
+  const [attempted, setAttempted] = useState(false)
+  const errorOf = (key: keyof typeof problems) => (attempted ? problems[key] : null)
+  const fieldStyle = (key: keyof typeof problems) =>
+    errorOf(key) ? { borderColor: '#b91c1c', outlineColor: '#b91c1c' } : undefined
+  const hint = (key: keyof typeof problems) => {
+    const text = errorOf(key)
+    return text ? <p className="text-xs font-medium" style={{ color: '#b91c1c' }}>{text}</p> : null
+  }
 
   return (
     <div className="min-h-full" style={{ background: 'var(--surface-2)' }}>
@@ -182,14 +245,16 @@ export default function CampaignsClient({ initialData }: { initialData: Campaign
             <div className="space-y-5">
               <div className="space-y-2">
                 <Label htmlFor="campaign-title">Название для CRM</Label>
-                <Input id="campaign-title" value={title} onChange={(event) => setTitle(event.target.value)} placeholder="Например: Скидка выходного дня" maxLength={160} />
+                <Input id="campaign-title" value={title} onChange={(event) => setTitle(event.target.value)} placeholder="Например: Скидка выходного дня" maxLength={160} style={fieldStyle('title')} />
+                {hint('title')}
               </div>
               <div className="space-y-2">
                 <div className="flex items-center justify-between">
                   <Label htmlFor="campaign-message">Сообщение клиенту</Label>
                   <span className="text-xs tabular-nums" style={{ color: 'var(--ink-3)' }}>{message.length}/4000</span>
                 </div>
-                <Textarea id="campaign-message" value={message} onChange={(event) => setMessage(event.target.value)} placeholder={voiceId ? 'Необязательно: текст рядом с голосовым…' : 'Напишите текст акции…'} maxLength={4000} className="min-h-44 resize-y leading-relaxed" />
+                <Textarea id="campaign-message" value={message} onChange={(event) => setMessage(event.target.value)} placeholder={voiceId ? 'Необязательно: текст рядом с голосовым…' : 'Напишите текст акции…'} maxLength={4000} className="min-h-44 resize-y leading-relaxed" style={fieldStyle('message')} />
+                {hint('message')}
               </div>
 
               {/* Голосовая рассылка: выбрать и тут же послушать */}
@@ -242,7 +307,8 @@ export default function CampaignsClient({ initialData }: { initialData: Campaign
               </div>
               <div className="space-y-2">
                 <Label htmlFor="campaign-time">Дата и время</Label>
-                <Input id="campaign-time" type="datetime-local" value={scheduledAt} onChange={(event) => setScheduledAt(event.target.value)} />
+                <Input id="campaign-time" type="datetime-local" value={scheduledAt} onChange={(event) => setScheduledAt(event.target.value)} style={fieldStyle('scheduledAt')} />
+                {hint('scheduledAt')}
               </div>
               <div className="space-y-2">
                 <Label>Кому отправлять</Label>
@@ -266,21 +332,68 @@ export default function CampaignsClient({ initialData }: { initialData: Campaign
               </div>
               <div className="space-y-2">
                 <Label>Последнее сообщение клиента — период (необязательно)</Label>
+                {/* Быстрый выбор — самые частые варианты в один клик. */}
+                <div className="flex flex-wrap items-center gap-2">
+                  <Button
+                    type="button"
+                    variant={preset === 'today' ? 'default' : 'outline'}
+                    size="sm"
+                    onClick={() => {
+                      const today = asDateInput(bishkekNow())
+                      setDateFrom(today)
+                      setDateTo(today)
+                      setPreset('today')
+                    }}
+                  >
+                    За сегодня
+                  </Button>
+                  <Button
+                    type="button"
+                    variant={preset === 'week' ? 'default' : 'outline'}
+                    size="sm"
+                    onClick={() => {
+                      setDateFrom(asDateInput(weekStart()))
+                      setDateTo(asDateInput(bishkekNow()))
+                      setPreset('week')
+                    }}
+                  >
+                    За эту неделю
+                  </Button>
+                </div>
                 <div className="flex items-center gap-2">
-                  <Input type="date" value={dateFrom} onChange={(event) => setDateFrom(event.target.value)} aria-label="От даты" />
+                  <Input type="date" value={dateFrom} onChange={(event) => { setDateFrom(event.target.value); setPreset(null) }} aria-label="От даты" />
                   <span className="text-sm" style={{ color: 'var(--ink-3)' }}>—</span>
-                  <Input type="date" value={dateTo} onChange={(event) => setDateTo(event.target.value)} aria-label="До даты" />
+                  <Input type="date" value={dateTo} onChange={(event) => { setDateTo(event.target.value); setPreset(null) }} aria-label="До даты" />
                   {(dateFrom || dateTo) && (
-                    <Button type="button" variant="ghost" size="sm" onClick={() => { setDateFrom(''); setDateTo('') }}>
+                    <Button type="button" variant="ghost" size="sm" onClick={() => { setDateFrom(''); setDateTo(''); setPreset(null) }}>
                       Сбросить
                     </Button>
                   )}
                 </div>
                 <p className="text-xs" style={{ color: 'var(--ink-3)' }}>
                   Только WhatsApp-канал. Пусто — без фильтра по дате.
+                  Период считается по суткам Бишкека целиком, с 00:00 до 23:59.
+                  {preset === 'week' && dateFrom === dateTo && ' Сегодня понедельник — неделя началась сегодня, поэтому период совпадает с «за сегодня».'}
                 </p>
               </div>
-              <Button size="lg" className="w-full" disabled={!valid || pending} onClick={submit}>
+              <Button
+                size="lg"
+                className="w-full"
+                disabled={pending}
+                onClick={() => {
+                  setAttempted(true)
+                  if (!valid) {
+                    const first = Object.values(problems).find(Boolean)
+                    toast.error(first ?? 'Заполните форму до конца')
+                    return
+                  }
+                  if (new Date(scheduledAt).getTime() < Date.now() - 60_000) {
+                    toast.error('Это время уже прошло — выберите другое')
+                    return
+                  }
+                  submit()
+                }}
+              >
                 <CalendarClock /> {pending ? 'Сохраняем…' : 'Запланировать рассылку'}
               </Button>
             </div>
@@ -290,9 +403,23 @@ export default function CampaignsClient({ initialData }: { initialData: Campaign
             <div className="p-6">
               <p className="text-xs font-semibold uppercase tracking-[.16em] text-white/60">Аудитория</p>
               <div className="mt-4 flex items-end gap-2">
-                <strong className="text-5xl leading-none tabular-nums" style={{ opacity: countLoading || eligibleCount === null ? 0.5 : 1 }}>{eligibleCount ?? '…'}</strong>
+                <strong
+                  className="text-5xl leading-none tabular-nums"
+                  style={{
+                    opacity: countLoading || eligibleCount === null ? 0.5 : 1,
+                    color: eligibleCount === 0 ? '#ffb4ab' : undefined,
+                  }}
+                >
+                  {eligibleCount ?? '…'}
+                </strong>
                 <span className="pb-1 text-sm text-white/70">клиентов</span>
               </div>
+              {eligibleCount === 0 && (
+                <p className="mt-2 rounded-lg px-2.5 py-1.5 text-xs font-medium" style={{ background: 'rgba(255,180,171,0.16)', color: '#ffb4ab' }}>
+                  Под эти фильтры никто не попал — рассылать некому. Снимите период
+                  или выберите другую аудиторию.
+                </p>
+              )}
               <p className="mt-3 text-sm leading-relaxed text-white/75">
                 {audience === 'not_purchased' && 'Сделки без оплаченного заказа.'}
                 {audience === 'purchased' && 'Клиенты с оплаченным заказом.'}
@@ -309,6 +436,8 @@ export default function CampaignsClient({ initialData }: { initialData: Campaign
             </div>
           </aside>
         </div>
+
+        <RecurringCampaigns rules={initialData.recurring} />
 
         <section className="mt-8">
           <div className="mb-3 flex items-center justify-between">
@@ -327,7 +456,15 @@ export default function CampaignsClient({ initialData }: { initialData: Campaign
                     <div className="flex flex-wrap items-center gap-2">
                       <h3 className="truncate font-semibold" style={{ color: 'var(--ink)' }}>{campaign.title}</h3>
                       <span className="rounded-full px-2.5 py-1 text-[11px] font-semibold" style={{ color: meta.color, background: meta.bg }}>{meta.label}</span>
+                      {campaign.recurring_id && (
+                        <span className="rounded-full px-2.5 py-1 text-[11px] font-semibold" style={{ color: '#6d28d9', background: '#f0e8ff' }}>
+                          Автоматическая
+                        </span>
+                      )}
                     </div>
+                    <p className="mt-0.5 text-xs" style={{ color: 'var(--ink-3)' }}>
+                      Создал: {campaign.author ?? 'неизвестно'}
+                    </p>
                     {campaign.message && (
                       <p className="mt-1 text-sm" style={{ color: 'var(--ink-3)' }}>{campaign.message}</p>
                     )}
@@ -348,9 +485,22 @@ export default function CampaignsClient({ initialData }: { initialData: Campaign
                     <p className="font-semibold" style={{ color: 'var(--ink)' }}>{formatDate(campaign.scheduled_at)}</p>
                     <p className="mt-1 text-xs" style={{ color: 'var(--ink-3)' }}>отправлено {campaign.sent_count}/{campaign.recipient_count}{campaign.failed_count ? ` · ошибок ${campaign.failed_count}` : ''}</p>
                   </div>
-                  {campaign.status === 'scheduled' ? (
-                    <Button variant="outline" size="sm" disabled={pending} onClick={() => cancel(campaign.id)}><XCircle /> Отменить</Button>
+                  {campaign.status === 'scheduled' || campaign.status === 'running' ? (
+                    <Button variant="outline" size="sm" disabled={pending} onClick={() => cancel(campaign.id)}>
+                      <XCircle /> {campaign.status === 'running' ? 'Остановить' : 'Отменить'}
+                    </Button>
                   ) : <div className="hidden w-20 md:block" />}
+
+                  {campaign.recipient_count > 0 && (
+                    <div className="md:col-span-3">
+                      <CampaignProgress
+                        campaignId={campaign.id}
+                        running={campaign.status === 'running'}
+                        sent={campaign.sent_count}
+                        total={campaign.recipient_count}
+                      />
+                    </div>
+                  )}
                 </article>
               )
             })}

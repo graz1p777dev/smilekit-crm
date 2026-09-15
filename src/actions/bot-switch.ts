@@ -1,7 +1,3 @@
-// ВНИМАНИЕ: строка в таблице integrations по-прежнему называется 'amoCRM'.
-// Это исторический ключ аварийного выключателя WhatsApp-бота (Green API):
-// переименовать его можно только вместе с UPDATE в базе, иначе шлюз перестанет
-// находить строку и бот замолчит для всех клиентов.
 'use server'
 
 // Аварийный выключатель бота amoCRM (WhatsApp-канал). Флаг
@@ -18,6 +14,7 @@ import { createClient } from '@/lib/supabase/server'
 import { createAdminClient } from '@/lib/supabase/admin'
 import { recordAudit } from '@/actions/audit'
 import { isAllowedBotControlRole } from '@/lib/bot-control-roles'
+import { WHATSAPP_INTEGRATION_NAMES } from '@/lib/integration-names'
 
 type ActionResult = { success: true } | { success: false; error: string }
 
@@ -38,7 +35,7 @@ export async function getBotEnabled(): Promise<
   { success: true; enabled: boolean } | { success: false; error: string }
 > {
   const supabase = createAdminClient()
-  const { data, error } = await supabase.from('integrations').select('is_active').eq('name', 'amoCRM').maybeSingle()
+  const { data, error } = await supabase.from('integrations').select('is_active').in('name', [...WHATSAPP_INTEGRATION_NAMES]).maybeSingle()
   if (error) return { success: false, error: error.message }
   return { success: true, enabled: Boolean((data as { is_active?: boolean } | null)?.is_active) }
 }
@@ -51,13 +48,13 @@ export async function setBotEnabled(enabled: boolean): Promise<ActionResult> {
   const { data: before } = await supabase
     .from('integrations')
     .select('id, is_active')
-    .eq('name', 'amoCRM')
+    .in('name', [...WHATSAPP_INTEGRATION_NAMES])
     .maybeSingle()
 
   const { error } = await supabase
     .from('integrations')
     .update({ is_active: enabled, updated_at: new Date().toISOString() })
-    .eq('name', 'amoCRM')
+    .in('name', [...WHATSAPP_INTEGRATION_NAMES])
   if (error) return { success: false, error: error.message }
 
   const beforeRow = before as { id?: string; is_active?: boolean } | null
@@ -88,14 +85,14 @@ export async function pauseBot(durationMinutes: number | null): Promise<ActionRe
   const { data: before } = await supabase
     .from('integrations')
     .select('id')
-    .eq('name', 'amoCRM')
+    .in('name', [...WHATSAPP_INTEGRATION_NAMES])
     .maybeSingle()
 
   const pausedUntil = new Date(Date.now() + durationMinutes * 60_000).toISOString()
   const { error } = await supabase
     .from('integrations')
     .update({ paused_until: pausedUntil, updated_at: new Date().toISOString() })
-    .eq('name', 'amoCRM')
+    .in('name', [...WHATSAPP_INTEGRATION_NAMES])
   if (error) return { success: false, error: error.message }
 
   const beforeRow = before as { id?: string } | null

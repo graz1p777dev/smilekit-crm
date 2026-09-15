@@ -34,10 +34,13 @@ export default async function CalendarPage({ searchParams }: { searchParams: Sea
   const to = `${month}-${String(daysInMonth).padStart(2, '0')}`
   const supabase = await createClient()
 
-  const [activityResult, consultationsResult, marketingResult, financeResult, planResult] = await Promise.all([
+  // marketing_daily_data не читаем: такой таблицы в базе нет (её не создаёт
+  // ни одна миграция), а раздел «Маркетинг» удалён. Запрос каждый раз
+  // возвращал ошибку, которую молча проглатывали, — поля рекламного бюджета
+  // в календаре просто остаются нулевыми.
+  const [activityResult, consultationsResult, financeResult, planResult] = await Promise.all([
     supabase.from('daily_activity').select('date, fv_fact, sales_fact, revenue_fact, leads_fact, appeals_fact').gte('date', from).lte('date', to),
     supabase.from('consultations').select('date, actual_status, status_after_fv, amount').gte('date', from).lte('date', to).is('deleted_at', null),
-    supabase.from('marketing_daily_data').select('date, active_campaigns, budget, ad_appeals').gte('date', from).lte('date', to),
     supabase.from('finance_transactions').select('date, type, amount').gte('date', from).lte('date', to).is('deleted_at', null),
     supabase.from('company_plans').select('date_start, date_end, target_revenue').lte('date_start', to).gte('date_end', from),
   ])
@@ -81,13 +84,6 @@ export default async function CalendarPage({ searchParams }: { searchParams: Sea
     if (isSale && !override?.revenue) {
       day.revenue += Number(row.amount) || 0
     }
-  }
-
-  for (const row of marketingResult.data ?? []) {
-    const day = entry(row.date as string)
-    day.adBudget += Number(row.budget) || 0
-    day.appeals += Number(row.ad_appeals) || 0
-    day.activeCampaigns += Number(row.active_campaigns) || 0
   }
 
   for (const row of financeResult.data ?? []) {

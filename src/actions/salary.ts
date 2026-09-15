@@ -112,7 +112,7 @@ export async function getSalaryCalculation(year: number, month: number): Promise
       .gte('created_at', from)
       .lt('created_at', to),
     admin.from('whatsapp_messages').select('phone, sent_by, created_at').not('sent_by', 'is', null),
-    admin.from('amocrm_messages').select('chat_id, author_name, created_at').eq('sender', 'operator'),
+    admin.from('chat_messages').select('chat_id, author_name, created_at').eq('sender', 'operator'),
   ])
 
   const employees = (emps ?? []) as { id: string; name: string; role: string }[]

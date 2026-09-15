@@ -36,7 +36,7 @@ export async function sendCustomerMessage(phone: string, text: string): Promise<
 
   const admin = createAdminClient()
   const messageId = `manager:customer:${digits}:${Date.now()}`
-  await admin.from('amocrm_messages').insert({
+  await admin.from('chat_messages').insert({
     amo_message_id: `ga:${messageId}`,
     chat_id: digits,
     direction: 'out',

@@ -43,3 +43,4 @@ next-env.d.ts
 
 # local-only agent docs (не деплоить)
 AGENTS.md
+supabase/.temp/

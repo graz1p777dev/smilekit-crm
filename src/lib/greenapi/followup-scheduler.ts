@@ -34,7 +34,7 @@ import {
 } from '@/lib/greenapi/bot-reply'
 
 // Живой баг: «Лаборатория» (dryRun) пишет тестовые сообщения в ту же
-// amocrm_messages, что и реальные чаты (chat_id вида `lab-...`), и
+// chat_messages, что и реальные чаты (chat_id вида `lab-...`), и
 // планировщик пытался слать им реальные дожимы через Green API — падало на
 // каждом тике с HTTP 400 (chatId не в формате телефона). Настоящий chat_id
 // Green API — всегда только цифры (см. phoneFromGreenApiChatId).
@@ -87,7 +87,7 @@ async function sendStageReply(
   // и тот же устаревший чат, оба слали сообщение клиенту дважды, хотя в БД
   // оставалась одна строка. .select() — тот же приём, что claimOnce/
   // claimResultsBlock в bot-reply.ts: без вставленной строки не отправляем.
-  const { data: reserved, error: reserveError } = await supabase.from('amocrm_messages').upsert({
+  const { data: reserved, error: reserveError } = await supabase.from('chat_messages').upsert({
     amo_message_id: botMessageId,
     chat_id: chatId,
     direction: 'out',
@@ -102,7 +102,7 @@ async function sendStageReply(
   try {
     await sendGreenApiMessage(`${chatId}@c.us`, replyText)
   } catch (error) {
-    await supabase.from('amocrm_messages').delete().eq('amo_message_id', botMessageId)
+    await supabase.from('chat_messages').delete().eq('amo_message_id', botMessageId)
     console.error('greenapi followup scheduler: send failed', error)
   }
 }
@@ -119,7 +119,7 @@ async function isPromisedLaterStillPending(
   chatId: string
 ): Promise<boolean> {
   const { data } = await supabase
-    .from('amocrm_messages')
+    .from('chat_messages')
     .select('text')
     .eq('amo_message_id', `${PROMISED_ANCHOR_ID_PREFIX}:${chatId}`)
     .maybeSingle()
@@ -145,7 +145,7 @@ async function processIdleNudgeStage(supabase: ReturnType<typeof createAdminClie
   // что, тик может вообще не доходить. descending отдаёт приоритет самым
   // свежим кандидатам — тем, кому дожим нужнее всего прямо сейчас.
   const { data: candidates } = await supabase
-    .from('amocrm_messages')
+    .from('chat_messages')
     .select('chat_id')
     .eq('sender', 'bot')
     .not('amo_message_id', 'like', 'ga:claim:%')
@@ -158,7 +158,7 @@ async function processIdleNudgeStage(supabase: ReturnType<typeof createAdminClie
     .filter(isRealPhoneChatId)
   for (const chatId of chatIds) {
     const { data: last } = await supabase
-      .from('amocrm_messages')
+      .from('chat_messages')
       .select('id, sender, text, amo_message_id, created_at')
       .eq('chat_id', chatId)
       .order('created_at', { ascending: false })
@@ -175,7 +175,7 @@ async function processIdleNudgeStage(supabase: ReturnType<typeof createAdminClie
     // обычный дожим тут неуместен, иначе бот всё равно напишет клиенту
     // первым вопреки прямому запрету.
     const { data: postResultsAnchor } = await supabase
-      .from('amocrm_messages')
+      .from('chat_messages')
       .select('id')
       .eq('amo_message_id', `${POST_RESULTS_STAGE_ANCHOR_ID_PREFIX}:${chatId}`)
       .maybeSingle()
@@ -203,7 +203,7 @@ async function processIdleNudgeStage(supabase: ReturnType<typeof createAdminClie
 async function processCityWaitStage(supabase: ReturnType<typeof createAdminClient>): Promise<void> {
   const now = Date.now()
   const { data: anchors } = await supabase
-    .from('amocrm_messages')
+    .from('chat_messages')
     .select('id, chat_id')
     .like('amo_message_id', `${CITY_WAIT_ANCHOR_ID_PREFIX}:%`)
     .gte('created_at', new Date(now - CITY_WAIT_MAX_AGE_MS).toISOString())
@@ -215,7 +215,7 @@ async function processCityWaitStage(supabase: ReturnType<typeof createAdminClien
   for (const anchor of anchors as { id: number; chat_id: string }[]) {
     if (!isRealPhoneChatId(anchor.chat_id)) continue
     const { data: last } = await supabase
-      .from('amocrm_messages')
+      .from('chat_messages')
       .select('id')
       .eq('chat_id', anchor.chat_id)
       .order('created_at', { ascending: false })

@@ -1,6 +1,7 @@
 import { sendGreenApiMessage, sendGreenApiVoice, toGreenApiChatId } from '@/lib/greenapi/client'
 import { smilekitBotFetch } from '@/lib/smilekit-bot-api'
 import { createAdminClient } from '@/lib/supabase/admin'
+import { runDueRecurringCampaigns } from './recurring'
 import { voiceById, type VoiceMessage } from '@/config/voice-messages'
 
 /**
@@ -70,7 +71,7 @@ async function send(recipient: Recipient, campaign: Campaign) {
   // в диалог» — бот после этого замолкает в чате навсегда, а чат выпадает из
   // аудитории следующих рассылок.
   const admin = createAdminClient()
-  await admin.from('amocrm_messages').upsert({
+  await admin.from('chat_messages').upsert({
     amo_message_id: `campaign:${campaign.id}:${recipient.id}`,
     chat_id: recipient.chat_id,
     lead_id: recipient.lead_id,
@@ -125,7 +126,19 @@ async function processCampaign(campaign: Campaign) {
     .eq('status', 'pending')
     .order('id')
 
+  let sentSoFar = 0
+  let failedSoFar = 0
+
   for (const recipient of (data ?? []) as Recipient[]) {
+    // Между сообщениями сверяемся со статусом: рассылку могли отменить уже
+    // после старта, и продолжать отправку в этом случае нельзя.
+    const { data: current } = await admin
+      .from('campaigns')
+      .select('status')
+      .eq('id', campaign.id)
+      .maybeSingle()
+    if ((current as { status?: string } | null)?.status === 'cancelled') return
+
     const { data: claimed } = await admin
       .from('campaign_recipients')
       .update({ status: 'sending', error: null })
@@ -139,12 +152,26 @@ async function processCampaign(campaign: Campaign) {
         status: 'sent',
         sent_at: new Date().toISOString(),
       }).eq('id', recipient.id)
+      sentSoFar += 1
+      // Счётчик в карточке рассылки двигаем ПО ХОДУ дела. Раньше он писался
+      // только в finishCampaign, то есть в самом конце: всю отправку карточка
+      // показывала «0 из 118», и рабочая рассылка выглядела зависшей.
+      await admin
+        .from('campaigns')
+        .update({ sent_count: sentSoFar, failed_count: failedSoFar })
+        .eq('id', campaign.id)
     } catch (error) {
       const message = error instanceof Error ? error.message : 'Неизвестная ошибка отправки'
       await admin.from('campaign_recipients').update({
         status: 'failed',
         error: message.slice(0, 500),
       }).eq('id', recipient.id)
+      failedSoFar += 1
+      await admin
+        .from('campaigns')
+        .update({ sent_count: sentSoFar, failed_count: failedSoFar })
+        .eq('id', campaign.id)
+      console.error(`campaign ${campaign.id}: отправка ${recipient.chat_id} не удалась — ${message}`)
     }
     await delay(SEND_INTERVAL_MS)
   }
@@ -179,7 +206,12 @@ export function startCampaignScheduler() {
     .then(poll)
     .catch((error) => console.error('campaign scheduler recovery failed', error))
   const timer = setInterval(() => {
-    void poll().catch((error) => console.error('campaign scheduler failed', error))
+    // Сначала правила автоматических рассылок — они создают обычные записи,
+    // которые тем же тиком и подхватываются на отправку.
+    void runDueRecurringCampaigns()
+      .catch((error) => console.error('recurring campaigns failed', error))
+      .then(() => poll())
+      .catch((error) => console.error('campaign scheduler failed', error))
   }, POLL_INTERVAL_MS)
   timer.unref?.()
 }

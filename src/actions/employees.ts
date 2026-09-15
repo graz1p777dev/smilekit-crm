@@ -363,7 +363,7 @@ export async function getEmployeeKpiPlan(
  * интерфейс (страница клиентов, карточка сделки, чат). В базе такие следы
  * двух видов:
  *   whatsapp_messages.sent_by  — прямая ссылка на сотрудника (канал Wazzup);
- *   amocrm_messages            — sender='operator' + author_name, имя сюда
+ *   chat_messages            — sender='operator' + author_name, имя сюда
  *                                кладут sendCustomerMessage и sendDealMessage.
  * Ответы бота (sender='bot') не считаются — они ничьи.
  *
@@ -379,11 +379,11 @@ export async function getEmployeeLeadReplies(): Promise<Record<string, number>> 
   const [{ data: emps }, { data: wazzup }, { data: amo }] = await Promise.all([
     admin.from('employees').select('id, name'),
     admin.from('whatsapp_messages').select('phone, sent_by').not('sent_by', 'is', null),
-    admin.from('amocrm_messages').select('chat_id, author_name').eq('sender', 'operator'),
+    admin.from('chat_messages').select('chat_id, author_name').eq('sender', 'operator'),
   ])
 
   const employees = (emps ?? []) as { id: string; name: string }[]
-  // Имя → id: в amocrm_messages сотрудник записан именем, а не ссылкой.
+  // Имя → id: в chat_messages сотрудник записан именем, а не ссылкой.
   const idByName = new Map(employees.map((e) => [e.name.trim().toLowerCase(), e.id]))
   const chatsByEmployee = new Map<string, Set<string>>()
 

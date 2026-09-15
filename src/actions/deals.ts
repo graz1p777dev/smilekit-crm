@@ -279,7 +279,7 @@ export interface DealConversation {
 }
 
 // Ссылка на вложение (чек, фото) хранится маркером в конце text — отдельной
-// колонки под медиа в amocrm_messages нет (см. src/lib/greenapi/bot-reply.ts).
+// колонки под медиа в chat_messages нет (см. src/lib/greenapi/bot-reply.ts).
 const MEDIA_MARKER = /\n\[media\](\S+)$/
 
 function toDealMessages(rows: {
@@ -352,7 +352,7 @@ export async function sendDealMessage(dealId: string, text: string): Promise<Dea
 
   // Пишем в историю ДО отправки: та же запись служит сигналом «менеджер ведёт
   // чат», и бот сразу перестаёт отвечать этому номеру.
-  await admin.from('amocrm_messages').insert({
+  await admin.from('chat_messages').insert({
     amo_message_id: `ga:${messageId}`,
     chat_id: phone,
     direction: 'out',
@@ -397,11 +397,11 @@ async function loadDealConversation(dealId: string): Promise<DealConversation> {
 
   if (deal.external_key?.startsWith('greenapi:')) {
     // WhatsApp через Green API: chat_id — номер телефона, история в той же
-    // amocrm_messages (см. src/lib/greenapi/bot-reply.ts).
+    // chat_messages (см. src/lib/greenapi/bot-reply.ts).
     const phone = deal.external_key.slice('greenapi:'.length)
     const admin = createAdminClient()
     const { data: rows } = await admin
-      .from('amocrm_messages')
+      .from('chat_messages')
       .select('id, direction, sender, text, created_at')
       .eq('chat_id', phone)
       .order('created_at')
@@ -424,7 +424,7 @@ async function loadDealConversation(dealId: string): Promise<DealConversation> {
   }
 
   if (deal.external_key?.startsWith('amocrm:')) {
-    // Переписка WhatsApp-канала amoCRM живёт у нас (amocrm_messages,
+    // Переписка WhatsApp-канала amoCRM живёт у нас (chat_messages,
     // миграция 041) — сервер мастер истории, см. src/lib/greenapi/bot-reply.ts.
     const leadId = deal.external_key.slice('amocrm:'.length)
     // Системная история чата не принадлежит конкретному сотруднику.
@@ -432,7 +432,7 @@ async function loadDealConversation(dealId: string): Promise<DealConversation> {
     // пользовательский RLS-клиент возвращал пусто.
     const admin = createAdminClient()
     const readStoredMessages = () => admin
-      .from('amocrm_messages')
+      .from('chat_messages')
       .select('id, direction, sender, text, created_at')
       .eq('lead_id', leadId)
       .order('created_at')
@@ -493,7 +493,7 @@ export async function setDealBotControl(chatId: string, botEnabled: boolean): Pr
   try {
     const admin = createAdminClient()
     const { data: before } = await admin
-      .from('amocrm_chat_control')
+      .from('chat_control')
       .select('bot_enabled')
       .eq('chat_id', chatId)
       .maybeSingle()

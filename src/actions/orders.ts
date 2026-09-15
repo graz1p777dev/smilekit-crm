@@ -6,6 +6,7 @@
 
 import { revalidatePath } from 'next/cache'
 import { z } from 'zod'
+import { closeDealForOrder } from '@/lib/deals/close-from-order'
 import { createClient } from '@/lib/supabase/server'
 import { createAdminClient } from '@/lib/supabase/admin'
 import type { DealEmployee, DealViewer, Order, OrderDealRef, OrderStatus } from '@/types'
@@ -111,7 +112,13 @@ export async function updateOrderStatus(
   if (error) return { success: false, error: error.message }
   if (!data || data.length === 0) return { success: false, error: 'Заказ недоступен' }
 
+  // Доставленный заказ закрывает сделку как выигранную, отменённый — как
+  // проигранную. Бот довести сделку до этих этапов не может: отказ клиента
+  // из переписки надёжно не читается, а судьба заказа известна точно.
+  await closeDealForOrder(id, parsed.data)
+
   revalidatePath('/dashboard/orders')
+  revalidatePath('/dashboard/deals')
   return { success: true }
 }
 

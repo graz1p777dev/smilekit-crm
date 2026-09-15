@@ -1,0 +1,441 @@
+<!doctype html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Инструкция — SmileKit CRM</title>
+<meta name="description" content="Как пользоваться SmileKit CRM: сделки, заказы, клиенты, рассылки, аналитика, зарплата и настройки бота.">
+<link rel="icon" href="/logo.webp">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Manrope:wght@400;500;600;700&family=Unbounded:wght@600;700&display=swap" rel="stylesheet">
+<style>
+  :root{
+    --brand:#5115a4; --brand-strong:#360e7f; --brand-soft:#f1ebfa;
+    --amber:#f5a623; --good:#047857; --bad:#b91c1c;
+    --ink:#17102a; --ink-2:#4e4560; --ink-3:#766d88;
+    --line:#ece5e5; --surface:#fff; --paper:#fbfafe;
+  }
+  *{box-sizing:border-box}
+  body{
+    margin:0; background:var(--paper); color:var(--ink);
+    font-family:'Manrope',system-ui,-apple-system,'Segoe UI',sans-serif;
+    font-size:15px; line-height:1.65;
+  }
+  h1,h2,h3{font-family:'Unbounded','Manrope',system-ui,sans-serif; letter-spacing:-.02em; line-height:1.25}
+  a{color:var(--brand)}
+
+  .layout{display:grid; grid-template-columns:260px minmax(0,1fr); gap:40px; max-width:1180px; margin:0 auto; padding:0 24px}
+
+  /* Оглавление */
+  .toc{position:sticky; top:0; align-self:start; max-height:100vh; overflow-y:auto; padding:28px 0}
+  .toc-brand{display:flex; align-items:center; gap:10px; margin-bottom:20px}
+  .toc-mark{width:34px; height:34px; border-radius:999px; background:linear-gradient(180deg,var(--brand),var(--brand-strong));
+    display:flex; align-items:center; justify-content:center; color:#fff; font-weight:700; flex:0 0 auto}
+  .toc-brand b{font-family:'Unbounded',sans-serif; font-size:15px; letter-spacing:.04em}
+  .toc a{display:block; padding:7px 12px; border-radius:9px; color:var(--ink-2); text-decoration:none; font-size:13.5px; font-weight:500}
+  .toc a:hover{background:var(--brand-soft); color:var(--brand)}
+  .toc-group{margin:14px 0 4px; padding:0 12px; font-size:10.5px; font-weight:700; letter-spacing:.14em; text-transform:uppercase; color:var(--ink-3)}
+
+  main{padding:28px 0 90px; min-width:0}
+  header.hero{padding:26px 0 8px}
+  header.hero h1{font-size:32px; margin:0 0 8px}
+  header.hero p{color:var(--ink-2); margin:0; max-width:62ch}
+
+  section{scroll-margin-top:20px; padding:26px 0; border-top:1px solid var(--line)}
+  section h2{font-size:21px; margin:0 0 4px; color:var(--brand-strong)}
+  section > p.lead{color:var(--ink-2); margin:0 0 18px; max-width:70ch}
+  h3{font-size:15.5px; margin:22px 0 8px}
+
+  ol,ul{margin:0 0 14px; padding-left:22px}
+  li{margin:5px 0}
+  ol li::marker{color:var(--brand); font-weight:700}
+
+  .card{background:var(--surface); border:1px solid var(--line); border-radius:16px; padding:18px 20px; margin:14px 0}
+  .note{background:var(--brand-soft); border:1px solid #ddcdf2; border-radius:14px; padding:14px 18px; margin:14px 0; font-size:14px}
+  .warn{background:#fff6e6; border:1px solid #f5dca6; border-radius:14px; padding:14px 18px; margin:14px 0; font-size:14px}
+  .note b,.warn b{color:var(--ink)}
+
+  table{width:100%; border-collapse:collapse; margin:14px 0; font-size:14px; background:var(--surface);
+    border:1px solid var(--line); border-radius:14px; overflow:hidden}
+  th,td{text-align:left; padding:10px 14px; border-bottom:1px solid var(--line); vertical-align:top}
+  th{background:#faf8f7; font-size:11.5px; text-transform:uppercase; letter-spacing:.08em; color:var(--ink-3); font-weight:700}
+  tr:last-child td{border-bottom:none}
+
+  .pill{display:inline-block; padding:2px 9px; border-radius:999px; font-size:11.5px; font-weight:700; white-space:nowrap}
+  .pill-brand{background:var(--brand-soft); color:var(--brand)}
+  .pill-good{background:#ddf8ed; color:var(--good)}
+  .pill-warn{background:#fff5cc; color:#9a6700}
+  .pill-bad{background:#fee4e2; color:var(--bad)}
+  .pill-gold{background:#fdf0d7; color:#8a5a00}
+
+  kbd{font-family:ui-monospace,SFMono-Regular,Menlo,monospace; font-size:12.5px; background:#f4f1fa;
+    border:1px solid #e0d8ef; border-radius:6px; padding:1px 6px}
+  .path{font-weight:600; color:var(--brand)}
+
+  .cta{display:inline-block; margin-top:10px; background:linear-gradient(180deg,var(--brand),var(--brand-strong));
+    color:#fff; text-decoration:none; font-weight:600; padding:11px 20px; border-radius:12px; font-size:14px}
+
+  .burger{display:none}
+  @media (max-width:900px){
+    .layout{grid-template-columns:1fr; gap:0}
+    .toc{position:static; max-height:none; padding:16px 0; border-bottom:1px solid var(--line)}
+    .toc nav{display:none}
+    .toc.open nav{display:block}
+    .burger{display:inline-flex; align-items:center; gap:8px; margin-left:auto; background:var(--surface);
+      border:1px solid var(--line); border-radius:10px; padding:7px 12px; font:inherit; font-size:13px; cursor:pointer}
+    .toc-brand{margin-bottom:0}
+    header.hero h1{font-size:25px}
+  }
+</style>
+</head>
+<body>
+<div class="layout">
+
+  <aside class="toc" id="toc">
+    <div class="toc-brand">
+      <span class="toc-mark">S</span>
+      <b>smilekit</b>
+      <button class="burger" id="burger" aria-expanded="false">☰ Разделы</button>
+    </div>
+    <nav>
+      <div class="toc-group">Начало</div>
+      <a href="#vhod">Вход в систему</a>
+      <a href="#kak-ustroeno">Как устроена CRM</a>
+      <div class="toc-group">Ежедневная работа</div>
+      <a href="#sdelki">Сделки</a>
+      <a href="#zakazy">Заказы</a>
+      <a href="#klienty">Клиенты</a>
+      <a href="#rassylki">Рассылки</a>
+      <a href="#avto">Автоматические рассылки</a>
+      <div class="toc-group">Цифры</div>
+      <a href="#analitika">Аналитика</a>
+      <a href="#zarplata">Зарплата</a>
+      <div class="toc-group">Управление</div>
+      <a href="#sotrudniki">Сотрудники</a>
+      <a href="#nastroyki">Настройки и бот</a>
+      <a href="#prochee">Остальные разделы</a>
+      <div class="toc-group">Если что-то не так</div>
+      <a href="#problemy">Частые вопросы</a>
+    </nav>
+  </aside>
+
+  <main>
+    <header class="hero">
+      <h1>Инструкция по SmileKit CRM</h1>
+      <p>Здесь собрано всё, что нужно для работы: где лежат сделки и заказы, как запустить рассылку,
+         что показывает аналитика и как считается зарплата. Страница открыта без пароля — можно просто
+         переслать её новому сотруднику.</p>
+    </header>
+
+    <section id="vhod">
+      <h2>Вход в систему</h2>
+      <p class="lead">CRM живёт по адресу smilekit-crm-production-73a6.up.railway.app</p>
+      <ol>
+        <li>Откройте адрес CRM — появится страница входа.</li>
+        <li>Введите <b>email</b> и <b>пароль</b>, которые вам выдал владелец.</li>
+        <li>После первого входа система попросит сменить пароль на свой.</li>
+      </ol>
+      <a class="cta" href="https://smilekit-crm-production-73a6.up.railway.app" target="_blank" rel="noopener">Открыть CRM</a>
+
+      <h3>Кто что видит</h3>
+      <table>
+        <tr><th>Роль</th><th>Доступ</th></tr>
+        <tr><td><b>Владелец</b></td><td>Всё без ограничений: настройки, зарплата, сотрудники, удаление</td></tr>
+        <tr><td><b>РОП</b></td><td>Вся работа с клиентами, аналитика, рассылки, сотрудники</td></tr>
+        <tr><td><b>Менеджер</b></td><td>Сделки, заказы, клиенты, задачи, своя зарплата</td></tr>
+        <tr><td><b>Бухгалтер</b></td><td>Зарплата и задачи</td></tr>
+      </table>
+      <div class="note">Если кнопки или раздела нет — скорее всего, они не положены вашей роли. Это не поломка.</div>
+    </section>
+
+    <section id="kak-ustroeno">
+      <h2>Как устроена CRM</h2>
+      <p class="lead">Меню слева свёрнуто до иконок и раскрывается, когда наводишь мышь.</p>
+      <table>
+        <tr><th>Группа</th><th>Что внутри</th></tr>
+        <tr><td><b>Главное</b></td><td>Дашборд, Сделки, Заказы, Клиенты, Рассылки</td></tr>
+        <tr><td><b>Аналитика</b></td><td>Аналитика <span class="pill pill-gold">золотая</span></td></tr>
+        <tr><td><b>Другое</b></td><td>Декомпозиция, Зарплата, Задачи, Сотрудники, Календарь, Уведомления</td></tr>
+        <tr><td><b>Система</b></td><td>Настройки</td></tr>
+      </table>
+
+      <h3>Откуда берутся клиенты</h3>
+      <p>Клиент пишет в <b>WhatsApp</b> — бот отвечает сам и тут же заводит сделку. Ничего заносить руками не нужно:
+         и сделка, и переписка, и заказ появляются в CRM автоматически.</p>
+      <div class="note"><b>Главное правило:</b> как только в чат написал живой человек, бот в этом чате
+        замолкает и не мешает. Вернуть чат боту можно тумблером в карточке сделки.</div>
+    </section>
+
+    <section id="sdelki">
+      <h2>Сделки</h2>
+      <p class="lead">Воронка продаж: колонки — этапы, карточки — клиенты. Сделка создаётся сама на первом сообщении клиента.</p>
+
+      <h3>Три вкладки</h3>
+      <ul>
+        <li><span class="pill pill-brand">В работе</span> — открытые сделки, с ними работают каждый день</li>
+        <li><span class="pill pill-good">Успешные</span> — клиент купил</li>
+        <li><span class="pill pill-bad">Отказ</span> — сделка закрыта без покупки</li>
+      </ul>
+
+      <h3>Как искать нужное</h3>
+      <ul>
+        <li><b>Сортировка</b> — по умолчанию «дольше всех в этапе»: наверху то, что зависло и требует внимания.</li>
+        <li><b>Фильтры</b> — по источнику и по ответственному сотруднику.</li>
+        <li><b>Поиск</b> — по имени, телефону, названию, городу и адресу сразу.</li>
+      </ul>
+      <div class="note">В колонке сначала показываются 25 карточек, ниже кнопка <b>«Показать ещё»</b>.
+        Это чтобы доска открывалась быстро — счётчик и сумма сверху всегда считаются по всем сделкам.</div>
+
+      <h3>Карточка сделки</h3>
+      <p>Нажмите на карточку — справа откроется всё по клиенту:</p>
+      <ul>
+        <li><b>Покупки</b> — что и когда он заказывал, на какую сумму, с итогом сверху</li>
+        <li><b>Переписка</b> — вся история чата, видно где отвечал бот, а где менеджер</li>
+        <li><b>Поле ответа</b> — можно написать клиенту прямо отсюда, уйдёт в WhatsApp</li>
+        <li><b>Тумблер бота</b> — «Ведёт бот» / «Ведёте вы»</li>
+      </ul>
+      <div class="warn"><b>Важно:</b> как только вы отправили сообщение из карточки, бот перестаёт отвечать
+        этому клиенту. Закончили — верните чат боту тумблером, иначе он будет молчать и дальше.</div>
+
+      <h3>Как сделка попадает в «Успешные» и «Отказ»</h3>
+      <p>Автоматически, по заказу: <b>заказ доставлен</b> — сделка уходит в «Успешно реализовано»,
+         <b>заказ отменён</b> — в «Закрыто и не реализовано». Отдельно двигать сделку не нужно,
+         достаточно поменять статус заказа.</p>
+      <p>Вручную карточку тоже можно перетащить мышью в любую колонку.</p>
+    </section>
+
+    <section id="zakazy">
+      <h2>Заказы</h2>
+      <p class="lead">Всё, что клиенты заказали. Заказ заводит бот, когда клиент подтвердил покупку.</p>
+      <h3>Статусы</h3>
+      <table>
+        <tr><th>Статус</th><th>Что означает</th></tr>
+        <tr><td><span class="pill pill-brand">Новый</span></td><td>Клиент подтвердил, менеджер ещё не брал в работу</td></tr>
+        <tr><td><span class="pill pill-brand">Подтверждён</span></td><td>Менеджер проверил состав и адрес</td></tr>
+        <tr><td><span class="pill pill-warn">Отправлен</span></td><td>Передан в доставку</td></tr>
+        <tr><td><span class="pill pill-good">Доставлен</span></td><td>Клиент получил — сделка закрывается как успешная</td></tr>
+        <tr><td><span class="pill pill-bad">Отменён</span></td><td>Покупки не будет — сделка уходит в отказ</td></tr>
+      </table>
+      <div class="note">Статус «Доставлен» — не формальность: по нему считаются выручка, аналитика и проценты
+        сотрудникам. Ставьте его вовремя.</div>
+    </section>
+
+    <section id="klienty">
+      <h2>Клиенты</h2>
+      <p class="lead">Все, кто когда-либо писал, — а не только те, кто купил.</p>
+      <ul>
+        <li><b>Все</b> — вся база</li>
+        <li><b>С покупками</b> — те, кто уже заказывал</li>
+        <li><b>Без покупок</b> — написали, но пока не купили</li>
+      </ul>
+      <p>Метка <span class="pill pill-brand">лид</span> — клиент ещё ничего не купил,
+         <span class="pill pill-good">повторный</span> — покупал больше одного раза.</p>
+      <p>Кнопка <b>«Открыть»</b> показывает историю заказов и позволяет написать в WhatsApp.
+         Поиск работает по имени, номеру и нику.</p>
+    </section>
+
+    <section id="rassylki">
+      <h2>Рассылки</h2>
+      <p class="lead">Разовое сообщение всей выбранной группе клиентов в назначенное время.</p>
+
+      <h3>Как создать</h3>
+      <ol>
+        <li>Откройте <span class="path">Рассылки</span>.</li>
+        <li><b>Название</b> — только для вас, клиент его не увидит. По нему рассылку видно в истории.</li>
+        <li><b>Сообщение клиенту</b> — текст, который уйдёт в WhatsApp.</li>
+        <li><b>Голосовое</b> — можно выбрать записанное голосовое и послушать его прямо здесь.
+            Текст при этом необязателен.</li>
+        <li><b>Дата и время</b> — по Бишкеку.</li>
+        <li><b>Кому отправлять</b> — «кто не купил», «кто купил» или «всем».</li>
+        <li><b>Период</b> — кнопки <b>«За сегодня»</b> и <b>«За эту неделю»</b> либо свои даты.
+            Отбирает тех, кто писал в этот срок.</li>
+        <li>Проверьте число справа — это реальное количество получателей.</li>
+        <li>Нажмите <b>«Запланировать рассылку»</b>.</li>
+      </ol>
+
+      <div class="warn"><b>Всегда смотрите на число получателей.</b> Если там вся база вместо сегодняшних —
+        значит фильтр не тот, который вы имели в виду. Ноль подсвечивается красным: рассылать некому.</div>
+
+      <h3>Пока рассылка идёт</h3>
+      <ul>
+        <li>Полоса прогресса и счётчик <b>«N из M»</b> обновляются на глазах</li>
+        <li>Кнопка <b>«Кому отправлено»</b> разворачивает список: имя, номер и статус каждого получателя</li>
+        <li>Кнопка <b>«Остановить»</b> прерывает отправку — те, до кого не дошли, помечаются пропущенными</li>
+      </ul>
+      <p>Между сообщениями выдерживается пауза в 3 секунды, чтобы WhatsApp не счёл отправку спамом.
+         Тысяча клиентов — примерно 50 минут.</p>
+
+      <h3>Стоп-список</h3>
+      <p>Номера из стоп-списка никогда не попадут в рассылку. Галочка
+         <b>«Бот тоже не должен писать»</b> закрывает такому номеру и ответы бота.</p>
+
+      <div class="note">Клиенты, с которыми сейчас переписывается живой менеджер, в рассылку не попадают
+        автоматически — чтобы массовое сообщение не влезло в личный диалог.</div>
+    </section>
+
+    <section id="avto">
+      <h2>Автоматические рассылки</h2>
+      <p class="lead">Настраивается один раз и дальше уходит сама — каждый день или с выбранным периодом.</p>
+      <ol>
+        <li>В разделе <span class="path">Рассылки</span> найдите блок <b>«Автоматические рассылки»</b> и нажмите <b>«Создать»</b>.</li>
+        <li>Заполните название, текст (или голосовое).</li>
+        <li><b>Во сколько отправлять</b> — время по Бишкеку.</li>
+        <li><b>Как часто</b> — каждый день, через день, раз в 3 дня или раз в неделю.</li>
+        <li><b>Кому</b> и <b>каких клиентов</b> — например «только сегодняшние».</li>
+      </ol>
+      <p>У каждого правила метка <span class="pill pill-good">Активная</span> или
+         <span class="pill">Неактивная</span> и кнопка <b>«Остановить» / «Включить»</b>.
+         Остановленное правило сохраняет настройки — включается одним нажатием.</p>
+      <p>Каждая отправка попадает в общую историю с пометкой
+         <span class="pill pill-brand">Автоматическая</span>, и у неё так же работают прогресс,
+         список получателей и остановка.</p>
+      <div class="note">У всех рассылок видно, <b>кто её создал</b> — строка «Создал: имя».</div>
+    </section>
+
+    <section id="analitika">
+      <h2>Аналитика</h2>
+      <p class="lead">Одна страница, три вкладки. В меню отмечена золотым.</p>
+
+      <h3>Конверсии и продажи</h3>
+      <p>Вверху переключатель периода: <b>Сегодня · За месяц · За год</b>. Дальше:</p>
+      <table>
+        <tr><th>Показатель</th><th>Что значит</th></tr>
+        <tr><td>Выручка, заказы, коробки</td><td>Продажи за выбранный период</td></tr>
+        <tr><td>Средний чек</td><td>Сколько в среднем оставляет один заказ</td></tr>
+        <tr><td>Диалогов</td><td>Сколько разных клиентов написали</td></tr>
+        <tr><td>Конверсия в заказ</td><td>Какая доля диалогов дошла до покупки</td></tr>
+        <tr><td>Выручка по дням</td><td>График за 30 дней с отметкой лучшего дня</td></tr>
+        <tr><td>Путь клиента</td><td>Воронка: написали → купили → купили повторно</td></tr>
+        <tr><td>Кто обслуживает</td><td>Сколько диалогов ведёт бот, сколько менеджеры</td></tr>
+        <tr><td>Железные и обычные</td><td>«Железный» — ни разу не покупал со скидкой</td></tr>
+        <tr><td>Сколько скидок дали</td><td>По ступеням 1490 / 1290 / 1190 и сколько на этом отдано</td></tr>
+        <tr><td>Повторные продажи</td><td>Заказы, которые у клиента не первые</td></tr>
+        <tr><td>Клиенты по городам</td><td>Считаются люди, а не заказы</td></tr>
+        <tr><td>Нагрузка менеджеров</td><td>Кто сколько диалогов забрал себе</td></tr>
+      </table>
+      <div class="note">Диалог считается «за менеджером», если в нём хоть раз ответил живой человек.
+        Иначе клиента вёл только бот.</div>
+
+      <h3>Покупки</h3>
+      <p>Откуда заказы, по городам, по цене за коробку, доля повторных покупателей и остаток на складе.</p>
+
+      <h3>Бот</h3>
+      <p>Сколько сообщений от клиентов и от бота, в какие часы пишут чаще всего и о чём спрашивают —
+         цена, доставка, оплата, скидка, сомнения.</p>
+    </section>
+
+    <section id="zarplata">
+      <h2>Зарплата</h2>
+      <p class="lead">Считается процентами, которые задаёт владелец. Ничего вносить руками не нужно.</p>
+      <h3>Два вида процентов</h3>
+      <ul>
+        <li><b>За своих клиентов</b> — процент от выручки по клиентам, которых сотрудник обслужил</li>
+        <li><b>От всей выручки</b> — процент от общей выручки компании за месяц</li>
+      </ul>
+      <p>Каждое правило назначается <b>всем сотрудникам</b> или <b>конкретному</b>.
+         Персональный процент перекрывает общий.</p>
+      <div class="note"><b>Как определяется «свой клиент»:</b> за сотрудником закрепляется тот,
+        кому он <b>ответил последним</b>. Так одна и та же выручка не попадёт в процент сразу нескольким.</div>
+      <div class="warn">Если менеджер пишет клиентам <b>не через CRM</b>, а с личного телефона, — в базе нет
+        следа его ответов, и клиенты за ним не закрепятся. Процент «за своих клиентов» будет нулевым.</div>
+      <p>Таблица показывает по каждому: своих клиентов, выручку по ним, начисления и итог.
+         Месяц переключается стрелками вверху.</p>
+    </section>
+
+    <section id="sotrudniki">
+      <h2>Сотрудники</h2>
+      <p class="lead">Добавляет только владелец.</p>
+      <ol>
+        <li>Откройте <span class="path">Сотрудники</span> и нажмите <b>«Добавить»</b>.</li>
+        <li>Заполните ФИО, email и роль.</li>
+        <li>В блоке <b>«Доступ в систему»</b> задайте начальный пароль и повторите его — это обязательно.</li>
+        <li>Нажмите <b>«Сохранить»</b>.</li>
+      </ol>
+      <p>Сотрудник войдёт по этому email и паролю, а при первом входе сменит пароль на свой.</p>
+      <p>Колонка <b>«Лидов ответил»</b> показывает, скольким разным клиентам сотрудник написал из CRM.
+         Считаются только ответы через CRM — переписка с личного телефона сюда не попадает.</p>
+    </section>
+
+    <section id="nastroyki">
+      <h2>Настройки и бот</h2>
+      <p class="lead">Раздел <span class="path">Настройки</span>, четыре вкладки. Доступ только у владельца.</p>
+      <table>
+        <tr><th>Вкладка</th><th>Что настраивается</th></tr>
+        <tr><td><b>Система</b></td><td>Отделы, роли, графики работы, этапы воронки, цвет оформления</td></tr>
+        <tr><td><b>Бот</b></td><td>Поведение бота, его тексты и правила</td></tr>
+        <tr><td><b>WhatsApp</b></td><td>Шаблоны, доставка, товароучёт (остаток на складе)</td></tr>
+        <tr><td><b>Instagram</b></td><td>Подключение аккаунта</td></tr>
+      </table>
+
+      <h3>Что бот делает сам</h3>
+      <ul>
+        <li>Отвечает клиентам в WhatsApp круглосуточно</li>
+        <li>Заводит сделку на первом сообщении и двигает её по воронке</li>
+        <li>Оформляет заказ, когда клиент подтвердил покупку</li>
+        <li>Распознаёт голосовые сообщения клиентов</li>
+        <li>Замолкает в чате, как только туда написал живой менеджер</li>
+      </ul>
+      <div class="warn"><b>Про скидки.</b> Бот держит цену 1490 сом и снижает её только в ответ на
+        «дорого»: сначала 1290, потом 1190. Ниже 1190 он не идёт и других акций не придумывает.
+        Если запускаете акцию — предупредите, чтобы бот не спорил с вашей же рассылкой.</div>
+    </section>
+
+    <section id="prochee">
+      <h2>Остальные разделы</h2>
+      <table>
+        <tr><th>Раздел</th><th>Зачем</th></tr>
+        <tr><td><b>Дашборд</b></td><td>Итоги месяца и сегодняшний день на одном экране</td></tr>
+        <tr><td><b>Декомпозиция</b></td><td>Планы и KPI: сколько нужно сделать, чтобы выйти на цель</td></tr>
+        <tr><td><b>Задачи</b></td><td>Доска задач команды</td></tr>
+        <tr><td><b>Календарь</b></td><td>График работы и активность по дням</td></tr>
+        <tr><td><b>Уведомления</b></td><td>События, которые требуют внимания</td></tr>
+      </table>
+    </section>
+
+    <section id="problemy">
+      <h2>Частые вопросы</h2>
+
+      <h3>Бот перестал отвечать одному клиенту</h3>
+      <p>Так и задумано: кто-то ответил ему из CRM вручную. Откройте сделку и верните чат боту тумблером
+         <b>«Ведёте вы — вернуть боту»</b>.</p>
+
+      <h3>Бот молчит вообще у всех</h3>
+      <p>Проверьте общий выключатель бота на доске сделок. Если он включён — скорее всего,
+         закончилась оплата WhatsApp-подключения.</p>
+
+      <h3>Страница показывает ошибку сразу после обновления системы</h3>
+      <p>Это открытая старая вкладка. Она перезагрузится сама; если нет — нажмите
+         <kbd>Cmd</kbd>+<kbd>Shift</kbd>+<kbd>R</kbd> (на Windows <kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>R</kbd>).</p>
+
+      <h3>В рассылке ноль получателей</h3>
+      <p>Слишком узкий фильтр. Снимите период кнопкой <b>«Сбросить»</b> или выберите другую аудиторию —
+         число справа пересчитается сразу.</p>
+
+      <h3>У сотрудника нулевая зарплата</h3>
+      <p>Либо владелец не задал проценты, либо сотрудник пишет клиентам не через CRM,
+         и за ним не закрепился ни один клиент.</p>
+
+      <h3>Не создаётся сотрудник</h3>
+      <p>Скорее всего, не заполнен пароль в блоке «Доступ в систему» — он обязателен.
+         Поле подсветится красным, а причина будет написана прямо под ним.</p>
+    </section>
+
+  </main>
+</div>
+
+<script>
+  // Мобильное меню: на узком экране оглавление свёрнуто.
+  var burger = document.getElementById('burger');
+  var toc = document.getElementById('toc');
+  burger.addEventListener('click', function () {
+    var open = toc.classList.toggle('open');
+    burger.setAttribute('aria-expanded', String(open));
+  });
+  // Клик по пункту на мобильном — закрыть меню.
+  toc.addEventListener('click', function (event) {
+    if (event.target.tagName === 'A' && window.innerWidth <= 900) toc.classList.remove('open');
+  });
+</script>
+</body>
+</html>

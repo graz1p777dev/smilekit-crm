@@ -3,7 +3,7 @@
 // Аналитика конверсий: продажи, диалоги и кто их ведёт — бот или менеджер.
 // Считаем из того, что реально лежит в базе:
 //   orders              — продажи (коробки, выручка, чек);
-//   amocrm_messages     — переписка WhatsApp (amoCRM + Green API);
+//   chat_messages     — переписка WhatsApp (amoCRM + Green API);
 //   whatsapp_messages   — переписка Wazzup;
 //   instagram_messages  — переписка Instagram;
 //   deals.source        — Telegram и витрина: их переписка живёт в боте
@@ -407,7 +407,7 @@ export async function getConversionAnalytics(): Promise<ConversionAnalytics> {
       (q) => q.neq('status', 'cancelled').is('deleted_at', null).order('created_at')
     ),
     fetchAllRows<{ chat_id: string; sender: string; author_name: string | null; created_at: string }>(
-      admin, 'amocrm_messages', 'chat_id, sender, author_name, created_at',
+      admin, 'chat_messages', 'chat_id, sender, author_name, created_at',
       (q) => q.gte('created_at', yearIso).order('id')
     ),
     fetchAllRows<{ phone: string; direction: string; sent_by: string | null; created_at: string }>(

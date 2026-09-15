@@ -24,14 +24,14 @@ export async function isManagerControllingChat(
     // limit(20), не 1: часть последних «operator»-записей может быть
     // массовой рассылкой — её пропускаем, ищем ответ реального человека.
     supabase
-      .from('amocrm_messages')
+      .from('chat_messages')
       .select('created_at, author_name')
       .eq('chat_id', chatId)
       .eq('sender', 'operator')
       .order('created_at', { ascending: false })
       .limit(20),
     supabase
-      .from('amocrm_chat_control')
+      .from('chat_control')
       .select('bot_enabled, updated_at')
       .eq('chat_id', chatId)
       .maybeSingle(),
@@ -64,7 +64,7 @@ export async function setChatBotEnabled(
   userId: string | null
 ): Promise<void> {
   const supabase = createAdminClient()
-  const { error } = await supabase.from('amocrm_chat_control').upsert(
+  const { error } = await supabase.from('chat_control').upsert(
     { chat_id: chatId, bot_enabled: botEnabled, updated_at: new Date().toISOString(), updated_by: userId },
     { onConflict: 'chat_id' }
   )

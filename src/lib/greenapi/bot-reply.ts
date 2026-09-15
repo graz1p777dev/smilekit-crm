@@ -6,7 +6,7 @@
 // транспорт (Green API вместо amojo) и адресация: chat_id здесь — номер
 // телефона, а не внутренний chat_id amoCRM.
 //
-// История лежит в общей amocrm_messages (таблица канало-независимая по
+// История лежит в общей chat_messages (таблица канало-независимая по
 // набору колонок), id сообщений Green API префиксуются `ga:` — так оба
 // канала живут рядом без отдельной таблицы и миграции.
 //
@@ -15,7 +15,7 @@
 // как отдельного API.
 
 import { createAdminClient } from '@/lib/supabase/admin'
-import { smilekitBotFetch } from '@/lib/smilekit-bot-api'
+import { BOT_TIMEOUTS_MS, smilekitBotFetch } from '@/lib/smilekit-bot-api'
 import { upsertDealFromInbound } from '@/lib/deals/auto-create'
 import { advanceDealFromBotAction } from '@/lib/deals/advance-stage'
 import { isIntegrationBotEnabled } from '@/lib/integration-status'
@@ -39,6 +39,7 @@ import {
   sendGreenApiVoice,
 } from '@/lib/greenapi/client'
 import { createLimiter } from '@/lib/concurrency-limit'
+import { WHATSAPP_INTEGRATION_NAMES } from '@/lib/integration-names'
 
 export interface InboundGreenApiMessage {
   providerMessageId: string
@@ -97,7 +98,7 @@ async function receiptReferenceDate(
   const bishkekDate = (value: Date) =>
     new Intl.DateTimeFormat('en-CA', { timeZone: 'Asia/Bishkek' }).format(value)
   const { data } = await supabase
-    .from('amocrm_messages')
+    .from('chat_messages')
     .select('created_at')
     .eq('chat_id', chatId)
     .eq('text', '[QR оплаты]')
@@ -358,7 +359,7 @@ const POST_ORDER_DELIVERY_QUESTION =
 
 async function hasPlacedOrder(supabase: ReturnType<typeof createAdminClient>, chatId: string): Promise<boolean> {
   const { data } = await supabase
-    .from('amocrm_messages')
+    .from('chat_messages')
     .select('id')
     .eq('amo_message_id', `${ORDER_PLACED_ANCHOR_ID_PREFIX}:${chatId}`)
     .maybeSingle()
@@ -366,7 +367,7 @@ async function hasPlacedOrder(supabase: ReturnType<typeof createAdminClient>, ch
 }
 
 async function markOrderPlaced(supabase: ReturnType<typeof createAdminClient>, chatId: string): Promise<void> {
-  await supabase.from('amocrm_messages').upsert({
+  await supabase.from('chat_messages').upsert({
     amo_message_id: `${ORDER_PLACED_ANCHOR_ID_PREFIX}:${chatId}`,
     chat_id: chatId,
     direction: 'out',
@@ -487,7 +488,7 @@ async function isHandedOffToManager(
   chatId: string
 ): Promise<boolean> {
   const { data } = await supabase
-    .from('amocrm_messages')
+    .from('chat_messages')
     .select('id')
     .eq('amo_message_id', `${HANDED_OFF_ANCHOR_ID_PREFIX}:${chatId}`)
     .maybeSingle()
@@ -500,7 +501,7 @@ async function buildHandoffCardText(
   lastMessageText: string
 ): Promise<string> {
   const { data: historyRows } = await supabase
-    .from('amocrm_messages')
+    .from('chat_messages')
     .select('text, sender')
     .eq('chat_id', chatId)
     .order('created_at', { ascending: true })
@@ -553,7 +554,7 @@ async function handOffToManager(
   supabase: ReturnType<typeof createAdminClient>,
   input: InboundGreenApiMessage
 ): Promise<void> {
-  await supabase.from('amocrm_messages').upsert({
+  await supabase.from('chat_messages').upsert({
     amo_message_id: `${HANDED_OFF_ANCHOR_ID_PREFIX}:${input.chatId}`,
     chat_id: input.chatId,
     direction: 'out',
@@ -562,7 +563,7 @@ async function handOffToManager(
   }, { onConflict: 'amo_message_id' })
   // Цепочка дожима больше не нужна — менеджер уже в курсе, дальнейшие
   // автоматические шаги (актуально?/скидки) только мешали бы.
-  await supabase.from('amocrm_messages').delete().eq('amo_message_id', `${POST_RESULTS_STAGE_ANCHOR_ID_PREFIX}:${input.chatId}`)
+  await supabase.from('chat_messages').delete().eq('amo_message_id', `${POST_RESULTS_STAGE_ANCHOR_ID_PREFIX}:${input.chatId}`)
   await sendHandoffCard(supabase, input.chatId, input.text)
 }
 
@@ -581,14 +582,14 @@ async function maybeRemindHandoff(
   input: InboundGreenApiMessage
 ): Promise<boolean> {
   const { data } = await supabase
-    .from('amocrm_messages')
+    .from('chat_messages')
     .select('id, created_at')
     .eq('amo_message_id', `${HANDED_OFF_ANCHOR_ID_PREFIX}:${input.chatId}`)
     .maybeSingle()
   if (!data) return false
   const { id, created_at } = data as { id: number; created_at: string }
   if (Date.now() - new Date(created_at).getTime() >= HANDOFF_REMINDER_INTERVAL_MS) {
-    await supabase.from('amocrm_messages').update({ created_at: new Date().toISOString() }).eq('id', id)
+    await supabase.from('chat_messages').update({ created_at: new Date().toISOString() }).eq('id', id)
     await sendHandoffCard(supabase, input.chatId, input.text)
   }
   return true
@@ -651,7 +652,7 @@ async function isAwaitingPostResultsReply(
   chatId: string
 ): Promise<boolean> {
   const { data } = await supabase
-    .from('amocrm_messages')
+    .from('chat_messages')
     .select('id')
     .eq('amo_message_id', `${POST_RESULTS_STAGE_ANCHOR_ID_PREFIX}:${chatId}`)
     .maybeSingle()
@@ -680,7 +681,7 @@ async function countPreviousIdleNudges(
   chatId: string
 ): Promise<number> {
   const { count } = await supabase
-    .from('amocrm_messages')
+    .from('chat_messages')
     .select('id', { count: 'exact', head: true })
     .eq('chat_id', chatId)
     .like('amo_message_id', `${IDLE_NUDGE_ID_PREFIX}%`)
@@ -872,7 +873,7 @@ export async function registerOutgoingGreenApiMessage(input: InboundGreenApiMess
   // совпадение текста практически исключает случайное совпадение с реальным
   // сообщением человека.
   const { data: recentBot } = await supabase
-    .from('amocrm_messages')
+    .from('chat_messages')
     .select('id')
     .eq('chat_id', input.chatId)
     .eq('sender', 'bot')
@@ -893,7 +894,7 @@ export async function registerOutgoingGreenApiMessage(input: InboundGreenApiMess
   // входящих от клиента ещё не было вообще, это не человек, а автоматика
   // рекламной платформы, и в историю чата её включать не нужно.
   const { data: anyClientMessage } = await supabase
-    .from('amocrm_messages')
+    .from('chat_messages')
     .select('id')
     .eq('chat_id', input.chatId)
     .eq('direction', 'in')
@@ -901,7 +902,7 @@ export async function registerOutgoingGreenApiMessage(input: InboundGreenApiMess
   if (!anyClientMessage?.length) return
 
   const { data: recentSameTextOtherChats } = await supabase
-    .from('amocrm_messages')
+    .from('chat_messages')
     .select('chat_id')
     .eq('direction', 'out')
     .eq('text', input.text)
@@ -910,7 +911,7 @@ export async function registerOutgoingGreenApiMessage(input: InboundGreenApiMess
     .limit(20)
   const distinctOtherChats = new Set((recentSameTextOtherChats ?? []).map((row) => row.chat_id as string)).size
 
-  await supabase.from('amocrm_messages').upsert(
+  await supabase.from('chat_messages').upsert(
     {
       amo_message_id: `ga:${input.providerMessageId}`,
       chat_id: input.chatId,
@@ -944,14 +945,14 @@ async function isManagerControllingChat(
     // отмечена как массовая рассылка (BULK_BROADCAST_AUTHOR_MARKER) — её
     // пропускаем, ищем последнюю ПОХОЖУЮ НА РЕАЛЬНОГО человека.
     supabase
-      .from('amocrm_messages')
+      .from('chat_messages')
       .select('created_at, author_name')
       .eq('chat_id', chatId)
       .eq('sender', 'operator')
       .order('created_at', { ascending: false })
       .limit(20),
     supabase
-      .from('amocrm_chat_control')
+      .from('chat_control')
       .select('bot_enabled, updated_at')
       .eq('chat_id', chatId)
       .maybeSingle(),
@@ -995,7 +996,7 @@ async function claimResultsBlock(
   chatId: string
 ): Promise<boolean> {
   const { data, error } = await supabase
-    .from('amocrm_messages')
+    .from('chat_messages')
     .upsert(
       {
         amo_message_id: `ga:claim:results:${chatId}`,
@@ -1033,7 +1034,7 @@ export async function sendResultsPhotoOnly(
   if (!mediaBaseUrl) return
   const waChatId = `${chatId}@c.us`
 
-  await supabase.from('amocrm_messages').upsert({
+  await supabase.from('chat_messages').upsert({
     amo_message_id: `ga:bot:city-timeout:${chatId}:results-intro`,
     chat_id: chatId,
     direction: 'out',
@@ -1048,7 +1049,7 @@ export async function sendResultsPhotoOnly(
 
   for (const [name, caption] of RESULT_PHOTOS) {
     const photoMessageId = `ga:bot:city-timeout:${chatId}:result:${name}`
-    const { error: photoReserveError } = await supabase.from('amocrm_messages').upsert({
+    const { error: photoReserveError } = await supabase.from('chat_messages').upsert({
       amo_message_id: photoMessageId,
       chat_id: chatId,
       direction: 'out',
@@ -1068,7 +1069,7 @@ export async function sendResultsPhotoOnly(
           caption: caption || undefined,
         })
       } catch (error) {
-        await supabase.from('amocrm_messages').delete().eq('amo_message_id', photoMessageId)
+        await supabase.from('chat_messages').delete().eq('amo_message_id', photoMessageId)
         console.error('greenapi bot-reply: city-timeout photo send failed', error)
       }
     }
@@ -1087,7 +1088,7 @@ async function claimOnce(
   key: string
 ): Promise<boolean> {
   const { data, error } = await supabase
-    .from('amocrm_messages')
+    .from('chat_messages')
     .upsert(
       {
         amo_message_id: `ga:claim:${key}:${chatId}`,
@@ -1158,7 +1159,7 @@ export async function canSendGreenApiBotReply(
   // Общий с amoCRM-каналом аварийный выключатель (integrations.amoCRM) —
   // это переключатель «бот продаж SmileKit включён», а не именно amoCRM.
   const [integrationResult, managerControls, handedOff] = await Promise.all([
-    supabase.from('integrations').select('*').eq('name', 'amoCRM').maybeSingle(),
+    supabase.from('integrations').select('*').in('name', [...WHATSAPP_INTEGRATION_NAMES]).maybeSingle(),
     isManagerControllingChat(supabase, chatId),
     isHandedOffToManager(supabase, chatId),
   ])
@@ -1246,7 +1247,7 @@ async function handleGreenApiReceipt(
 
   if (!(await canSendGreenApiBotReply(supabase, input.chatId))) return
   const botMessageId = `ga:bot:${input.providerMessageId}:receipt`
-  await supabase.from('amocrm_messages').upsert({
+  await supabase.from('chat_messages').upsert({
     amo_message_id: botMessageId,
     chat_id: input.chatId,
     direction: 'out',
@@ -1256,7 +1257,7 @@ async function handleGreenApiReceipt(
   try {
     await sendGreenApiMessage(`${input.chatId}@c.us`, reply)
   } catch (error) {
-    await supabase.from('amocrm_messages').delete().eq('amo_message_id', botMessageId)
+    await supabase.from('chat_messages').delete().eq('amo_message_id', botMessageId)
     console.error('greenapi bot-reply: receipt reply failed', error)
     return
   }
@@ -1270,7 +1271,7 @@ async function handleGreenApiReceipt(
   // берём последние свои сообщения, чтобы менеджеру в группе не пришлось
   // лезть в переписку.
   const { data: recent } = await supabase
-    .from('amocrm_messages')
+    .from('chat_messages')
     .select('text, sender')
     .eq('chat_id', input.chatId)
     .eq('sender', 'client')
@@ -1462,7 +1463,7 @@ async function handleCodAddressSubmission(
   // же приём, что PROMISED_ANCHOR_ID_PREFIX) — так его не «погребает» ответ
   // бота на промежуточную отговорку клиента.
   const { data: anchorRow } = await supabase
-    .from('amocrm_messages')
+    .from('chat_messages')
     .select('id')
     .eq('amo_message_id', `${COD_WAIT_ANCHOR_ID_PREFIX}:${input.chatId}`)
     .maybeSingle()
@@ -1476,7 +1477,7 @@ async function handleCodAddressSubmission(
   if (!(await canSendGreenApiBotReply(supabase, input.chatId, opts))) return false
 
   const botMessageId = `ga:bot:${input.providerMessageId}:cod-confirm`
-  const { data: reserved } = await supabase.from('amocrm_messages').upsert({
+  const { data: reserved } = await supabase.from('chat_messages').upsert({
     amo_message_id: botMessageId,
     chat_id: input.chatId,
     direction: 'out',
@@ -1487,13 +1488,13 @@ async function handleCodAddressSubmission(
   // Закрываем ожидание — иначе следующее сообщение клиента (уже после
   // оформления) снова нашло бы этот якорь и было бы принято за ещё один
   // адрес.
-  await supabase.from('amocrm_messages').delete().eq('amo_message_id', `${COD_WAIT_ANCHOR_ID_PREFIX}:${input.chatId}`)
+  await supabase.from('chat_messages').delete().eq('amo_message_id', `${COD_WAIT_ANCHOR_ID_PREFIX}:${input.chatId}`)
 
   if (!opts.dryRun) {
     try {
       await sendGreenApiMessage(`${input.chatId}@c.us`, COD_ORDER_CONFIRM_REPLY)
     } catch (error) {
-      await supabase.from('amocrm_messages').delete().eq('amo_message_id', botMessageId)
+      await supabase.from('chat_messages').delete().eq('amo_message_id', botMessageId)
       console.error('greenapi bot-reply: cod confirm reply failed', error)
       return true
     }
@@ -1559,7 +1560,7 @@ async function processInboundGreenApiMessageNow(
   if (transcript) input = { ...input, text: transcript }
 
   const { data: inserted, error: insertError } = await supabase
-    .from('amocrm_messages')
+    .from('chat_messages')
     .upsert(
       {
         amo_message_id: `ga:${input.providerMessageId}`,
@@ -1588,7 +1589,7 @@ async function processInboundGreenApiMessageNow(
   const promisedHours = promisedDelayHours(input.text)
   if (promisedHours !== null) {
     const promisedUntilMs = Date.now() + promisedHours * 3600_000
-    await supabase.from('amocrm_messages').upsert({
+    await supabase.from('chat_messages').upsert({
       amo_message_id: `${PROMISED_ANCHOR_ID_PREFIX}:${input.chatId}`,
       chat_id: input.chatId,
       direction: 'out',
@@ -1601,7 +1602,7 @@ async function processInboundGreenApiMessageNow(
   const { data: integration } = await supabase
     .from('integrations')
     .select('*')
-    .eq('name', 'amoCRM')
+    .in('name', [...WHATSAPP_INTEGRATION_NAMES])
     .maybeSingle()
   const botEnabled = opts.skipIntegrationCheck
     ? true
@@ -1741,7 +1742,7 @@ async function generateAndSendGreenApiReply(
   const externalKey = await resolveGreenApiExternalKey(supabase, input.chatId)
 
   const { data: rows } = await supabase
-    .from('amocrm_messages')
+    .from('chat_messages')
     .select('sender, text, id, amo_message_id')
     .eq('chat_id', input.chatId)
     .order('created_at', { ascending: false })
@@ -1943,7 +1944,7 @@ async function generateAndSendGreenApiReply(
         // менеджеру (handOffToManager), без всякой автоматики между этим
         // моментом и ответом клиента. followup-scheduler.ts эту стадию не
         // трогает вообще (processPostResultsFollowupStage убран).
-        await supabase.from('amocrm_messages').upsert({
+        await supabase.from('chat_messages').upsert({
           amo_message_id: `${POST_RESULTS_STAGE_ANCHOR_ID_PREFIX}:${input.chatId}`,
           chat_id: input.chatId,
           direction: 'out',
@@ -1966,12 +1967,17 @@ async function generateAndSendGreenApiReply(
     let lab = await smilekitBotFetch<{ reply: string }>('/internal/lab', {
       method: 'POST',
       body: { message: labMessage, history },
+      timeoutMs: BOT_TIMEOUTS_MS.lab,
     })
-    if (!lab.ok) {
+    // Повторяем только если бот недоступен. На таймауте повтор вреден: бот
+    // ещё генерирует первый ответ, и второй запрос запустил бы вторую
+    // генерацию поверх — вдвое больше нагрузки на ту же медленную нейросеть.
+    if (!lab.ok && lab.status !== 504) {
       console.error('greenapi bot-reply: lab failed, retrying once', lab.error)
       lab = await smilekitBotFetch<{ reply: string }>('/internal/lab', {
         method: 'POST',
         body: { message: labMessage, history },
+        timeoutMs: BOT_TIMEOUTS_MS.lab,
       })
     }
     if (!lab.ok) {
@@ -2023,7 +2029,7 @@ async function generateAndSendGreenApiReply(
     if (!(await canSendGreenApiBotReply(supabase, input.chatId, opts))) return
     const text = replies[index]
     const botMessageId = `bot:${input.providerMessageId}:${index}`
-    const { error: reserveError } = await supabase.from('amocrm_messages').upsert({
+    const { error: reserveError } = await supabase.from('chat_messages').upsert({
       amo_message_id: `ga:${botMessageId}`,
       chat_id: input.chatId,
       direction: 'out',
@@ -2048,7 +2054,7 @@ async function generateAndSendGreenApiReply(
         : 'not_scam.ogg'
       if (opts.dryRun) {
         // Тестовый chat_id не существует в WhatsApp — реальный вызов Green
-        // API только тратил бы время и падал. Запись в amocrm_messages выше
+        // API только тратил бы время и падал. Запись в chat_messages выше
         // уже сделана, этого достаточно, чтобы «Лаборатория» увидела ответ.
       } else if (voiceReplies.has(text) && mediaBaseUrl) {
         try {
@@ -2061,7 +2067,7 @@ async function generateAndSendGreenApiReply(
         await sendGreenApiMessage(chatId, text)
       }
     } catch (error) {
-      await supabase.from('amocrm_messages').delete().eq('amo_message_id', `ga:${botMessageId}`)
+      await supabase.from('chat_messages').delete().eq('amo_message_id', `ga:${botMessageId}`)
       console.error('greenapi bot-reply: send failed', error)
       return
     }
@@ -2070,7 +2076,7 @@ async function generateAndSendGreenApiReply(
     // после отдельного «подтверждения».
     if (sendPaymentQr && index === 0 && mediaBaseUrl) {
       const qrMessageId = `ga:bot:${input.providerMessageId}:qr`
-      const { error: qrReserveError } = await supabase.from('amocrm_messages').upsert({
+      const { error: qrReserveError } = await supabase.from('chat_messages').upsert({
         amo_message_id: qrMessageId,
         chat_id: input.chatId,
         direction: 'out',
@@ -2085,13 +2091,13 @@ async function generateAndSendGreenApiReply(
             fileName: 'qrcode.jpeg',
           })
         } catch (error) {
-          await supabase.from('amocrm_messages').delete().eq('amo_message_id', qrMessageId)
+          await supabase.from('chat_messages').delete().eq('amo_message_id', qrMessageId)
           console.error('greenapi bot-reply: qr send failed', error)
         }
       }
       // Голосовое сразу после QR — пояснение по оплате поверх картинки с кодом.
       const qrVoiceMessageId = `ga:bot:${input.providerMessageId}:qr-voice`
-      const { error: qrVoiceReserveError } = await supabase.from('amocrm_messages').upsert({
+      const { error: qrVoiceReserveError } = await supabase.from('chat_messages').upsert({
         amo_message_id: qrVoiceMessageId,
         chat_id: input.chatId,
         direction: 'out',
@@ -2102,7 +2108,7 @@ async function generateAndSendGreenApiReply(
         try {
           await sendGreenApiVoice(chatId, `${mediaBaseUrl}/media/voice/qr_payment_note.ogg`, 'qr_payment_note.ogg')
         } catch (error) {
-          await supabase.from('amocrm_messages').delete().eq('amo_message_id', qrVoiceMessageId)
+          await supabase.from('chat_messages').delete().eq('amo_message_id', qrVoiceMessageId)
           console.error('greenapi bot-reply: qr voice send failed', error)
         }
       }
@@ -2117,7 +2123,7 @@ async function generateAndSendGreenApiReply(
       // вебхука Green API ищет свежую строку sender='bot' с тем же текстом,
       // и без неё подводка опозналась бы как сообщение менеджера — бот
       // замолкал в чате прямо посреди отправки фото.
-      await supabase.from('amocrm_messages').upsert({
+      await supabase.from('chat_messages').upsert({
         amo_message_id: `ga:bot:${input.providerMessageId}:results-intro`,
         chat_id: input.chatId,
         direction: 'out',
@@ -2132,7 +2138,7 @@ async function generateAndSendGreenApiReply(
       for (const [name, caption] of RESULT_PHOTOS) {
         if (!(await canSendGreenApiBotReply(supabase, input.chatId, opts))) return
         const photoMessageId = `bot:${input.providerMessageId}:result:${name}`
-        const { error: photoReserveError } = await supabase.from('amocrm_messages').upsert({
+        const { error: photoReserveError } = await supabase.from('chat_messages').upsert({
           amo_message_id: `ga:${photoMessageId}`,
           chat_id: input.chatId,
           direction: 'out',
@@ -2152,7 +2158,7 @@ async function generateAndSendGreenApiReply(
               caption: caption || undefined,
             })
           } catch (error) {
-            await supabase.from('amocrm_messages').delete().eq('amo_message_id', `ga:${photoMessageId}`)
+            await supabase.from('chat_messages').delete().eq('amo_message_id', `ga:${photoMessageId}`)
             console.error('greenapi bot-reply: result photo send failed', error)
           }
         }
@@ -2167,7 +2173,7 @@ async function generateAndSendGreenApiReply(
   if (needsCityAnchor) {
     // Тот же приём для CITY_QUESTION: если клиент не назовёт город 5 минут,
     // followup-scheduler.ts сам пришлёт блок «до/после» (sendResultsPhotoOnly).
-    const { error: cityAnchorError } = await supabase.from('amocrm_messages').upsert({
+    const { error: cityAnchorError } = await supabase.from('chat_messages').upsert({
       amo_message_id: `${CITY_WAIT_ANCHOR_ID_PREFIX}:${input.providerMessageId}`,
       chat_id: input.chatId,
       direction: 'out',
@@ -2184,7 +2190,7 @@ async function generateAndSendGreenApiReply(
     // Ключ — chat_id, не providerMessageId: upsert перезаписывает ту же
     // строку при каждой новой просьбе о COD в этом чате, а не копится по
     // одной на сообщение.
-    const { error: codAnchorError } = await supabase.from('amocrm_messages').upsert({
+    const { error: codAnchorError } = await supabase.from('chat_messages').upsert({
       amo_message_id: `${COD_WAIT_ANCHOR_ID_PREFIX}:${input.chatId}`,
       chat_id: input.chatId,
       direction: 'out',

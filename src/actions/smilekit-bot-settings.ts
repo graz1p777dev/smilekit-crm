@@ -8,7 +8,7 @@
 
 import { revalidatePath } from 'next/cache'
 import { z } from 'zod'
-import { smilekitBotFetch } from '@/lib/smilekit-bot-api'
+import { BOT_TIMEOUTS_MS, smilekitBotFetch } from '@/lib/smilekit-bot-api'
 import {
   SMILEKIT_BOT_PROMPT_LIMIT,
   type SmilekitBotEvent,
@@ -97,6 +97,7 @@ export async function runBotLab(
   const result = await smilekitBotFetch<{ reply: string }>('/internal/lab', {
     method: 'POST',
     body: { message: trimmed, history },
+    timeoutMs: BOT_TIMEOUTS_MS.lab,
   })
   if (!result.ok) return { success: false, error: result.error }
   return { success: true, reply: result.data.reply }

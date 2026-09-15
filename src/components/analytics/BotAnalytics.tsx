@@ -5,7 +5,7 @@
 // не задана → ECONNREFUSED → «нет данных» с первого дня, не сбой на днях).
 // У реального бота (aiogram, smilekit_bot/api.py) нет такой ручки и нет самой
 // модели данных (approve/reject лидов) — строим аналитику из того, что
-// реально есть: amocrm_messages (переписка) и orders (заказы).
+// реально есть: chat_messages (переписка) и orders (заказы).
 
 import { useEffect, useMemo, useState } from 'react'
 import { createClient } from '@/lib/supabase/client'
@@ -126,7 +126,7 @@ export default function BotAnalytics() {
 
     Promise.all([
       supabase
-        .from('amocrm_messages')
+        .from('chat_messages')
         .select('chat_id, sender, text, created_at')
         .gte('created_at', since)
         .not('chat_id', 'like', '%@g.us') // групповой чат доставки — не переписка с клиентом
