@@ -2,7 +2,7 @@
 
 import { useEffect, useMemo, useRef, useState, useTransition } from 'react'
 import { useRouter } from 'next/navigation'
-import { Bot, CalendarClock, CheckCircle2, Clock3, Mic, Send, ShieldCheck, ShieldX, Trash2, UsersRound, XCircle } from 'lucide-react'
+import { Bot, CalendarClock, CheckCircle2, Clock3, Mic, Send, ShieldCheck, ShieldX, Trash2, UsersRound, X, XCircle } from 'lucide-react'
 import { toast } from 'sonner'
 import {
   addOptOutPhone,
@@ -52,6 +52,25 @@ function weekStart() {
   return new Date(now.getTime() - backToMonday * 86400_000)
 }
 
+/** Начало периода из N последних суток, включая сегодняшние. */
+function daysBack(days: number) {
+  return new Date(bishkekNow().getTime() - (days - 1) * 86400_000)
+}
+
+type PresetKey = 'today' | 'd2' | 'd3' | 'd5' | 'week'
+
+/**
+ * Быстрый выбор периода. Верхняя граница у всех — сегодня; отличается только
+ * нижняя. Добавить новый период — дописать сюда строку.
+ */
+const DATE_PRESETS: { key: PresetKey; label: string; from: () => Date }[] = [
+  { key: 'today', label: 'За сегодня',    from: () => daysBack(1) },
+  { key: 'd2',    label: 'За 2 дня',      from: () => daysBack(2) },
+  { key: 'd3',    label: 'За 3 дня',      from: () => daysBack(3) },
+  { key: 'd5',    label: 'За 5 дней',     from: () => daysBack(5) },
+  { key: 'week',  label: 'За эту неделю', from: weekStart },
+]
+
 function defaultSchedule() {
   const date = new Date(Date.now() + 60 * 60 * 1000)
   date.setMinutes(Math.ceil(date.getMinutes() / 5) * 5, 0, 0)
@@ -77,7 +96,7 @@ export default function CampaignsClient({ initialData }: { initialData: Campaign
   // Какую кнопку нажали. Раньше «активность» выводилась из самих дат, и в
   // понедельник подсвечивались обе: начало недели совпадает с сегодняшним
   // днём, диапазоны получаются одинаковые. Храним выбор явно.
-  const [preset, setPreset] = useState<'today' | 'week' | null>(null)
+  const [preset, setPreset] = useState<PresetKey | null>(null)
   const [audience, setAudience] = useState<CampaignAudience>('not_purchased')
   const [eligibleCount, setEligibleCount] = useState<number | null>(initialData.eligibleCount)
   const requestSeq = useRef(0)
@@ -332,33 +351,56 @@ export default function CampaignsClient({ initialData }: { initialData: Campaign
               </div>
               <div className="space-y-2">
                 <Label>Последнее сообщение клиента — период (необязательно)</Label>
-                {/* Быстрый выбор — самые частые варианты в один клик. */}
+                {/* Быстрый выбор периода. У выбранного появляется крестик —
+                    им выбор снимается, не трогая остальные кнопки. */}
                 <div className="flex flex-wrap items-center gap-2">
-                  <Button
-                    type="button"
-                    variant={preset === 'today' ? 'default' : 'outline'}
-                    size="sm"
-                    onClick={() => {
-                      const today = asDateInput(bishkekNow())
-                      setDateFrom(today)
-                      setDateTo(today)
-                      setPreset('today')
-                    }}
-                  >
-                    За сегодня
-                  </Button>
-                  <Button
-                    type="button"
-                    variant={preset === 'week' ? 'default' : 'outline'}
-                    size="sm"
-                    onClick={() => {
-                      setDateFrom(asDateInput(weekStart()))
-                      setDateTo(asDateInput(bishkekNow()))
-                      setPreset('week')
-                    }}
-                  >
-                    За эту неделю
-                  </Button>
+                  {DATE_PRESETS.map((item) => {
+                    const active = preset === item.key
+                    return (
+                      <Button
+                        key={item.key}
+                        type="button"
+                        variant={active ? 'default' : 'outline'}
+                        size="sm"
+                        className={active ? 'pr-1.5' : undefined}
+                        onClick={() => {
+                          setDateFrom(asDateInput(item.from()))
+                          setDateTo(asDateInput(bishkekNow()))
+                          setPreset(item.key)
+                        }}
+                      >
+                        {item.label}
+                        {active && (
+                          <span
+                            role="button"
+                            tabIndex={0}
+                            aria-label={`Снять выбор «${item.label}»`}
+                            title="Снять выбор"
+                            className="ml-1.5 inline-flex size-4 items-center justify-center rounded-full transition-colors hover:bg-white/25"
+                            onClick={(event) => {
+                              // Крестик внутри кнопки: без остановки всплытия
+                              // сработал бы и сам пресет, и период выбрался бы
+                              // заново вместо того, чтобы сняться.
+                              event.stopPropagation()
+                              setDateFrom('')
+                              setDateTo('')
+                              setPreset(null)
+                            }}
+                            onKeyDown={(event) => {
+                              if (event.key !== 'Enter' && event.key !== ' ') return
+                              event.preventDefault()
+                              event.stopPropagation()
+                              setDateFrom('')
+                              setDateTo('')
+                              setPreset(null)
+                            }}
+                          >
+                            <X className="size-3" />
+                          </span>
+                        )}
+                      </Button>
+                    )
+                  })}
                 </div>
                 <div className="flex items-center gap-2">
                   <Input type="date" value={dateFrom} onChange={(event) => { setDateFrom(event.target.value); setPreset(null) }} aria-label="От даты" />
