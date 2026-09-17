@@ -170,8 +170,9 @@ export default function CampaignsClient({ initialData }: { initialData: Campaign
   const [audience, setAudience] = useState<CampaignAudience>('not_purchased')
   const [eligibleCount, setEligibleCount] = useState<number | null>(initialData.eligibleCount)
   const [exclusions, setExclusions] = useState<AudienceExclusions>({ managerChats: 0, alreadyReached: 0 })
-  // Слать ли тем, с кем сейчас переписывается менеджер. По умолчанию нет —
-  // чтобы не влезать в живой разговор; включается одной галочкой.
+  // Слать ли в чаты, где менеджер общается прямо сейчас (последние 30 минут).
+  // По умолчанию нет — чтобы не влезать в живой разговор. Чаты, где менеджер
+  // молчит дольше, получают рассылку и без галочки.
   const [includeManagerChats, setIncludeManagerChats] = useState(false)
   // Не слать повторно тем, кто уже получил рассылку сегодня. По умолчанию да:
   // 17.09 чуть не ушла вторая рассылка тем же 187 людям через 50 минут.
@@ -589,7 +590,8 @@ export default function CampaignsClient({ initialData }: { initialData: Campaign
                         onChange={(event) => setIncludeManagerChats(event.target.checked)}
                       />
                       <span>
-                        <strong>{exclusions.managerChats}</strong> в переписке с менеджером —{' '}
+                        <strong>{exclusions.managerChats}</strong> прямо сейчас в переписке с менеджером
+                        (писал за последние 30 минут) —{' '}
                         {includeManagerChats ? 'включены в рассылку' : 'пропускаются. Отметьте, чтобы отправить и им'}
                       </span>
                     </label>
@@ -622,7 +624,7 @@ export default function CampaignsClient({ initialData }: { initialData: Campaign
             </div>
             <div className="space-y-3 p-6 text-sm text-white/75">
               <div className="flex gap-3"><ShieldCheck className="size-4 shrink-0 text-emerald-300" /><span>Купившие автоматически исключены</span></div>
-              <div className="flex gap-3"><UsersRound className="size-4 shrink-0 text-emerald-300" /><span>Диалоги менеджеров не затрагиваются</span></div>
+              <div className="flex gap-3"><UsersRound className="size-4 shrink-0 text-emerald-300" /><span>Чаты, где менеджер писал последние 30 минут, не затрагиваются</span></div>
               <div className="flex gap-3"><CheckCircle2 className="size-4 shrink-0 text-emerald-300" /><span>Повторная отправка одному клиенту заблокирована</span></div>
             </div>
           </aside>

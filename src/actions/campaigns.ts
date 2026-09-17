@@ -6,6 +6,7 @@ import { createClient } from '@/lib/supabase/server'
 import { createAdminClient } from '@/lib/supabase/admin'
 import { voiceById } from '@/config/voice-messages'
 import { BULK_BROADCAST_AUTHOR_MARKER } from '@/lib/greenapi/bot-reply'
+import { isManagerActiveInChat } from '@/lib/campaigns/manager-activity'
 
 export interface CampaignRow {
   id: string
@@ -98,10 +99,9 @@ export type CampaignAudience = 'not_purchased' | 'purchased' | 'all'
 export interface AudienceFilter extends LastMessageDateFilter {
   audience?: CampaignAudience
   /**
-   * Слать и тем, с кем сейчас переписывается менеджер. По умолчанию такие
-   * чаты пропускаются, чтобы рассылка не влезла в живой разговор. Но менеджер
-   * часто пишет прямо с телефона WhatsApp, и под правило попадает заметная
-   * доля клиентов — 17.09 это были 106 из 294 писавших за день.
+   * Слать и в чаты, где менеджер общается прямо сейчас (писал за последние
+   * MANAGER_ACTIVE_WINDOW_MS из src/lib/campaigns/manager-activity.ts). По умолчанию такие чаты пропускаются, чтобы
+   * рассылка не влезла в живой разговор.
    */
   includeManagerChats?: boolean
   /**
@@ -218,15 +218,20 @@ async function selectRecipients(
     const known = lastOperatorAtByChat.get(chatId)
     if (!known || row.created_at > known) lastOperatorAtByChat.set(chatId, row.created_at)
   }
+  // Рассылку пропускаем только в чатах, где менеджер общается ПРЯМО СЕЙЧАС.
+  //
+  // Раньше хватало одного сообщения менеджера когда угодно — и клиент выпадал
+  // из рассылок навсегда. 17.09 так не получили рассылку 106 человек, с
+  // которыми менеджер переписывался утром с телефона WhatsApp. Правило
+  // владельца: если менеджер молчит в чате 30 минут, туда можно слать.
+  //
+  // Это правило ТОЛЬКО для рассылок. Отвечает ли в чате бот, решает другая
+  // логика (src/lib/chat-control.ts) — её не трогаем.
+  const now = Date.now()
   const managerChats = new Set(
-    [...new Set([...lastOperatorAtByChat.keys(), ...controlByChat.keys()])].filter((chatId) => {
-      const lastOperatorAt = lastOperatorAtByChat.get(chatId) ?? null
-      const control = controlByChat.get(chatId)
-      if (!control) return lastOperatorAt !== null
-      const overrideIsFresh = lastOperatorAt === null
-        || new Date(control.updated_at).getTime() > new Date(lastOperatorAt).getTime()
-      return overrideIsFresh ? !control.bot_enabled : true
-    })
+    [...new Set([...lastOperatorAtByChat.keys(), ...controlByChat.keys()])].filter((chatId) =>
+      isManagerActiveInChat(lastOperatorAtByChat.get(chatId) ?? null, controlByChat.get(chatId), now)
+    )
   )
 
   // Сообщения клиентов читаем ТОЛЬКО когда задан фильтр по дате, и сразу
