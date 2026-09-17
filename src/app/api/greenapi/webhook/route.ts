@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server'
+import { staffPhones } from '@/lib/staff/phones'
 import { phoneFromGreenApiChatId } from '@/lib/greenapi/client'
 import { processInboundGreenApiMessage, registerOutgoingGreenApiMessage, type InboundGreenApiMessage } from '@/lib/greenapi/bot-reply'
 import { isBodyTooLarge, matchesRotatableSecret } from '@/lib/webhook-auth'
@@ -113,6 +114,9 @@ export async function POST(request: NextRequest) {
   if (chatId.endsWith('@g.us')) return NextResponse.json({ ok: true })
 
   const phone = phoneFromGreenApiChatId(chatId)
+  // Переписка с сотрудником смены (ссылки подтверждения уходят ему с этого
+  // номера) — не лид: ни бот, ни аналитика, ни сделки её не касаются.
+  if ((await staffPhones()).has(phone)) return NextResponse.json({ ok: true })
   const typeMessage = body.messageData?.typeMessage ?? ''
   const text = extractText(body)
   const authorName = body.senderData?.senderName || body.senderData?.chatName || null

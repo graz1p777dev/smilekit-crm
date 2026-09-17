@@ -7,11 +7,11 @@
 
 import { useState } from 'react'
 import { useSearchParams } from 'next/navigation'
-import { Settings, Bot, MessageCircle, Camera } from 'lucide-react'
+import { Settings, Bot, MessageCircle, Camera, Users } from 'lucide-react'
 
-type Tab = 'system' | 'bot' | 'whatsapp' | 'instagram'
+type Tab = 'system' | 'staff' | 'bot' | 'whatsapp' | 'instagram'
 
-const TABS: Tab[] = ['system', 'bot', 'whatsapp', 'instagram']
+const TABS: Tab[] = ['system', 'staff', 'bot', 'whatsapp', 'instagram']
 
 function isTab(value: string | null): value is Tab {
   return TABS.includes(value as Tab)
@@ -19,11 +19,13 @@ function isTab(value: string | null): value is Tab {
 
 export default function SettingsTabs({
   system,
+  staff,
   bot,
   whatsapp,
   instagram,
 }: {
   system: React.ReactNode
+  staff: React.ReactNode
   bot: React.ReactNode
   whatsapp: React.ReactNode
   instagram: React.ReactNode
@@ -34,6 +36,7 @@ export default function SettingsTabs({
 
   const tabs: { key: Tab; label: string; icon: typeof Settings }[] = [
     { key: 'system', label: 'Система', icon: Settings },
+    { key: 'staff', label: 'Смены', icon: Users },
     { key: 'bot', label: 'Бот', icon: Bot },
     { key: 'whatsapp', label: 'WhatsApp', icon: MessageCircle },
     { key: 'instagram', label: 'Instagram', icon: Camera },
@@ -67,6 +70,7 @@ export default function SettingsTabs({
         {/* Обе вкладки остаются в DOM: система — тяжёлая форма с несохранённым
             вводом, размонтировать её при переключении нельзя. */}
         <div hidden={tab !== 'system'}>{system}</div>
+        <div hidden={tab !== 'staff'}>{tab === 'staff' && staff}</div>
         <div hidden={tab !== 'bot'}>{bot}</div>
         <div hidden={tab !== 'whatsapp'}>{whatsapp}</div>
         <div hidden={tab !== 'instagram'}>{instagram}</div>

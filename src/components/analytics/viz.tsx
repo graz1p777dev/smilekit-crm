@@ -168,3 +168,52 @@ export function Funnel({ steps }: { steps: { label: string; value: number }[] })
     </div>
   )
 }
+
+/** Доля в процентах с одним знаком; при пустом знаменателе — «—». */
+export const pct = (part: number, whole: number) =>
+  whole ? `${((part / whole) * 100).toLocaleString('ru-RU', { maximumFractionDigits: 1 })}%` : '—'
+
+/** Раскрываемый список: заголовок-строка, содержимое по клику. */
+export function Expand({ summary, children }: { summary: React.ReactNode; children: React.ReactNode }) {
+  return (
+    <details className="group rounded-xl" style={{ border: `1px solid ${LINE}` }}>
+      <summary
+        className="flex cursor-pointer list-none items-center justify-between gap-3 px-3 py-2 text-xs"
+        style={{ color: INK_2 }}
+      >
+        {summary}
+        <span className="shrink-0 transition-transform group-open:rotate-90" aria-hidden style={{ color: INK_3 }}>›</span>
+      </summary>
+      <div className="px-3 pb-3">{children}</div>
+    </details>
+  )
+}
+
+/** Таблица, которая на узком экране прокручивается сама, а не страница. */
+export function ScrollTable({ head, children }: { head: string[]; children: React.ReactNode }) {
+  return (
+    <div className="overflow-x-auto">
+      <table className="w-full min-w-[520px] text-xs">
+        <thead>
+          <tr className="text-left" style={{ color: INK_3 }}>
+            {head.map((h) => <th key={h} className="py-1.5 pr-3 font-medium">{h}</th>)}
+          </tr>
+        </thead>
+        <tbody style={{ color: INK }}>{children}</tbody>
+      </table>
+    </div>
+  )
+}
+
+/** Имя клиента со ссылкой на сделку, если она есть. */
+export function ClientCell({ name, dealId }: { name: string | null; dealId: string | null }) {
+  const label = name?.trim() || 'Без имени'
+  if (!dealId) return <span>{label}</span>
+  return (
+    <a href={`/dashboard/deals?deal=${dealId}`} className="font-medium underline-offset-2 hover:underline" style={{ color: '#5115a4' }}>
+      {label}
+    </a>
+  )
+}
+
+export const phoneLabel = (chatId: string) => `+${chatId}`

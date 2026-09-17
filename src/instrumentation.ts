@@ -12,5 +12,7 @@ export async function register() {
     startFollowupScheduler()
     const { startControlCenterHeartbeat } = await import('@/lib/control-center-heartbeat')
     startControlCenterHeartbeat()
+    const { startStaffReplyReminders } = await import('@/lib/staff/reminders')
+    startStaffReplyReminders()
   }
 }

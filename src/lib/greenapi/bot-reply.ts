@@ -63,6 +63,8 @@ interface ReceiptCheck {
   amount_ok: boolean
   recipient_ok: boolean
   date_ok: boolean
+  /** Сумма, которую модель прочитала на чеке. Может не прийти. */
+  detected_amount_kgs?: number | null
 }
 
 /**
@@ -1222,6 +1224,54 @@ async function withRetries<T>(fn: () => Promise<T>, attempts = 3): Promise<T> {
   throw lastError
 }
 
+/** Сумма с чека — только то, что модель реально прочитала, без подстановки прайса. */
+function receiptAmount(check: ReceiptCheck | null): number | null {
+  const amount = check?.detected_amount_kgs
+  return typeof amount === 'number' && Number.isFinite(amount) && amount > 0 ? amount : null
+}
+
+/**
+ * Клиент прислал чек, а чат ведёт менеджер. Бот здесь молчит, но продажа
+ * должна попасть в CRM: раньше ветка чека стояла после проверки «менеджер
+ * ведёт чат» и до неё не доходила — продажи менеджеров не записывались вовсе
+ * (в сентябре 5 заказов на тысячи лидов), и аналитика конверсии была пустой.
+ * Клиенту ничего не отвечаем и в группу доставки не шлём — это делает
+ * менеджер. Заказ заводим, только если проверка уверенно видит скриншот оплаты.
+ */
+async function recordReceiptFromManagedChat(
+  supabase: ReturnType<typeof createAdminClient>,
+  input: InboundGreenApiMessage,
+  externalKey: string
+): Promise<void> {
+  let check: ReceiptCheck | null = null
+  try {
+    check = await verifyGreenApiReceipt(input.mediaUrl!, await receiptReferenceDate(supabase, input.chatId))
+  } catch (error) {
+    console.error('greenapi bot-reply: managed-chat receipt verification failed', error)
+    return
+  }
+  if (!check?.is_real_receipt_screenshot) return
+
+  const orderKey = `${externalKey}:order:${input.providerMessageId}`
+  const result = await ingestOrder({
+    externalKey: orderKey,
+    source: 'manual',
+    customerName: input.authorName,
+    customerPhone: input.chatId,
+    quantity: null,
+    totalAmount: receiptAmount(check),
+    currency: 'KGS',
+    summary: `Чек об оплате, чат вёл менеджер (WhatsApp)${input.text ? `\n${input.text}` : ''}\n[media]${input.mediaUrl}`,
+  })
+  if (result.error) {
+    console.error('greenapi bot-reply: managed-chat order ingest failed', result.error)
+    return
+  }
+  const { data: dealRow } = await supabase.from('deals').select('id').eq('external_key', externalKey).maybeSingle()
+  const dealId = (dealRow as { id?: string } | null)?.id
+  if (dealId && result.id) await supabase.from('orders').update({ deal_id: dealId }).eq('id', result.id)
+}
+
 async function handleGreenApiReceipt(
   supabase: ReturnType<typeof createAdminClient>,
   input: InboundGreenApiMessage,
@@ -1292,7 +1342,7 @@ async function handleGreenApiReceipt(
     customerName: input.authorName,
     customerPhone: input.chatId,
     quantity: 1,
-    totalAmount: null,
+    totalAmount: receiptAmount(check),
     currency: 'KGS',
     summary:
       `${verified ? 'Чек проверен' : checkUnavailable ? 'Чек не проверен автоматически' : 'Чек не прошёл проверку'} (WhatsApp)` +
@@ -1672,7 +1722,12 @@ async function processInboundGreenApiMessageNow(
     return
   }
 
-  if (await isManagerControllingChat(supabase, input.chatId)) return
+  if (await isManagerControllingChat(supabase, input.chatId)) {
+    if (!opts.dryRun && IMAGE_TYPES.has(input.messageType ?? '') && input.mediaUrl) {
+      await recordReceiptFromManagedChat(supabase, input, externalKey)
+    }
+    return
+  }
   if (await isPhoneBlockedForBot(supabase, input.chatId)) return
   if (await maybeRemindHandoff(supabase, input)) return
 

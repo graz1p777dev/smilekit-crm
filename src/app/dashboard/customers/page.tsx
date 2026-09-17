@@ -16,6 +16,9 @@ import { createClient } from '@/lib/supabase/client'
 import { Button } from '@/components/ui/button'
 import { Textarea } from '@/components/ui/textarea'
 import { sendCustomerMessage } from '@/actions/customers'
+import { getClientProfile, type ClientProfile } from '@/actions/analytics'
+import { CLIENT_TYPE_LABELS, CLIENT_TYPE_SHORT, formatDuration } from '@/lib/analytics/client-types'
+import { ServedGroupsView } from '@/components/deals/ServedBy'
 
 type OrderRow = {
   id: string
@@ -208,6 +211,19 @@ export default function CustomersPage() {
 
   const openCustomer = customers.find((c) => c.key === openKey) ?? null
 
+  // Тип клиента и «кто обслуживал» — по переписке и сменам, считает сервер.
+  const [profile, setProfile] = useState<{ key: string; data: ClientProfile | null } | null>(null)
+  const openPhone = openCustomer?.phone ?? ''
+  useEffect(() => {
+    if (!openKey || openPhone.length < 9) return
+    let alive = true
+    getClientProfile(openPhone)
+      .then((data) => { if (alive) setProfile({ key: openKey, data }) })
+      .catch(() => { if (alive) setProfile({ key: openKey, data: null }) })
+    return () => { alive = false }
+  }, [openKey, openPhone])
+  const openProfile = profile && profile.key === openKey ? profile : null
+
   async function send() {
     if (!openCustomer || !openCustomer.phone || !message.trim()) return
     setSending(true)
@@ -348,6 +364,43 @@ export default function CustomersPage() {
               </div>
               <button onClick={() => setOpenKey(null)}><X size={18} color="#6b6063" /></button>
             </div>
+
+            {openCustomer.phone.length >= 9 && !(openProfile && openProfile.data === null) && (
+              <div className="rounded-xl px-3 py-2.5 flex flex-col gap-2" style={{ background: '#fdfbfb', border: '1px solid #ece5e5' }}>
+                {!openProfile?.data ? (
+                  <p className="text-xs" style={{ color: '#6b6063' }}>Считаем по переписке…</p>
+                ) : (
+                  <>
+                    <div className="grid grid-cols-2 gap-x-3 gap-y-1.5 text-xs">
+                      <span style={{ color: '#6b6063' }}>Тип клиента</span>
+                      <span className="font-semibold" style={{ color: '#5115a4' }}
+                        title={openProfile.data.type ? CLIENT_TYPE_LABELS[openProfile.data.type].rule : 'не писал в WhatsApp'}>
+                        {openProfile.data.type ? CLIENT_TYPE_SHORT[openProfile.data.type] : '—'}
+                      </span>
+                      <span style={{ color: '#6b6063' }}>Сообщений до покупки</span>
+                      <span style={{ color: '#1b1517' }}>{openProfile.data.msgsBeforeOrder ?? '—'}</span>
+                      <span style={{ color: '#6b6063' }}>Время до покупки</span>
+                      <span style={{ color: '#1b1517' }}>
+                        {openProfile.data.msToOrder === null ? '—' : formatDuration(openProfile.data.msToOrder)}
+                      </span>
+                      <span style={{ color: '#6b6063' }}>Покупки</span>
+                      <span style={{ color: '#1b1517' }}>{openCustomer.ordersCount}</span>
+                    </div>
+                    <p className="text-[11px]" style={{ color: '#766d88' }}>
+                      {openProfile.data.type
+                        ? CLIENT_TYPE_LABELS[openProfile.data.type].rule
+                        : 'В WhatsApp клиент не писал — тип не определяется.'}
+                      {' '}Сообщения — клиент, человек и бот; до первого заказа после первого сообщения клиента.
+                    </p>
+                    <div>
+                      <p className="text-xs font-medium mb-1" style={{ color: '#6b6063' }}>Кто обслуживал</p>
+                      <ServedGroupsView hasChat={openProfile.data.hasChat} humanMessages={openProfile.data.humanMessages}
+                        served={openProfile.data.served} />
+                    </div>
+                  </>
+                )}
+              </div>
+            )}
 
             <div>
               <p className="text-xs font-medium mb-2" style={{ color: '#6b6063' }}>История заказов</p>

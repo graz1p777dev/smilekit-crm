@@ -1,170 +1,199 @@
 'use client'
 
-// Вкладка «Конверсии и продажи»: период сверху, дальше продажи, диалоги,
-// воронка и разрезы по клиентам. Все цифры считает сервер.
+// Вкладка «Лиды и конверсия»: кто писал, кому ответили, кто сейчас ждёт,
+// сколько новых купили и какие это клиенты. Каждая цифра — с правилом.
 
-import { useState } from 'react'
-import { Bot, UserRound } from 'lucide-react'
-import type { AnalyticsPeriod, ConversionAnalytics } from '@/actions/analytics'
-import { Bars, Card, Funnel, INK, INK_2, INK_3, LINE, SERIES, Split, Stat, money, num } from './viz'
+import { useEffect, useState } from 'react'
+import { getLeadsAnalytics, type LeadsAnalytics, type ReplyGroup } from '@/actions/analytics'
+import type { PeriodInput } from '@/lib/analytics/period'
+import { CLIENT_TYPE_LABELS, formatDuration, type ClientType } from '@/lib/analytics/client-types'
+import { useAnalyticsData } from './useAnalyticsData'
+import {
+  Card, ClientCell, Expand, INK, INK_2, INK_3, LINE, SERIES, ScrollTable, Stat, num, pct, phoneLabel,
+} from './viz'
 
-const PERIODS: { key: AnalyticsPeriod; label: string }[] = [
-  { key: 'today', label: 'Сегодня' },
-  { key: 'month', label: 'За месяц' },
-  { key: 'year', label: 'За год' },
-]
+const TYPE_COLORS: Record<ClientType, string> = {
+  iron: SERIES[1],
+  regular: SERIES[0],
+  air: SERIES[2],
+  short: '#a8a1b5',
+  midAnswered: '#a8a1b5',
+  long: '#a8a1b5',
+}
 
-const GOLD = '#f5a623'
+const time = (iso: string) =>
+  new Date(iso).toLocaleString('ru-RU', { timeZone: 'Asia/Bishkek', day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' })
 
-/** Спарклайн выручки: форма важнее точных значений, поэтому без осей. */
-function Sparkline({ points }: { points: { date: string; revenue: number }[] }) {
-  if (points.length < 2) return <p className="text-sm" style={{ color: INK_3 }}>Мало данных</p>
-  const max = Math.max(...points.map((p) => p.revenue), 1)
-  const W = 560
-  const H = 90
-  const step = W / (points.length - 1)
-  const coords = points.map((p, i) => [i * step, H - (p.revenue / max) * (H - 8)] as const)
-  const line = coords.map(([x, y], i) => `${i === 0 ? 'M' : 'L'}${x.toFixed(1)},${y.toFixed(1)}`).join(' ')
-  const area = `${line} L${W},${H} L0,${H} Z`
-  const best = points.reduce((a, b) => (b.revenue > a.revenue ? b : a))
+/** Тикает раз в минуту, чтобы «сколько ждёт» не застывало. */
+function useNow() {
+  const [now, setNow] = useState(() => Date.now())
+  useEffect(() => {
+    const id = setInterval(() => setNow(Date.now()), 60_000)
+    return () => clearInterval(id)
+  }, [])
+  return now
+}
 
+export function Skeleton({ text }: { text: string }) {
   return (
-    <div>
-      <svg viewBox={`0 0 ${W} ${H}`} className="w-full" style={{ height: 90 }} role="img"
-        aria-label={`Выручка по дням за ${points.length} дней, максимум ${money(max)}`}>
-        <path d={area} fill={SERIES[0]} opacity={0.10} />
-        <path d={line} fill="none" stroke={SERIES[0]} strokeWidth={2} strokeLinejoin="round" strokeLinecap="round" />
-      </svg>
-      <div className="mt-1 flex justify-between text-[11px]" style={{ color: INK_3 }}>
-        <span>{new Date(points[0].date).toLocaleDateString('ru-RU', { day: 'numeric', month: 'short' })}</span>
-        <span>Лучший день — {new Date(best.date).toLocaleDateString('ru-RU', { day: 'numeric', month: 'short' })}, {money(best.revenue)}</span>
-        <span>сегодня</span>
+    <div className="flex flex-col gap-3 p-4 md:p-8" aria-busy>
+      <div className="grid gap-3" style={{ gridTemplateColumns: 'repeat(auto-fit, minmax(148px, 1fr))' }}>
+        {Array.from({ length: 6 }, (_, i) => (
+          <div key={i} className="h-[84px] animate-pulse rounded-2xl bg-white" style={{ border: `1px solid ${LINE}` }} />
+        ))}
       </div>
+      <p className="text-sm" style={{ color: INK_3 }}>{text}</p>
     </div>
   )
 }
 
-export default function ConversionAnalyticsView({ data }: { data: ConversionAnalytics }) {
-  const [period, setPeriod] = useState<AnalyticsPeriod>('month')
-  const stats = data[period]
-  const served = stats.dialogsByBot + stats.dialogsByManager
-  const botShare = served ? Math.round((stats.dialogsByBot / served) * 100) : 0
+function ConversionRow({ label, group }: { label: string; group: ReplyGroup }) {
+  return (
+    <tr style={{ borderTop: `1px solid ${LINE}` }}>
+      <td className="py-2 pr-3">{label}</td>
+      <td className="py-2 pr-3 tabular-nums">{num(group.leads)}</td>
+      <td className="py-2 pr-3 tabular-nums">{num(group.bought)}</td>
+      <td className="py-2 pr-3 tabular-nums font-semibold">{pct(group.bought, group.leads)}</td>
+    </tr>
+  )
+}
+
+export default function LeadsAnalyticsView({ period }: { period: PeriodInput }) {
+  const { data, error, loading } = useAnalyticsData(getLeadsAnalytics, period)
+  if (error) return <p className="p-8 text-sm" style={{ color: '#b91c1c' }}>{error}</p>
+  if (loading || !data) return <Skeleton text="Считаем лиды…" />
+  return <LeadsBody data={data} />
+}
+
+function LeadsBody({ data }: { data: LeadsAnalytics }) {
+  const now = useNow()
+  const c = data.conversion
+  const typesSum = data.types.reduce((sum, t) => sum + t.count, 0)
 
   return (
     <div className="flex flex-col gap-5 p-4 md:p-8">
-      <div className="flex flex-wrap items-center justify-between gap-3">
-        <div>
-          <h1 className="text-xl font-bold" style={{ color: INK }}>Аналитика конверсий</h1>
-          <p className="mt-0.5 text-sm" style={{ color: INK_3 }}>
-            Продажи, диалоги и кто их ведёт — бот или менеджер
-          </p>
-        </div>
-        <div className="flex gap-1 rounded-xl p-1" style={{ background: '#fdfbfb', border: `1px solid ${LINE}` }}>
-          {PERIODS.map((p) => (
-            <button
-              key={p.key}
-              onClick={() => setPeriod(p.key)}
-              className="rounded-lg px-3 py-1.5 text-xs font-semibold transition-colors"
-              style={period === p.key ? { background: GOLD, color: '#1b1517' } : { color: INK_3 }}
-            >
-              {p.label}
-            </button>
-          ))}
-        </div>
+      <div>
+        <h1 className="text-xl font-bold" style={{ color: INK }}>Лиды WhatsApp</h1>
+        <p className="mt-0.5 text-xs" style={{ color: INK_3 }}>
+          Лид — чат WhatsApp с номером клиента. Группы, тестовые чаты и номера сотрудников не считаются.
+          Рассылки и служебные записи не считаются ни сообщением, ни ответом.
+          {data.dataSince && <> Переписка в базе — с {new Date(data.dataSince).toLocaleDateString('ru-RU', { timeZone: 'Asia/Bishkek' })}.</>}
+          {' '}Посчитано в {time(data.generatedAt)}.
+        </p>
       </div>
 
-      <div className="grid gap-3" style={{ gridTemplateColumns: 'repeat(auto-fit, minmax(148px, 1fr))' }}>
-        <Stat label="Выручка" value={money(stats.revenue)} tone="good" />
-        <Stat label="Заказов" value={num(stats.orders)} />
-        <Stat label="Коробок продано" value={num(stats.boxes)} />
-        <Stat label="Средний чек" value={stats.avgCheck ? money(stats.avgCheck) : '—'} />
-        <Stat label="Покупателей" value={num(stats.buyers)} />
-        <Stat label="Диалогов" value={num(stats.dialogs)} />
-        <Stat label="Конверсия в заказ" value={`${stats.conversion}%`} tone="warn" sub="из диалога в покупку" />
+      <div className="grid gap-3" style={{ gridTemplateColumns: 'repeat(auto-fit, minmax(160px, 1fr))' }}>
+        <Stat label="Писали за период" value={num(data.wrote)} sub="чаты, где клиент написал в эти дни" />
+        <Stat label="Новые" value={num(data.newLeads)} sub="самое первое сообщение клиента — в эти дни" />
+        <Stat label="Ответил человек" value={num(data.human)} tone="good"
+          sub="из писавших: человек написал после первого сообщения клиента в периоде (ответ мог прийти и после конца периода)" />
+        <Stat label="Ответил только бот" value={num(data.botOnly)} sub="из писавших: после первого сообщения — только бот" />
+        <Stat label="Без ответа вообще" value={num(data.noReply)} tone="warn" sub="из писавших: после первого сообщения не писал никто" />
+        <Stat label="Сейчас без ответа" value={num(data.waitingTotal)} tone="warn"
+          sub="из писавших: последнее сообщение в чате — от клиента" />
       </div>
 
-      <Card title="Выручка по дням" hint="Последние 30 дней">
-        <Sparkline points={data.daily} />
+      <Card
+        title="Сейчас без ответа"
+        hint={`Кто написал за период и до сих пор ждёт: последнее сообщение в диалоге — от клиента. «Ждёт» — с первого сообщения клиента, после которого не было ни человека, ни бота.${data.waitingTotal > data.waiting.length ? ` Показаны последние ${num(data.waiting.length)} из ${num(data.waitingTotal)}.` : ''}`}
+      >
+        {data.waiting.length === 0 ? (
+          <p className="text-sm" style={{ color: INK_3 }}>Все, кто писал за период, получили ответ.</p>
+        ) : (
+          <ScrollTable head={['Клиент', 'Телефон', 'Ждёт', 'Последнее сообщение']}>
+            {data.waiting.map((w) => (
+              <tr key={w.chatId} style={{ borderTop: `1px solid ${LINE}` }}>
+                <td className="py-2 pr-3"><ClientCell name={w.name} dealId={w.dealId} /></td>
+                <td className="py-2 pr-3 tabular-nums whitespace-nowrap" style={{ color: INK_2 }}>{phoneLabel(w.chatId)}</td>
+                <td className="py-2 pr-3 whitespace-nowrap font-semibold" style={{ color: '#c2410c' }}
+                  title={`с ${time(w.since)}`}>
+                  {formatDuration(now - Date.parse(w.since))}
+                </td>
+                <td className="py-2 pr-3" style={{ color: INK_2 }}>
+                  <span className="line-clamp-2">{w.lastText || '[вложение без текста]'}</span>
+                  <span className="text-[10px]" style={{ color: INK_3 }}>{time(w.lastAt)}</span>
+                </td>
+              </tr>
+            ))}
+          </ScrollTable>
+        )}
       </Card>
 
       <div className="grid gap-5 md:grid-cols-2">
-        <Card title="Путь клиента" hint="Сколько доходит до каждого шага">
-          <Funnel steps={[
-            { label: 'Диалогов', value: data.year.dialogs },
-            { label: 'Купили', value: data.year.buyers },
-            { label: 'Купили повторно', value: data.repeat.repeatClients },
-          ]} />
-        </Card>
-
-        <Card title="Кто обслуживает клиентов" hint="Диалог считается за менеджером, если в нём хоть раз ответил живой человек">
-          {served === 0 ? (
-            <p className="text-sm" style={{ color: INK_3 }}>Нет диалогов за период</p>
-          ) : (
-            <>
-              <Split
-                left={{ label: 'Бот', value: stats.dialogsByBot, color: SERIES[0] }}
-                right={{ label: 'Менеджер', value: stats.dialogsByManager, color: SERIES[2] }}
-              />
-              <p className="mt-3 flex items-center gap-3 text-[11px]" style={{ color: INK_3 }}>
-                <span className="flex items-center gap-1"><Bot size={12} /> бот ведёт {botShare}%</span>
-                <span className="flex items-center gap-1"><UserRound size={12} /> менеджер {100 - botShare}%</span>
-              </p>
-            </>
-          )}
-        </Card>
-
-        <Card title="Железные и обычные клиенты" hint="Железный — ни разу не покупал со скидкой">
-          <Split
-            left={{ label: 'Железные', value: data.clientQuality.iron, color: SERIES[1] }}
-            right={{ label: 'Со скидкой', value: data.clientQuality.discounted, color: SERIES[2] }}
-          />
-          <p className="mt-3 text-xs" style={{ color: INK_2 }}>
-            Платят полную цену — <strong>{data.clientQuality.ironShare}%</strong> покупателей.
+        <Card
+          title="Конверсия новых лидов"
+          hint="Берём новых лидов периода. Купил — есть заказ (не отменён) с тем же номером (последние 9 цифр), созданный после первого сообщения клиента, в любой момент до сейчас."
+        >
+          <div className="mb-3 flex items-baseline gap-2">
+            <span className="text-[26px] font-bold tabular-nums" style={{ color: '#5115a4' }}>{pct(c.bought, data.newLeads)}</span>
+            <span className="text-xs" style={{ color: INK_2 }}>
+              купили {num(c.bought)} из {num(data.newLeads)} новых
+            </span>
+          </div>
+          <ScrollTable head={['Кто отвечал', 'Новых', 'Купили', '%']}>
+            <ConversionRow label="Отвечал человек" group={c.human} />
+            <ConversionRow label="Только бот" group={c.botOnly} />
+            <ConversionRow label="Никто не ответил" group={c.noReply} />
+          </ScrollTable>
+          <p className="mt-2 text-[11px]" style={{ color: INK_3 }}>
+            «Отвечал человек» — человек написал в чат после первого сообщения клиента (в любой момент, в том числе после заказа).
           </p>
         </Card>
 
-        <Card title="Сколько скидок дали" hint="По ступеням из базы знаний бота">
-          <Bars
-            items={data.discountTiers.map((tier) => ({
-              label: tier.label,
-              value: tier.orders,
-              hint: tier.givenAway > 0
-                ? `${num(tier.orders)} зак. · отдали ${money(tier.givenAway)}`
-                : `${num(tier.orders)} зак.`,
-            }))}
-          />
-        </Card>
-
-        <Card title="Повторные продажи" hint="Заказы, которые у клиента не первые">
-          <div className="grid gap-3" style={{ gridTemplateColumns: 'repeat(auto-fit, minmax(120px, 1fr))' }}>
-            <Stat label="Повторных заказов" value={num(data.repeat.repeatOrders)} sub={`${data.repeat.share}% от всех`} />
-            <Stat label="Вернувшихся клиентов" value={num(data.repeat.repeatClients)} />
-            <Stat label="Выручка с повторных" value={money(data.repeat.repeatRevenue)} tone="good" />
+        <Card
+          title="Типы клиентов"
+          hint="Те же новые лиды периода. Сообщения диалога — клиент, человек и бот."
+        >
+          <div className="flex flex-col gap-2">
+            {data.types.map((t) => (
+              <Expand
+                key={t.type}
+                summary={
+                  <span className="flex min-w-0 flex-1 flex-col gap-0.5">
+                    <span className="flex items-baseline justify-between gap-3">
+                      <span className="flex items-center gap-1.5 font-semibold" style={{ color: INK }}>
+                        <span className="size-2.5 shrink-0 rounded-full" style={{ background: TYPE_COLORS[t.type] }} aria-hidden />
+                        {CLIENT_TYPE_LABELS[t.type].title}
+                      </span>
+                      <span className="shrink-0 tabular-nums" style={{ color: INK }}>
+                        {num(t.count)} <span style={{ color: INK_3 }}>· {pct(t.count, data.newLeads)}</span>
+                      </span>
+                    </span>
+                    <span className="text-[11px]" style={{ color: INK_3 }}>{CLIENT_TYPE_LABELS[t.type].rule}</span>
+                  </span>
+                }
+              >
+                {t.clients.length === 0 ? (
+                  <p className="text-xs" style={{ color: INK_3 }}>Таких нет.</p>
+                ) : (
+                  <>
+                    {t.count > t.clients.length && (
+                      <p className="mb-1 text-[11px]" style={{ color: INK_3 }}>
+                        Показаны последние {num(t.clients.length)} из {num(t.count)}.
+                      </p>
+                    )}
+                    <ScrollTable head={t.type === 'iron' || t.type === 'regular'
+                      ? ['Клиент', 'Телефон', 'Сообщений до заказа', 'Время до заказа']
+                      : ['Клиент', 'Телефон', 'Сообщений всего']}>
+                      {t.clients.map((row) => (
+                        <tr key={row.chatId} style={{ borderTop: `1px solid ${LINE}` }}>
+                          <td className="py-1.5 pr-3"><ClientCell name={row.name} dealId={row.dealId} /></td>
+                          <td className="py-1.5 pr-3 tabular-nums whitespace-nowrap" style={{ color: INK_2 }}>{phoneLabel(row.chatId)}</td>
+                          <td className="py-1.5 pr-3 tabular-nums">{num(row.msgsBeforeOrder ?? row.totalMsgs)}</td>
+                          {row.msToOrder !== null && (
+                            <td className="py-1.5 pr-3 tabular-nums whitespace-nowrap">{formatDuration(row.msToOrder)}</td>
+                          )}
+                        </tr>
+                      ))}
+                    </ScrollTable>
+                  </>
+                )}
+              </Expand>
+            ))}
           </div>
-        </Card>
-
-        <Card title="Клиенты по городам" hint="Считаются люди, а не заказы">
-          <Bars
-            items={data.cities.slice(0, 8).map((city) => ({
-              label: city.city,
-              value: city.clients,
-              hint: `${num(city.clients)} чел. · ${num(city.orders)} зак.`,
-            }))}
-          />
-        </Card>
-
-        <Card title="Каналы за год" hint="Диалоги, заказы и конверсия по каждому">
-          <Bars
-            items={data.channels.map((c) => ({
-              label: c.label,
-              value: c.dialogs,
-              hint: `${num(c.dialogs)} диал. · ${num(c.orders)} зак. · ${c.conversion}%`,
-            }))}
-          />
-        </Card>
-
-        <Card title="Нагрузка менеджеров за год" hint="Сколько диалогов забрал себе каждый">
-          <Bars items={data.managers.map((m) => ({ label: m.name, value: m.dialogs }))} />
+          <p className="mt-3 text-[11px]" style={{ color: typesSum === data.newLeads ? INK_3 : '#b91c1c' }}>
+            Сумма типов: {num(typesSum)} {typesSum === data.newLeads ? '= новые лиды' : `≠ новые лиды (${num(data.newLeads)})`}
+          </p>
         </Card>
       </div>
     </div>

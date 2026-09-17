@@ -36,6 +36,7 @@ import type {
   DealViewer,
 } from '@/types'
 import { DEAL_CURRENCIES, DEAL_SOURCE } from './deal-config'
+import ServedBy from './ServedBy'
 
 interface Props {
   deal: Deal | null
@@ -567,6 +568,8 @@ export default function DealModal({
               )}
             </div>
           )}
+
+          {!isNew && deal && <ServedBy dealId={deal.id} />}
 
           {/* Переписка — только чтение, вести её продолжают там, где начали */}
           {!isNew && (

@@ -7,6 +7,7 @@ import WhatsappSettingsClient from '@/components/whatsapp/WhatsappSettingsClient
 import InstagramSettingsClient from '@/components/instagram/InstagramSettingsClient'
 import SettingsTabs from '@/components/settings/SettingsTabs'
 import SystemSettings from '@/components/settings/SystemSettings'
+import StaffSettings from '@/components/settings/StaffSettings'
 
 // Все настройки собраны здесь вкладками: система CRM, бот, WhatsApp,
 // Instagram. Отдельных пунктов меню у них больше нет.
@@ -40,6 +41,7 @@ export default async function SettingsPage() {
   return (
     <SettingsTabs
       system={<SystemSettings />}
+      staff={<StaffSettings />}
       bot={
         bot === null
           ? <SmilekitBotApiError error="Сервис бота не ответил" />
