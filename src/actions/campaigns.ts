@@ -5,6 +5,7 @@ import { z } from 'zod'
 import { createClient } from '@/lib/supabase/server'
 import { createAdminClient } from '@/lib/supabase/admin'
 import { voiceById } from '@/config/voice-messages'
+import { BULK_BROADCAST_AUTHOR_MARKER } from '@/lib/greenapi/bot-reply'
 
 export interface CampaignRow {
   id: string
@@ -96,6 +97,25 @@ export type CampaignAudience = 'not_purchased' | 'purchased' | 'all'
 
 export interface AudienceFilter extends LastMessageDateFilter {
   audience?: CampaignAudience
+  /**
+   * Слать и тем, с кем сейчас переписывается менеджер. По умолчанию такие
+   * чаты пропускаются, чтобы рассылка не влезла в живой разговор. Но менеджер
+   * часто пишет прямо с телефона WhatsApp, и под правило попадает заметная
+   * доля клиентов — 17.09 это были 106 из 294 писавших за день.
+   */
+  includeManagerChats?: boolean
+  /**
+   * Не слать тем, кто уже получил рассылку начиная с этого момента (ISO).
+   * Защита от повторной отправки: 17.09 вторую рассылку с тем же текстом
+   * поставили на тех же 187 человек через 50 минут после первой.
+   */
+  skipReachedSince?: string
+}
+
+/** Сколько клиентов попало в период, но отсеялось по правилам — для панели. */
+export interface AudienceExclusions {
+  managerChats: number
+  alreadyReached: number
 }
 
 /**
@@ -108,6 +128,13 @@ export async function eligibleRecipientsForRun(filter?: AudienceFilter): Promise
 }
 
 async function eligibleRecipients(filter?: AudienceFilter): Promise<Recipient[]> {
+  return (await selectRecipients(filter)).recipients
+}
+
+async function selectRecipients(
+  filter?: AudienceFilter
+): Promise<{ recipients: Recipient[]; excluded: AudienceExclusions }> {
+  const excluded: AudienceExclusions = { managerChats: 0, alreadyReached: 0 }
   const admin = createAdminClient()
   const audience: CampaignAudience = filter?.audience ?? 'not_purchased'
   const dateFilter = filter
@@ -136,7 +163,7 @@ async function eligibleRecipients(filter?: AudienceFilter): Promise<Recipient[]>
   const fromDate = dateFilter?.from ? lowerBound(dateFilter.from) : null
   const toDate = dateFilter?.to ? upperBound(dateFilter.to) : null
   if ((fromDate && Number.isNaN(fromDate.getTime())) || (toDate && Number.isNaN(toDate.getTime()))) {
-    return []
+    return { recipients: [], excluded }
   }
   const fromTime = fromDate ? fromDate.getTime() : null
   const toTime = toDate ? toDate.getTime() : null
@@ -155,8 +182,8 @@ async function eligibleRecipients(filter?: AudienceFilter): Promise<Recipient[]>
     // переписки целиком (десятки тысяч строк, постранично по 1000) — ради
     // двух производных величин. Именно это подвешивало страницу рассылок:
     // в логах прода «The destination stream closed early».
-    fetchAllRows<{ chat_id: string; created_at: string }>(
-      admin, 'chat_messages', 'chat_id, created_at',
+    fetchAllRows<{ chat_id: string; created_at: string; author_name: string | null }>(
+      admin, 'chat_messages', 'chat_id, created_at, author_name',
       (q) => q.eq('sender', 'operator').order('id', { ascending: false })
     ),
     admin.from('campaign_opt_outs').select('phone'),
@@ -165,6 +192,15 @@ async function eligibleRecipients(filter?: AudienceFilter): Promise<Recipient[]>
     ),
   ])
 
+  const reached = new Set<string>()
+  if (filter?.skipReachedSince) {
+    const reachedRows = await fetchAllRows<{ chat_id: string }>(
+      admin, 'campaign_recipients', 'chat_id',
+      (q) => q.eq('status', 'sent').gte('sent_at', filter.skipReachedSince).order('id')
+    )
+    for (const row of reachedRows) reached.add(normalizePhone(row.chat_id))
+  }
+
   const purchased = new Set((orders ?? []).flatMap((row) => row.deal_id ? [String(row.deal_id)] : []))
   const excludedPhones = new Set((optOuts ?? []).map((row) => row.phone as string))
 
@@ -172,7 +208,12 @@ async function eligibleRecipients(filter?: AudienceFilter): Promise<Recipient[]>
   // менеджера, но только до его следующего сообщения.
   const controlByChat = new Map(chatControls.map((row) => [String(row.chat_id), row]))
   const lastOperatorAtByChat = new Map<string, string>()
+  // Массовая рассылка, отправленная мимо CRM, помечается BULK_BROADCAST_AUTHOR_MARKER
+  // и работой менеджера НЕ является. Бот (isManagerControllingChat) эти строки
+  // всегда пропускал, а подбор получателей — нет: 17.09 пятеро клиентов не
+  // получили рассылку, потому что считались «в разговоре с менеджером».
   for (const row of operatorRows) {
+    if (row.author_name === BULK_BROADCAST_AUTHOR_MARKER) continue
     const chatId = String(row.chat_id)
     const known = lastOperatorAtByChat.get(chatId)
     if (!known || row.created_at > known) lastOperatorAtByChat.set(chatId, row.created_at)
@@ -208,7 +249,7 @@ async function eligibleRecipients(filter?: AudienceFilter): Promise<Recipient[]>
     }
   }
 
-  return (deals ?? []).flatMap((deal): Recipient[] => {
+  const recipients = (deals ?? []).flatMap((deal): Recipient[] => {
     const id = String(deal.id)
     const key = String(deal.external_key || '')
     if (!key) return []
@@ -239,7 +280,6 @@ async function eligibleRecipients(filter?: AudienceFilter): Promise<Recipient[]>
     // и старые сделки с ключом amocrm:<lead_id>: у них номер лежит в карточке
     // клиента, а переписка — в том же chat_id по номеру.
     if (!greenApiReady || phone.length < 9) return []
-    if (managerChats.has(phone)) return []
 
     if (fromTime || toTime) {
       // Фильтр по дате теперь работает и для сделок Green API. Раньше эта
@@ -252,6 +292,15 @@ async function eligibleRecipients(filter?: AudienceFilter): Promise<Recipient[]>
       if (toTime && lastTime > toTime) return []
     }
 
+    if (reached.has(phone)) {
+      excluded.alreadyReached += 1
+      return []
+    }
+    if (managerChats.has(phone)) {
+      excluded.managerChats += 1
+      if (!filter?.includeManagerChats) return []
+    }
+
     return [{
       deal_id: id,
       channel: 'whatsapp',
@@ -261,6 +310,8 @@ async function eligibleRecipients(filter?: AudienceFilter): Promise<Recipient[]>
       contact_id: null,
     }]
   })
+
+  return { recipients, excluded }
 }
 
 /**
@@ -304,19 +355,30 @@ export async function getCampaignsData(): Promise<CampaignsData> {
 }
 
 /** Живой пересчёт аудитории под выбранные фильтры (для UI, до создания рассылки). */
-export async function getEligibleCountForRange(
-  dateFrom?: string,
-  dateTo?: string,
+export interface AudiencePreview {
+  count: number
+  excluded: AudienceExclusions
+}
+
+/** Живой пересчёт аудитории под выбранные фильтры (для UI, до создания рассылки). */
+export async function getAudiencePreview(input: {
+  dateFrom?: string
+  dateTo?: string
   audience?: CampaignAudience
-): Promise<number> {
+  includeManagerChats?: boolean
+  skipReachedSince?: string
+}): Promise<AudiencePreview> {
+  const empty: AudiencePreview = { count: 0, excluded: { managerChats: 0, alreadyReached: 0 } }
   const me = await viewer()
-  if (!me || !['owner', 'rop'].includes(me.role)) return 0
-  const recipients = await eligibleRecipients({
-    from: dateFrom || undefined,
-    to: dateTo || undefined,
-    audience,
+  if (!me || !['owner', 'rop'].includes(me.role)) return empty
+  const { recipients, excluded } = await selectRecipients({
+    from: input.dateFrom || undefined,
+    to: input.dateTo || undefined,
+    audience: input.audience,
+    includeManagerChats: input.includeManagerChats,
+    skipReachedSince: input.skipReachedSince,
   })
-  return recipients.length
+  return { count: recipients.length, excluded }
 }
 
 const CampaignSchema = z.object({
@@ -329,6 +391,8 @@ const CampaignSchema = z.object({
   dateFrom: z.string().optional(),
   dateTo: z.string().optional(),
   audience: z.enum(['not_purchased', 'purchased', 'all']).optional(),
+  includeManagerChats: z.boolean().optional(),
+  skipReachedSince: z.string().optional(),
 }).refine(
   (data) => data.message.length > 0 || Boolean(data.voiceId),
   { message: 'Нужен текст или голосовое' }
@@ -349,6 +413,8 @@ export async function scheduleCampaign(input: unknown): Promise<{ success: true;
     from: parsed.data.dateFrom,
     to: parsed.data.dateTo,
     audience: parsed.data.audience,
+    includeManagerChats: parsed.data.includeManagerChats,
+    skipReachedSince: parsed.data.skipReachedSince,
   })
   if (!recipients.length) return { success: false, error: 'Нет клиентов под выбранные фильтры' }
 

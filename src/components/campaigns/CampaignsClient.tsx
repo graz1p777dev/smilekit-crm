@@ -7,7 +7,8 @@ import { toast } from 'sonner'
 import {
   addOptOutPhone,
   cancelCampaign,
-  getEligibleCountForRange,
+  getAudiencePreview,
+  type AudienceExclusions,
   getLastCampaignMoment,
   removeOptOutPhone,
   scheduleCampaign,
@@ -59,6 +60,12 @@ function daysBack(days: number) {
 }
 
 type PresetKey = 'today' | 'd2' | 'd3' | 'd5' | 'week' | 'h24' | 'since_last'
+
+/** Начало сегодняшних суток по Бишкеку, ISO. */
+function bishkekTodayStartIso() {
+  const day = new Date(Date.now() + 6 * 3600_000).toISOString().slice(0, 10)
+  return new Date(`${day}T00:00:00+06:00`).toISOString()
+}
 
 /** Момент N часов назад. Вынесено из компонента: Date.now() внутри тела
  *  компонента линтер React считает нечистым вызовом при рендере. */
@@ -162,6 +169,13 @@ export default function CampaignsClient({ initialData }: { initialData: Campaign
   }
   const [audience, setAudience] = useState<CampaignAudience>('not_purchased')
   const [eligibleCount, setEligibleCount] = useState<number | null>(initialData.eligibleCount)
+  const [exclusions, setExclusions] = useState<AudienceExclusions>({ managerChats: 0, alreadyReached: 0 })
+  // Слать ли тем, с кем сейчас переписывается менеджер. По умолчанию нет —
+  // чтобы не влезать в живой разговор; включается одной галочкой.
+  const [includeManagerChats, setIncludeManagerChats] = useState(false)
+  // Не слать повторно тем, кто уже получил рассылку сегодня. По умолчанию да:
+  // 17.09 чуть не ушла вторая рассылка тем же 187 людям через 50 минут.
+  const [skipReachedToday, setSkipReachedToday] = useState(true)
   const requestSeq = useRef(0)
   const [countLoading, setCountLoading] = useState(false)
   const [optOutPhone, setOptOutPhone] = useState('')
@@ -189,12 +203,22 @@ export default function CampaignsClient({ initialData }: { initialData: Campaign
     const seq = ++requestSeq.current
     const timer = setTimeout(() => {
       setCountLoading(true)
-      getEligibleCountForRange(dateFrom || undefined, dateTo || undefined, audience)
-        .then((count) => { if (seq === requestSeq.current) setEligibleCount(count) })
+      getAudiencePreview({
+        dateFrom: dateFrom || undefined,
+        dateTo: dateTo || undefined,
+        audience,
+        includeManagerChats,
+        skipReachedSince: skipReachedToday ? bishkekTodayStartIso() : undefined,
+      })
+        .then((preview) => {
+          if (seq !== requestSeq.current) return
+          setEligibleCount(preview.count)
+          setExclusions(preview.excluded)
+        })
         .finally(() => { if (seq === requestSeq.current) setCountLoading(false) })
     }, 400)
     return () => clearTimeout(timer)
-  }, [dateFrom, dateTo, audience])
+  }, [dateFrom, dateTo, audience, includeManagerChats, skipReachedToday])
 
   const scheduleLabel = useMemo(() => {
     const date = new Date(scheduledAt)
@@ -211,6 +235,10 @@ export default function CampaignsClient({ initialData }: { initialData: Campaign
         dateFrom: dateFrom || undefined,
         dateTo: dateTo || undefined,
         audience,
+        // Те же правила, что у предпросмотра, — иначе число на панели и
+        // реальные получатели разошлись бы.
+        includeManagerChats,
+        skipReachedSince: skipReachedToday ? bishkekTodayStartIso() : undefined,
       })
       if (!result.success) {
         toast.error(result.error)
@@ -549,6 +577,39 @@ export default function CampaignsClient({ initialData }: { initialData: Campaign
                   Под эти фильтры никто не попал — рассылать некому. Снимите период
                   или выберите другую аудиторию.
                 </p>
+              )}
+              {(exclusions.managerChats > 0 || exclusions.alreadyReached > 0) && (
+                <div className="mt-3 space-y-2">
+                  {exclusions.managerChats > 0 && (
+                    <label className="flex cursor-pointer items-start gap-2 rounded-lg bg-white/[.08] px-2.5 py-2 text-xs leading-snug">
+                      <input
+                        type="checkbox"
+                        className="mt-0.5 size-3.5 shrink-0"
+                        checked={includeManagerChats}
+                        onChange={(event) => setIncludeManagerChats(event.target.checked)}
+                      />
+                      <span>
+                        <strong>{exclusions.managerChats}</strong> в переписке с менеджером —{' '}
+                        {includeManagerChats ? 'включены в рассылку' : 'пропускаются. Отметьте, чтобы отправить и им'}
+                      </span>
+                    </label>
+                  )}
+                  {(exclusions.alreadyReached > 0 || !skipReachedToday) && (
+                    <label className="flex cursor-pointer items-start gap-2 rounded-lg bg-white/[.08] px-2.5 py-2 text-xs leading-snug">
+                      <input
+                        type="checkbox"
+                        className="mt-0.5 size-3.5 shrink-0"
+                        checked={skipReachedToday}
+                        onChange={(event) => setSkipReachedToday(event.target.checked)}
+                      />
+                      <span>
+                        {skipReachedToday
+                          ? <><strong>{exclusions.alreadyReached}</strong> уже получили рассылку сегодня — не повторяем</>
+                          : 'Отправлять и тем, кто уже получил рассылку сегодня'}
+                      </span>
+                    </label>
+                  )}
+                </div>
               )}
               <p className="mt-3 text-sm leading-relaxed text-white/75">
                 {audience === 'not_purchased' && 'Сделки без оплаченного заказа.'}
