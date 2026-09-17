@@ -3,6 +3,7 @@
 import { revalidatePath } from 'next/cache'
 import { createClient } from '@/lib/supabase/server'
 import { createAdminClient } from '@/lib/supabase/admin'
+import { isFailure, requireOwnerRole } from '@/lib/auth-guards'
 import { recordAudit } from '@/actions/audit'
 
 export type ActionResult = { success: true } | { success: false; error: string }
@@ -65,8 +66,11 @@ export async function getDepartments(): Promise<DeptRow[]> {
 
 export async function createDepartment(name: string, description: string): Promise<ActionResult> {
   if (!name.trim()) return { success: false, error: 'Название обязательно' }
-  const session = await requireSession()
-  if (!session) return { success: false, error: 'Нет доступа' }
+  // Справочники правит только владелец. Раньше хватало любой сессии, а
+  // пишет этот код admin-клиентом в обход RLS — то есть менеджер мог
+  // переименовать этапы воронки или удалить отдел.
+  const guard = await requireOwnerRole()
+  if (isFailure(guard)) return guard
   const admin = createAdminClient()
   const { data: created, error } = await admin.from('departments').insert({
     name: name.trim(),
@@ -82,8 +86,11 @@ export async function createDepartment(name: string, description: string): Promi
 
 export async function updateDepartment(id: string, name: string, description: string): Promise<ActionResult> {
   if (!name.trim()) return { success: false, error: 'Название обязательно' }
-  const session = await requireSession()
-  if (!session) return { success: false, error: 'Нет доступа' }
+  // Справочники правит только владелец. Раньше хватало любой сессии, а
+  // пишет этот код admin-клиентом в обход RLS — то есть менеджер мог
+  // переименовать этапы воронки или удалить отдел.
+  const guard = await requireOwnerRole()
+  if (isFailure(guard)) return guard
   const admin = createAdminClient()
   const { error } = await admin.from('departments').update({
     name: name.trim(),
@@ -98,8 +105,11 @@ export async function updateDepartment(id: string, name: string, description: st
 }
 
 export async function deleteDepartment(id: string): Promise<ActionResult> {
-  const session = await requireSession()
-  if (!session) return { success: false, error: 'Нет доступа' }
+  // Справочники правит только владелец. Раньше хватало любой сессии, а
+  // пишет этот код admin-клиентом в обход RLS — то есть менеджер мог
+  // переименовать этапы воронки или удалить отдел.
+  const guard = await requireOwnerRole()
+  if (isFailure(guard)) return guard
   const admin = createAdminClient()
   const { count } = await admin.from('employees')
     .select('id', { count: 'exact', head: true })
@@ -140,8 +150,11 @@ export async function createRole(
   if (!label.trim()) return { success: false, error: 'Название роли обязательно' }
   const slug = (name || label).trim().toLowerCase().replace(/\s+/g, '_').replace(/[^a-z0-9_]/g, '')
   if (!slug) return { success: false, error: 'Системное имя должно содержать латинские буквы' }
-  const session = await requireSession()
-  if (!session) return { success: false, error: 'Нет доступа' }
+  // Справочники правит только владелец. Раньше хватало любой сессии, а
+  // пишет этот код admin-клиентом в обход RLS — то есть менеджер мог
+  // переименовать этапы воронки или удалить отдел.
+  const guard = await requireOwnerRole()
+  if (isFailure(guard)) return guard
   const admin = createAdminClient()
   const { error } = await admin.from('roles').insert({
     name: slug,
@@ -164,8 +177,11 @@ export async function updateRole(
   permissionLevel?: 'employee' | 'department_head',
 ): Promise<ActionResult> {
   if (!label.trim()) return { success: false, error: 'Название роли обязательно' }
-  const session = await requireSession()
-  if (!session) return { success: false, error: 'Нет доступа' }
+  // Справочники правит только владелец. Раньше хватало любой сессии, а
+  // пишет этот код admin-клиентом в обход RLS — то есть менеджер мог
+  // переименовать этапы воронки или удалить отдел.
+  const guard = await requireOwnerRole()
+  if (isFailure(guard)) return guard
   const admin = createAdminClient()
   const { data: role } = await admin.from('roles').select('is_system').eq('id', id).single()
   const updates: Record<string, unknown> = {
@@ -184,8 +200,11 @@ export async function updateRole(
 }
 
 export async function deleteRole(id: string): Promise<ActionResult> {
-  const session = await requireSession()
-  if (!session) return { success: false, error: 'Нет доступа' }
+  // Справочники правит только владелец. Раньше хватало любой сессии, а
+  // пишет этот код admin-клиентом в обход RLS — то есть менеджер мог
+  // переименовать этапы воронки или удалить отдел.
+  const guard = await requireOwnerRole()
+  if (isFailure(guard)) return guard
   const admin = createAdminClient()
   const { data: role } = await admin.from('roles').select('is_system, name').eq('id', id).single()
   if (role?.is_system) return { success: false, error: 'Системные роли нельзя удалять' }
@@ -220,8 +239,11 @@ export async function getWorkSchedules(): Promise<WorkScheduleRow[]> {
 
 export async function createWorkSchedule(name: string, description: string): Promise<ActionResult> {
   if (!name.trim()) return { success: false, error: 'Название обязательно' }
-  const session = await requireSession()
-  if (!session) return { success: false, error: 'Нет доступа' }
+  // Справочники правит только владелец. Раньше хватало любой сессии, а
+  // пишет этот код admin-клиентом в обход RLS — то есть менеджер мог
+  // переименовать этапы воронки или удалить отдел.
+  const guard = await requireOwnerRole()
+  if (isFailure(guard)) return guard
   const admin = createAdminClient()
   const { error } = await admin.from('work_schedules').insert({
     name: name.trim(),
@@ -238,8 +260,11 @@ export async function createWorkSchedule(name: string, description: string): Pro
 
 export async function updateWorkSchedule(id: string, name: string, description: string): Promise<ActionResult> {
   if (!name.trim()) return { success: false, error: 'Название обязательно' }
-  const session = await requireSession()
-  if (!session) return { success: false, error: 'Нет доступа' }
+  // Справочники правит только владелец. Раньше хватало любой сессии, а
+  // пишет этот код admin-клиентом в обход RLS — то есть менеджер мог
+  // переименовать этапы воронки или удалить отдел.
+  const guard = await requireOwnerRole()
+  if (isFailure(guard)) return guard
   const admin = createAdminClient()
   const { error } = await admin.from('work_schedules').update({
     name: name.trim(),
@@ -254,8 +279,11 @@ export async function updateWorkSchedule(id: string, name: string, description: 
 }
 
 export async function deleteWorkSchedule(id: string): Promise<ActionResult> {
-  const session = await requireSession()
-  if (!session) return { success: false, error: 'Нет доступа' }
+  // Справочники правит только владелец. Раньше хватало любой сессии, а
+  // пишет этот код admin-клиентом в обход RLS — то есть менеджер мог
+  // переименовать этапы воронки или удалить отдел.
+  const guard = await requireOwnerRole()
+  if (isFailure(guard)) return guard
   const admin = createAdminClient()
   const { data: ws } = await admin.from('work_schedules').select('is_system, name').eq('id', id).single()
   if (ws?.is_system) return { success: false, error: 'Системные графики нельзя удалять' }
@@ -291,8 +319,11 @@ export async function getDealStages(): Promise<DealStageRow[]> {
  * уже заведённых терминальных этапа, отчётность считает конверсию по ним. */
 export async function createDealStage(name: string, description: string, color: string): Promise<ActionResult> {
   if (!name.trim()) return { success: false, error: 'Название обязательно' }
-  const session = await requireSession()
-  if (!session) return { success: false, error: 'Нет доступа' }
+  // Справочники правит только владелец. Раньше хватало любой сессии, а
+  // пишет этот код admin-клиентом в обход RLS — то есть менеджер мог
+  // переименовать этапы воронки или удалить отдел.
+  const guard = await requireOwnerRole()
+  if (isFailure(guard)) return guard
   const admin = createAdminClient()
   const { data: last } = await admin.from('deal_stages')
     .select('sort_order').order('sort_order', { ascending: false }).limit(1).maybeSingle()
@@ -314,8 +345,11 @@ export async function createDealStage(name: string, description: string, color: 
 
 export async function updateDealStage(id: string, name: string, description: string, color: string): Promise<ActionResult> {
   if (!name.trim()) return { success: false, error: 'Название обязательно' }
-  const session = await requireSession()
-  if (!session) return { success: false, error: 'Нет доступа' }
+  // Справочники правит только владелец. Раньше хватало любой сессии, а
+  // пишет этот код admin-клиентом в обход RLS — то есть менеджер мог
+  // переименовать этапы воронки или удалить отдел.
+  const guard = await requireOwnerRole()
+  if (isFailure(guard)) return guard
   const admin = createAdminClient()
   const { error } = await admin.from('deal_stages').update({
     name: name.trim(),
@@ -331,8 +365,11 @@ export async function updateDealStage(id: string, name: string, description: str
 }
 
 export async function deleteDealStage(id: string): Promise<ActionResult> {
-  const session = await requireSession()
-  if (!session) return { success: false, error: 'Нет доступа' }
+  // Справочники правит только владелец. Раньше хватало любой сессии, а
+  // пишет этот код admin-клиентом в обход RLS — то есть менеджер мог
+  // переименовать этапы воронки или удалить отдел.
+  const guard = await requireOwnerRole()
+  if (isFailure(guard)) return guard
   const admin = createAdminClient()
   const { data: stage } = await admin.from('deal_stages').select('name, is_default').eq('id', id).maybeSingle()
   if (!stage) return { success: false, error: 'Этап не найден' }

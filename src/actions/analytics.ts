@@ -12,8 +12,8 @@
 // Через admin-клиент: instagram_messages по RLS видит только owner, а
 // цифра нужна и РОПу.
 
-import { createClient } from '@/lib/supabase/server'
 import { createAdminClient } from '@/lib/supabase/admin'
+import { isFailure, requireManagement } from '@/lib/auth-guards'
 
 export type AnalyticsPeriod = 'today' | 'month' | 'year'
 
@@ -389,10 +389,11 @@ function dailySeries(orders: OrderRow[]): DayPoint[] {
 }
 
 export async function getConversionAnalytics(): Promise<ConversionAnalytics> {
-  // Страница закрыта для роли в nav.ts, но на сервере доверять этому нельзя.
-  const supabase = await createClient()
-  const { data: { session } } = await supabase.auth.getSession()
-  if (!session) throw new Error('Нет авторизации')
+  // Скрытый пункт меню — не защита: server action вызывается напрямую.
+  // Здесь вся выручка, скидки и нагрузка менеджеров, читаемые admin-клиентом
+  // в обход RLS, поэтому роль проверяем явно.
+  const guard = await requireManagement()
+  if (isFailure(guard)) throw new Error(guard.error)
 
   if (cached && Date.now() - cached.at < CACHE_TTL_MS) return cached.data
 

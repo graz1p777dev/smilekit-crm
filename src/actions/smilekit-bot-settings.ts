@@ -7,6 +7,7 @@
 // добавляется в smilekitBotFetch на сервере и в браузер не попадает.
 
 import { revalidatePath } from 'next/cache'
+import { isFailure, requireOwnerRole } from '@/lib/auth-guards'
 import { z } from 'zod'
 import { BOT_TIMEOUTS_MS, smilekitBotFetch } from '@/lib/smilekit-bot-api'
 import {
@@ -22,6 +23,12 @@ const PAGE = '/dashboard/settings'
 export async function getBotSettings(): Promise<
   { ok: true; data: SmilekitBotSettings } | { ok: false; error: string }
 > {
+  // Раньше здесь не было проверки вообще: промпты бота мог прочитать и
+  // переписать любой, кто дошёл до server action, — включая роли, которым
+  // раздел настроек даже не показывается.
+  const guard = await requireOwnerRole()
+  if (isFailure(guard)) return { ok: false, error: guard.error }
+
   const result = await smilekitBotFetch<SmilekitBotSettings>('/internal/settings')
   if (!result.ok) return { ok: false, error: result.error }
   return { ok: true, data: { ...result.data, models: result.data.models ?? [] } }
@@ -57,6 +64,9 @@ export type SaveBotSettingsResult =
 export async function saveBotSettings(
   input: Partial<SmilekitBotSettingsInput>
 ): Promise<SaveBotSettingsResult> {
+  const guard = await requireOwnerRole()
+  if (isFailure(guard)) return guard
+
   const parsed = SettingsSchema.safeParse(input)
   if (!parsed.success) {
     return { success: false, error: parsed.error.issues[0]?.message ?? 'Ошибка валидации' }
@@ -91,6 +101,9 @@ export async function runBotLab(
   message: string,
   history: SmilekitLabMessage[]
 ): Promise<RunBotLabResult> {
+  const guard = await requireOwnerRole()
+  if (isFailure(guard)) return guard
+
   const trimmed = message.trim()
   if (!trimmed) return { success: false, error: 'Введите сообщение' }
 
@@ -110,6 +123,9 @@ export type GetBotEventsResult =
 /** Живой журнал бота — страница опрашивает это раз в несколько секунд,
  * передавая sinceId последнего уже показанного события. */
 export async function getBotEvents(sinceId = 0): Promise<GetBotEventsResult> {
+  const guard = await requireOwnerRole()
+  if (isFailure(guard)) return guard
+
   const query = sinceId > 0 ? `?sinceId=${sinceId}&limit=200` : '?limit=200'
   const result = await smilekitBotFetch<{ events: SmilekitBotEvent[] }>(`/internal/events${query}`)
   if (!result.ok) return { success: false, error: result.error }

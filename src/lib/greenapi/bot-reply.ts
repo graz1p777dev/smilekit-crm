@@ -51,6 +51,9 @@ export interface InboundGreenApiMessage {
 }
 
 const VOICE_TYPES = new Set(['voice', 'audio', 'audioMessage'])
+
+/** Текст в переписке, когда голосовое пришло, но расшифровать его не вышло. */
+const VOICE_UNREADABLE_PLACEHOLDER = '[голосовое сообщение — не удалось расшифровать]'
 const IMAGE_TYPES = new Set(['image', 'imageMessage', 'documentMessage'])
 const MAX_VOICE_BYTES = 20 * 1024 * 1024
 const MAX_RECEIPT_BYTES = 20 * 1024 * 1024
@@ -1534,30 +1537,66 @@ async function handleCodAddressSubmission(
   return true
 }
 
+/**
+ * Завести лид по входящему — отдельно от остального скрипта.
+ *
+ * Требование: в CRM должно попадать КАЖДОЕ обращение, независимо от того,
+ * ответил ли бот. Поэтому создание лида не должно зависеть ни от расшифровки
+ * голосового, ни от успешной записи сообщения, ни от того, включён ли бот.
+ */
+async function createLeadFromInbound(
+  input: InboundGreenApiMessage,
+  opts: GreenApiTestOptions
+): Promise<void> {
+  // Лаборатория не должна плодить настоящие лиды в воронке.
+  if (opts.dryRun) return
+  try {
+    const supabase = createAdminClient()
+    const externalKey = await resolveGreenApiExternalKey(supabase, input.chatId)
+    if (!externalKey.startsWith('greenapi:')) return
+    await upsertDealFromInbound({
+      externalKey,
+      source: 'whatsapp',
+      customerName: input.authorName,
+      customerPhone: input.chatId,
+    })
+  } catch (error) {
+    console.error('greenapi bot-reply: lead upsert failed', input.chatId, error)
+  }
+}
+
 async function processInboundGreenApiMessageNow(
   input: InboundGreenApiMessage,
   opts: GreenApiTestOptions = {}
 ): Promise<void> {
   const supabase = createAdminClient()
 
-  // Живой баг: transcribeGreenApiVoice кидает исключение при сбое скачивания
-  // или слишком большом файле (не возвращает null, как для просто пустой
-  // расшифровки) — без try/catch это долетало необработанным отклонением
-  // промиса до webhook-роута (там `void processInboundGreenApiMessage(...)`
-  // без .catch), и клиент оставался вообще без ответа, без видимого следа
-  // в логах, привязанного к конкретному сообщению.
-  let transcript: string | null
+  // Расшифровка голосового — УЛУЧШЕНИЕ ответа, а не условие приёма лида.
+  //
+  // Живая потеря данных: раньше оба сбоя расшифровки делали return ДО
+  // сохранения сообщения и создания сделки. Клиент, приславший голосовое,
+  // не попадал в CRM вообще — ни переписки, ни лида, — и менеджер о нём
+  // никогда не узнавал. В проде это срабатывало днями подряд (в логах
+  // «voice transcription failed»).
+  //
+  // Теперь при сбое мы продолжаем: сообщение и лид сохраняются с пометкой,
+  // что это нерасшифрованное голосовое, а от автоответа бот воздержится —
+  // отвечать на неизвестный текст он не должен.
+  let transcript: string | null = null
+  let voiceUnreadable = false
   try {
     transcript = await transcribeGreenApiVoice(input)
   } catch (error) {
     console.error('greenapi bot-reply: voice download/transcription threw', input.providerMessageId, error)
-    return
   }
   if (VOICE_TYPES.has(input.messageType ?? '') && !transcript) {
     console.error('greenapi bot-reply: voice transcription failed', input.providerMessageId)
-    return
+    voiceUnreadable = true
   }
   if (transcript) input = { ...input, text: transcript }
+  if (voiceUnreadable) {
+    input = { ...input, text: input.text?.trim() || VOICE_UNREADABLE_PLACEHOLDER }
+  }
 
   const { data: inserted, error: insertError } = await supabase
     .from('chat_messages')
@@ -1577,7 +1616,12 @@ async function processInboundGreenApiMessageNow(
     )
     .select('id')
   if (insertError) {
+    // Сообщение не сохранилось — но лид всё равно должен появиться в CRM,
+    // иначе обращение пропадёт бесследно (так и вышло 14.09, когда имя
+    // таблицы разошлось с базой). Дальше по скрипту не идём: без истории
+    // бот отвечать не должен.
     console.error('greenapi bot-reply: insert failed', insertError.message)
+    await createLeadFromInbound(input, opts)
     return
   }
   if (!inserted?.length) return // дубль вебхука — уже обработано
@@ -1617,6 +1661,15 @@ async function processInboundGreenApiMessageNow(
       customerName: input.authorName,
       customerPhone: input.chatId,
     })
+  }
+
+  // Голосовое не расшифровалось: лид и сообщение уже сохранены выше, но
+  // отвечать боту нечего — текста он не знает. По скрипту не идём (ответил
+  // бы невпопад), передаём человеку. Это тот самый случай «бот не уверен»,
+  // для которого и предусмотрена передача менеджеру.
+  if (voiceUnreadable) {
+    if (!opts.dryRun) await handOffToManager(supabase, input)
+    return
   }
 
   if (await isManagerControllingChat(supabase, input.chatId)) return

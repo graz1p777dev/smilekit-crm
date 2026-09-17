@@ -49,7 +49,7 @@ async function readSettings(): Promise<{ id: string; extra: Record<string, unkno
 
 export async function getSalaryRules(): Promise<SalaryRule[]> {
   const me = await viewer()
-  if (!me) return []
+  if (!me || !['owner', 'rop', 'accountant'].includes(me.role)) return []
   const settings = await readSettings()
   const raw = settings?.extra?.salaryCommission
   if (!Array.isArray(raw)) return []
@@ -90,9 +90,11 @@ export async function saveSalaryRules(
 // ─── Расчёт ──────────────────────────────────────────────────────────────────
 
 export async function getSalaryCalculation(year: number, month: number): Promise<SalaryCalculation> {
+  // Зарплаты всех сотрудников и выручка компании — не для рядового менеджера.
+  // Бухгалтеру раздел нужен, поэтому он тоже в списке.
   const me = await viewer()
   const empty: SalaryCalculation = { totalRevenue: 0, lines: [], payroll: 0, rules: [] }
-  if (!me) return empty
+  if (!me || !['owner', 'rop', 'accountant'].includes(me.role)) return empty
 
   const admin = createAdminClient()
   const rules = await getSalaryRules()
