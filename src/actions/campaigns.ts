@@ -124,8 +124,20 @@ async function eligibleRecipients(filter?: AudienceFilter): Promise<Recipient[]>
   const dayStart = (day: string) => new Date(`${day}T00:00:00${BISHKEK}`)
   const dayEnd = (day: string) => new Date(`${day}T23:59:59.999${BISHKEK}`)
 
-  const fromDate = dateFilter?.from ? dayStart(dateFilter.from) : null
-  const toDate = dateFilter?.to ? dayEnd(dateFilter.to) : null
+  // Граница бывает двух видов:
+  //   «2026-09-17»              — сутки по Бишкеку целиком (кнопки «за N дней»);
+  //   «2026-09-17T12:29:05.000Z» — точный момент («за сутки», «с прошлой рассылки»).
+  // Для точного момента нельзя расширять до целых суток, иначе «с прошлой
+  // рассылки» захватит людей, которые её уже получили.
+  const DATE_ONLY = /^\d{4}-\d{2}-\d{2}$/
+  const lowerBound = (value: string) => DATE_ONLY.test(value) ? dayStart(value) : new Date(value)
+  const upperBound = (value: string) => DATE_ONLY.test(value) ? dayEnd(value) : new Date(value)
+
+  const fromDate = dateFilter?.from ? lowerBound(dateFilter.from) : null
+  const toDate = dateFilter?.to ? upperBound(dateFilter.to) : null
+  if ((fromDate && Number.isNaN(fromDate.getTime())) || (toDate && Number.isNaN(toDate.getTime()))) {
+    return []
+  }
   const fromTime = fromDate ? fromDate.getTime() : null
   const toTime = toDate ? toDate.getTime() : null
 
@@ -648,4 +660,37 @@ export async function deleteRecurringCampaign(
 
   revalidatePath('/dashboard/campaigns')
   return { success: true }
+}
+
+
+// ─── Прошлая рассылка ────────────────────────────────────────────────────────
+
+/**
+ * С какого момента считать «новых» клиентов для следующей рассылки.
+ *
+ * Берём ВРЕМЯ СОЗДАНИЯ последней неотменённой рассылки, а не время её
+ * отправки. Получатели рассылки фиксируются в момент создания: кто написал
+ * после этого, в неё уже не попал. Если бы граница шла от времени отправки,
+ * клиент, написавший между созданием и отправкой прошлой рассылки, не
+ * получил бы ни ту, ни следующую.
+ *
+ * Отменённые не в счёт: их никто не получил.
+ */
+export async function getLastCampaignMoment(): Promise<
+  { at: string; title: string; scheduledAt: string } | null
+> {
+  const me = await viewer()
+  if (!me || !['owner', 'rop'].includes(me.role)) return null
+
+  const admin = createAdminClient()
+  const { data } = await admin
+    .from('campaigns')
+    .select('title, created_at, scheduled_at')
+    .neq('status', 'cancelled')
+    .order('created_at', { ascending: false })
+    .limit(1)
+    .maybeSingle()
+
+  const row = data as { title: string; created_at: string; scheduled_at: string } | null
+  return row ? { at: row.created_at, title: row.title, scheduledAt: row.scheduled_at } : null
 }

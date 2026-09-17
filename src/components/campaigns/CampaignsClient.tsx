@@ -8,6 +8,7 @@ import {
   addOptOutPhone,
   cancelCampaign,
   getEligibleCountForRange,
+  getLastCampaignMoment,
   removeOptOutPhone,
   scheduleCampaign,
   type CampaignAudience,
@@ -57,7 +58,22 @@ function daysBack(days: number) {
   return new Date(bishkekNow().getTime() - (days - 1) * 86400_000)
 }
 
-type PresetKey = 'today' | 'd2' | 'd3' | 'd5' | 'week'
+type PresetKey = 'today' | 'd2' | 'd3' | 'd5' | 'week' | 'h24' | 'since_last'
+
+/** Момент N часов назад. Вынесено из компонента: Date.now() внутри тела
+ *  компонента линтер React считает нечистым вызовом при рендере. */
+function hoursAgoIso(hours: number) {
+  return new Date(Date.now() - hours * 3600_000).toISOString()
+}
+
+/** Граница в поле периода — это дата (YYYY-MM-DD) или точный момент (ISO). */
+const isExactMoment = (value: string) => value !== '' && !/^\d{4}-\d{2}-\d{2}$/.test(value)
+
+function formatMoment(iso: string) {
+  return new Intl.DateTimeFormat('ru-KG', {
+    day: '2-digit', month: 'short', hour: '2-digit', minute: '2-digit', timeZone: 'Asia/Bishkek',
+  }).format(new Date(iso))
+}
 
 /**
  * Быстрый выбор периода. Верхняя граница у всех — сегодня; отличается только
@@ -69,6 +85,16 @@ const DATE_PRESETS: { key: PresetKey; label: string; from: () => Date }[] = [
   { key: 'd3',    label: 'За 3 дня',      from: () => daysBack(3) },
   { key: 'd5',    label: 'За 5 дней',     from: () => daysBack(5) },
   { key: 'week',  label: 'За эту неделю', from: weekStart },
+]
+
+/**
+ * Кнопки с ТОЧНЫМ временем, а не целыми сутками. Нижняя граница — момент,
+ * верхней нет: получатели фиксируются при создании рассылки, поэтому «до
+ * сейчас» и есть «до времени этой рассылки».
+ */
+const EXACT_PRESETS: { key: PresetKey; label: string }[] = [
+  { key: 'h24',        label: 'За сутки' },
+  { key: 'since_last', label: 'С прошлой рассылки' },
 ]
 
 function defaultSchedule() {
@@ -97,6 +123,43 @@ export default function CampaignsClient({ initialData }: { initialData: Campaign
   // понедельник подсвечивались обе: начало недели совпадает с сегодняшним
   // днём, диапазоны получаются одинаковые. Храним выбор явно.
   const [preset, setPreset] = useState<PresetKey | null>(null)
+  // Для «С прошлой рассылки» — от какой именно рассылки считаем, чтобы
+  // подписать это под кнопками.
+  const [sinceCampaign, setSinceCampaign] = useState<string | null>(null)
+  const [presetLoading, setPresetLoading] = useState(false)
+
+  function clearPeriod() {
+    setDateFrom('')
+    setDateTo('')
+    setPreset(null)
+    setSinceCampaign(null)
+  }
+
+  async function applyExactPreset(key: PresetKey) {
+    if (key === 'h24') {
+      setDateFrom(hoursAgoIso(24))
+      setDateTo('')
+      setSinceCampaign(null)
+      setPreset('h24')
+      return
+    }
+    // since_last: момент берём с сервера — там же решается, какая рассылка
+    // считается «прошлой» (отменённые не в счёт).
+    setPresetLoading(true)
+    try {
+      const last = await getLastCampaignMoment()
+      if (!last) {
+        toast.error('Прошлых рассылок нет — считать не от чего')
+        return
+      }
+      setDateFrom(last.at)
+      setDateTo('')
+      setSinceCampaign(last.title)
+      setPreset('since_last')
+    } finally {
+      setPresetLoading(false)
+    }
+  }
   const [audience, setAudience] = useState<CampaignAudience>('not_purchased')
   const [eligibleCount, setEligibleCount] = useState<number | null>(initialData.eligibleCount)
   const requestSeq = useRef(0)
@@ -354,8 +417,9 @@ export default function CampaignsClient({ initialData }: { initialData: Campaign
                 {/* Быстрый выбор периода. У выбранного появляется крестик —
                     им выбор снимается, не трогая остальные кнопки. */}
                 <div className="flex flex-wrap items-center gap-2">
-                  {DATE_PRESETS.map((item) => {
+                  {[...DATE_PRESETS, ...EXACT_PRESETS].map((item) => {
                     const active = preset === item.key
+                    const exact = EXACT_PRESETS.some((e) => e.key === item.key)
                     return (
                       <Button
                         key={item.key}
@@ -363,9 +427,17 @@ export default function CampaignsClient({ initialData }: { initialData: Campaign
                         variant={active ? 'default' : 'outline'}
                         size="sm"
                         className={active ? 'pr-1.5' : undefined}
+                        disabled={presetLoading && item.key === 'since_last'}
                         onClick={() => {
-                          setDateFrom(asDateInput(item.from()))
+                          if (exact) {
+                            void applyExactPreset(item.key)
+                            return
+                          }
+                          const dayPreset = DATE_PRESETS.find((d) => d.key === item.key)
+                          if (!dayPreset) return
+                          setDateFrom(asDateInput(dayPreset.from()))
                           setDateTo(asDateInput(bishkekNow()))
+                          setSinceCampaign(null)
                           setPreset(item.key)
                         }}
                       >
@@ -382,17 +454,13 @@ export default function CampaignsClient({ initialData }: { initialData: Campaign
                               // сработал бы и сам пресет, и период выбрался бы
                               // заново вместо того, чтобы сняться.
                               event.stopPropagation()
-                              setDateFrom('')
-                              setDateTo('')
-                              setPreset(null)
+                              clearPeriod()
                             }}
                             onKeyDown={(event) => {
                               if (event.key !== 'Enter' && event.key !== ' ') return
                               event.preventDefault()
                               event.stopPropagation()
-                              setDateFrom('')
-                              setDateTo('')
-                              setPreset(null)
+                              clearPeriod()
                             }}
                           >
                             <X className="size-3" />
@@ -402,19 +470,39 @@ export default function CampaignsClient({ initialData }: { initialData: Campaign
                     )
                   })}
                 </div>
-                <div className="flex items-center gap-2">
-                  <Input type="date" value={dateFrom} onChange={(event) => { setDateFrom(event.target.value); setPreset(null) }} aria-label="От даты" />
-                  <span className="text-sm" style={{ color: 'var(--ink-3)' }}>—</span>
-                  <Input type="date" value={dateTo} onChange={(event) => { setDateTo(event.target.value); setPreset(null) }} aria-label="До даты" />
-                  {(dateFrom || dateTo) && (
-                    <Button type="button" variant="ghost" size="sm" onClick={() => { setDateFrom(''); setDateTo(''); setPreset(null) }}>
+
+                {isExactMoment(dateFrom) ? (
+                  // Поле type="date" точное время показать не умеет — вместо
+                  // пустых полей пишем период словами.
+                  <div className="flex items-center justify-between gap-2 rounded-xl px-3 py-2.5 text-sm" style={{ background: 'var(--surface-2)' }}>
+                    <span style={{ color: 'var(--ink)' }}>
+                      Клиенты, писавшие <strong>с {formatMoment(dateFrom)}</strong> по сейчас
+                      {sinceCampaign && (
+                        <span className="block text-xs" style={{ color: 'var(--ink-3)' }}>
+                          от создания рассылки «{sinceCampaign}»
+                        </span>
+                      )}
+                    </span>
+                    <Button type="button" variant="ghost" size="sm" onClick={clearPeriod}>
                       Сбросить
                     </Button>
-                  )}
-                </div>
+                  </div>
+                ) : (
+                  <div className="flex items-center gap-2">
+                    <Input type="date" value={dateFrom} onChange={(event) => { setDateFrom(event.target.value); setPreset(null); setSinceCampaign(null) }} aria-label="От даты" />
+                    <span className="text-sm" style={{ color: 'var(--ink-3)' }}>—</span>
+                    <Input type="date" value={dateTo} onChange={(event) => { setDateTo(event.target.value); setPreset(null); setSinceCampaign(null) }} aria-label="До даты" />
+                    {(dateFrom || dateTo) && (
+                      <Button type="button" variant="ghost" size="sm" onClick={clearPeriod}>
+                        Сбросить
+                      </Button>
+                    )}
+                  </div>
+                )}
                 <p className="text-xs" style={{ color: 'var(--ink-3)' }}>
                   Только WhatsApp-канал. Пусто — без фильтра по дате.
-                  Период считается по суткам Бишкека целиком, с 00:00 до 23:59.
+                  Кнопки «за N дней» берут сутки Бишкека целиком, с 00:00 до 23:59.
+                  «За сутки» и «С прошлой рассылки» считают от точного времени.
                   {preset === 'week' && dateFrom === dateTo && ' Сегодня понедельник — неделя началась сегодня, поэтому период совпадает с «за сегодня».'}
                 </p>
               </div>
