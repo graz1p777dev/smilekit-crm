@@ -208,18 +208,48 @@ async function poll() {
  * отправки. При создании список был только «на тот момент» — теперь, когда
  * время пришло, подбираем заново тем же фильтром (те же правила: купившие,
  * стоп-список, менеджер в переписке, уже получившие сегодня).
+ *
+ * Пересчёт — РОВНО ОДИН РАЗ. Живой инцидент 18.09: сервер перезапустился
+ * посреди отправки (деплой), рассылка стартовала заново, пересчёт удалил 237
+ * ещё не отправленных, а новый список не записался — он пересёкся с уже
+ * отправленными (UNIQUE campaign_id+deal_id), и рассылка закрылась на 130/367.
+ * Поэтому: фильтр снимается сразу после пересчёта, а тех, кто уже есть в
+ * рассылке (в любом статусе), повторно не добавляем.
  */
 async function refreshRecipients(campaignId: string, filter: AudienceFilter) {
   const admin = createAdminClient()
   const recipients = await eligibleRecipientsForRun(filter)
-  await admin.from('campaign_recipients').delete().eq('campaign_id', campaignId).eq('status', 'pending')
-  if (recipients.length) {
+  const { data: kept } = await admin
+    .from('campaign_recipients')
+    .select('deal_id')
+    .eq('campaign_id', campaignId)
+    .neq('status', 'pending')
+  const keptDeals = new Set(((kept ?? []) as { deal_id: string }[]).map((row) => String(row.deal_id)))
+  const fresh = recipients.filter((row) => !keptDeals.has(String(row.deal_id)))
+
+  // Сначала новый список, потом удаление старого ожидающего: если вставка не
+  // удастся, старые получатели останутся в очереди, а не пропадут.
+  await admin.from('campaign_recipients').update({ status: 'skipped', error: 'пересчёт получателей' })
+    .eq('campaign_id', campaignId).eq('status', 'pending')
+  if (fresh.length) {
     const { error } = await admin
       .from('campaign_recipients')
-      .insert(recipients.map((row) => ({ ...row, campaign_id: campaignId })))
-    if (error) console.error('campaign refresh recipients failed', campaignId, error.message)
+      .upsert(fresh.map((row) => ({ ...row, campaign_id: campaignId, status: 'pending', error: null })), {
+        onConflict: 'campaign_id,deal_id',
+      })
+    if (error) {
+      console.error('campaign refresh recipients failed', campaignId, error.message)
+      await admin.from('campaign_recipients').update({ status: 'pending', error: null })
+        .eq('campaign_id', campaignId).eq('status', 'skipped').eq('error', 'пересчёт получателей')
+      await admin.from('campaigns').update({ refresh_filter: null }).eq('id', campaignId)
+      return
+    }
   }
-  await admin.from('campaigns').update({ recipient_count: recipients.length }).eq('id', campaignId)
+  await admin.from('campaign_recipients').delete()
+    .eq('campaign_id', campaignId).eq('status', 'skipped').eq('error', 'пересчёт получателей')
+  await admin.from('campaigns')
+    .update({ recipient_count: keptDeals.size + fresh.length, refresh_filter: null })
+    .eq('id', campaignId)
 }
 
 export function startCampaignScheduler() {
