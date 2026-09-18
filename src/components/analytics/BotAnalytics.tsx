@@ -7,8 +7,14 @@
 // модели данных (approve/reject лидов) — строим аналитику из того, что
 // реально есть: chat_messages (переписка) и orders (заказы).
 
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useState } from 'react'
+import {
+  BarChart3, Bot, Clock, Handshake, Headset, HelpCircle, MessageCircle, MessagesSquare, ShoppingBag, Target, Wallet,
+} from 'lucide-react'
 import { createClient } from '@/lib/supabase/client'
+import {
+  Bars, Card, EmptyState, ErrorState, INK_2, INK_3, Kpi, KpiGrid, LINE, SERIES, TabBody, TabSkeleton, num,
+} from './viz'
 
 const LOOKBACK_DAYS = 30
 const BISHKEK_TZ = 'Asia/Bishkek'
@@ -16,7 +22,7 @@ const BISHKEK_TZ = 'Asia/Bishkek'
 type MessageRow = { chat_id: string; sender: string; text: string; created_at: string }
 type OrderRow = { total_amount: number | null; currency: string | null }
 
-type Analytics = {
+export type Analytics = {
   conversations: number
   totalClient: number
   totalBot: number
@@ -106,15 +112,6 @@ function computeAnalytics(messages: MessageRow[], orders: OrderRow[]): Analytics
   }
 }
 
-function Card({ title, children }: { title: string; children: React.ReactNode }) {
-  return (
-    <div className="rounded-2xl bg-white p-5">
-      <h2 className="font-semibold text-sm mb-4" style={{ color: '#1b1517' }}>{title}</h2>
-      {children}
-    </div>
-  )
-}
-
 export default function BotAnalytics() {
   const [data, setData] = useState<Analytics | null>(null)
   const [loading, setLoading] = useState(true)
@@ -145,93 +142,79 @@ export default function BotAnalytics() {
       .finally(() => setLoading(false))
   }, [])
 
-  const maxHour = useMemo(() => Math.max(...(data?.hourly.map((h) => h.count) ?? [1]), 1), [data])
-  const maxDaily = useMemo(
-    () => Math.max(...(data?.daily.flatMap((d) => [d.client, d.bot]) ?? [1]), 1),
-    [data]
-  )
-  const maxTopic = useMemo(() => Math.max(...(data?.topics.map((t) => t.count) ?? [1]), 1), [data])
+  if (loading) return <TabSkeleton text="Загрузка аналитики…" tiles={8} blocks={['chart', 'chart', 'bars']} />
+  if (error) return <ErrorState text={error} />
+  if (!data) return <div className="p-4 md:p-8"><EmptyState icon={Bot} text="Нет данных" /></div>
+  return <BotView data={data} />
+}
 
-  if (loading) return <p className="p-8 text-sm" style={{ color: '#6b6063' }}>Загрузка аналитики...</p>
-  if (error) return <p className="p-8 text-sm" style={{ color: '#b91c1c' }}>Ошибка: {error}</p>
-  if (!data) return <p className="p-8 text-sm" style={{ color: '#6b6063' }}>Нет данных</p>
+export function BotView({ data }: { data: Analytics }) {
+  const maxHour = Math.max(...data.hourly.map((h) => h.count), 1)
+  const maxDaily = Math.max(...data.daily.flatMap((d) => [d.client, d.bot]), 1)
 
   const takeoverRate = data.conversations ? Math.round((data.takeoverChats / data.conversations) * 100) : 0
   const conversionRate = data.conversations ? Math.round((data.ordersCount / data.conversations) * 100) : 0
 
-  const statCards = [
-    { label: `Диалогов за ${LOOKBACK_DAYS} дн.`, value: data.conversations, color: '#5115a4' },
-    { label: 'Сообщений клиентов', value: data.totalClient, color: '#5115a4' },
-    { label: 'Ответов бота', value: data.totalBot, color: '#047857' },
-    { label: 'Ответов менеджера', value: data.totalOperator, color: '#b45309' },
-    { label: 'Перехвачено менеджером', value: `${data.takeoverChats} (${takeoverRate}%)`, color: '#b91c1c' },
-    { label: 'Заказов', value: data.ordersCount, color: '#5115a4' },
-    { label: 'Конверсия в заказ', value: `${conversionRate}%`, color: '#047857' },
-    { label: 'Сумма заказов', value: `${data.ordersSum.toLocaleString('ru-RU')} сом`, color: '#5115a4' },
-  ]
+  const topics = data.topics.filter((t) => t.count > 0)
 
   return (
-    <div className="p-4 md:p-8 flex flex-col gap-5">
-      <div className="grid gap-3" style={{ gridTemplateColumns: 'repeat(auto-fit, minmax(150px, 1fr))' }}>
-        {statCards.map((s) => (
-          <div key={s.label} className="rounded-2xl bg-white px-4 py-3.5">
-            <div className="text-xl font-bold" style={{ color: s.color }}>
-              {typeof s.value === 'number' ? s.value.toLocaleString('ru-RU') : s.value}
-            </div>
-            <div className="text-xs mt-0.5" style={{ color: '#6b6063' }}>{s.label}</div>
-          </div>
-        ))}
-      </div>
+    <TabBody>
+      <KpiGrid>
+        <Kpi hero icon={MessagesSquare} label={`Диалогов за ${LOOKBACK_DAYS} дн.`} value={num(data.conversations)} />
+        <Kpi icon={MessageCircle} label="Сообщений клиентов" value={num(data.totalClient)} />
+        <Kpi icon={Bot} label="Ответов бота" value={num(data.totalBot)} />
+        <Kpi icon={Headset} label="Ответов менеджера" value={num(data.totalOperator)} />
+        <Kpi icon={Handshake} label="Перехвачено менеджером" value={`${num(data.takeoverChats)} (${takeoverRate}%)`} />
+        <Kpi icon={ShoppingBag} label="Заказов" value={num(data.ordersCount)} />
+        <Kpi icon={Target} tone="good" label="Конверсия в заказ" value={`${conversionRate}%`} />
+        <Kpi icon={Wallet} label="Сумма заказов" value={`${data.ordersSum.toLocaleString('ru-RU')} сом`} />
+      </KpiGrid>
 
-      <Card title={`Сообщения по дням (последние ${LOOKBACK_DAYS} дн.)`}>
-        <div className="flex items-end gap-1" style={{ height: 140 }}>
-          {data.daily.map((d) => (
-            <div key={d.date} className="flex-1 flex flex-col items-center justify-end h-full gap-0.5" title={`${d.date}: клиент ${d.client}, бот ${d.bot}`}>
-              <div className="w-full flex flex-col justify-end gap-0.5" style={{ height: '100%' }}>
-                <div className="w-full rounded-t" style={{ height: `${Math.max((d.bot / maxDaily) * 100, d.bot ? 2 : 0)}%`, backgroundColor: '#047857' }} />
-                <div className="w-full rounded-t" style={{ height: `${Math.max((d.client / maxDaily) * 100, d.client ? 2 : 0)}%`, backgroundColor: '#5115a4' }} />
-              </div>
+      <Card icon={BarChart3} title={`Сообщения по дням (последние ${LOOKBACK_DAYS} дн.)`}>
+        {data.daily.length === 0 ? <EmptyState icon={MessagesSquare} text="Нет сообщений" /> : (
+          <>
+            <div className="flex items-end gap-[2px]" style={{ height: 140, borderBottom: `1px solid ${LINE}` }}>
+              {data.daily.map((d) => (
+                <div key={d.date} className="flex h-full min-w-0 flex-1 flex-col items-center justify-end" title={`${d.date}: клиент ${d.client}, бот ${d.bot}`}>
+                  <div className="flex h-full w-full max-w-6 flex-col justify-end gap-[2px]">
+                    <div className="w-full rounded-t-[4px]" style={{ height: `${Math.max((d.bot / maxDaily) * 100, d.bot ? 2 : 0)}%`, backgroundColor: SERIES[1] }} />
+                    <div className="w-full" style={{ height: `${Math.max((d.client / maxDaily) * 100, d.client ? 2 : 0)}%`, backgroundColor: SERIES[0] }} />
+                  </div>
+                </div>
+              ))}
             </div>
-          ))}
-        </div>
-        <div className="flex gap-4 mt-3 text-xs" style={{ color: '#6b6063' }}>
-          <span><span className="inline-block w-2.5 h-2.5 rounded-sm mr-1" style={{ backgroundColor: '#5115a4' }} />клиент</span>
-          <span><span className="inline-block w-2.5 h-2.5 rounded-sm mr-1" style={{ backgroundColor: '#047857' }} />бот</span>
-        </div>
+            <div className="mt-3 flex gap-4 text-xs" style={{ color: INK_2 }}>
+              <span className="flex items-center gap-1.5"><span className="size-2.5 rounded-full" style={{ backgroundColor: SERIES[0] }} />клиент</span>
+              <span className="flex items-center gap-1.5"><span className="size-2.5 rounded-full" style={{ backgroundColor: SERIES[1] }} />бот</span>
+            </div>
+          </>
+        )}
       </Card>
 
-      <div className="grid gap-5 md:grid-cols-2">
-        <Card title="Активность клиентов по часам (Бишкек)">
-          <div className="flex items-end gap-0.5" style={{ height: 120 }}>
+      <div className="grid items-start gap-4 md:grid-cols-2 md:gap-5">
+        <Card icon={Clock} title="Активность клиентов по часам (Бишкек)">
+          <div className="flex items-end gap-[2px]" style={{ height: 120, borderBottom: `1px solid ${LINE}` }}>
             {data.hourly.map((h) => (
-              <div key={h.hour} className="flex-1 flex flex-col items-center justify-end h-full" title={`${h.hour}:00 — ${h.count} сообщ.`}>
-                <div className="w-full rounded-t" style={{
-                  height: `${Math.max((h.count / maxHour) * 100, 2)}%`,
-                  backgroundColor: '#5115a4', opacity: h.count > 0 ? 1 : 0.15,
-                }} />
-                {h.hour % 6 === 0 && <span className="text-[9px] mt-1" style={{ color: '#7d7174' }}>{h.hour}</span>}
+              <div key={h.hour} className="flex h-full min-w-0 flex-1 flex-col items-center justify-end" title={`${h.hour}:00 — ${h.count} сообщ.`}>
+                {h.count > 0 && (
+                  <div className="w-full max-w-6 rounded-t-[4px]" style={{ height: `${Math.max((h.count / maxHour) * 100, 2)}%`, backgroundColor: SERIES[0] }} />
+                )}
               </div>
+            ))}
+          </div>
+          <div className="mt-1 flex text-[10px]" style={{ color: INK_3 }}>
+            {data.hourly.map((h) => (
+              <span key={h.hour} className="min-w-0 flex-1 text-center">{h.hour % 6 === 0 ? h.hour : ''}</span>
             ))}
           </div>
         </Card>
 
-        <Card title="О чём спрашивают клиенты">
-          {data.topics.every((t) => t.count === 0) && <p className="text-sm" style={{ color: '#6b6063' }}>Нет данных</p>}
-          <div className="flex flex-col gap-2.5">
-            {data.topics.filter((t) => t.count > 0).map((t) => (
-              <div key={t.label}>
-                <div className="flex justify-between text-xs mb-1">
-                  <span style={{ color: '#1b1517' }}>{t.label}</span>
-                  <span style={{ color: '#6b6063' }}>{t.count}</span>
-                </div>
-                <div className="h-1.5 rounded-full overflow-hidden" style={{ backgroundColor: '#fdfbfb' }}>
-                  <div className="h-full rounded-full" style={{ width: `${(t.count / maxTopic) * 100}%`, backgroundColor: '#5115a4' }} />
-                </div>
-              </div>
-            ))}
-          </div>
+        <Card icon={HelpCircle} title="О чём спрашивают клиенты">
+          {topics.length === 0
+            ? <EmptyState icon={HelpCircle} text="Нет данных" />
+            : <Bars items={topics.map((t) => ({ label: t.label, value: t.count }))} />}
         </Card>
       </div>
-    </div>
+    </TabBody>
   )
 }
