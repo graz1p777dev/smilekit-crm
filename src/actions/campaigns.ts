@@ -6,7 +6,7 @@ import { createClient } from '@/lib/supabase/server'
 import { createAdminClient } from '@/lib/supabase/admin'
 import { voiceById } from '@/config/voice-messages'
 import { BULK_BROADCAST_AUTHOR_MARKER } from '@/lib/greenapi/bot-reply'
-import { isManagerActiveInChat } from '@/lib/campaigns/manager-activity'
+import { isManagerActiveInChat, MANAGER_ACTIVE_WINDOW_MS } from '@/lib/campaigns/manager-activity'
 
 export interface CampaignRow {
   id: string
@@ -184,7 +184,14 @@ async function selectRecipients(
     // в логах прода «The destination stream closed early».
     fetchAllRows<{ chat_id: string; created_at: string; author_name: string | null }>(
       admin, 'chat_messages', 'chat_id, created_at, author_name',
-      (q) => q.eq('sender', 'operator').order('id', { ascending: false })
+      // Рассылку останавливает только работа менеджера за последние
+      // MANAGER_ACTIVE_WINDOW_MS (см. isManagerActiveInChat) — более старые
+      // сообщения на ответ не влияют. Раньше здесь читалась вся история
+      // (~20 тыс. строк, 5–8 с на каждый пересчёт аудитории), и страница
+      // рассылок стояла в очереди за этим запросом.
+      (q) => q.eq('sender', 'operator')
+        .gte('created_at', new Date(Date.now() - MANAGER_ACTIVE_WINDOW_MS).toISOString())
+        .order('id', { ascending: false })
     ),
     admin.from('campaign_opt_outs').select('phone'),
     fetchAllRows<{ chat_id: string; bot_enabled: boolean; updated_at: string }>(
@@ -731,37 +738,4 @@ export async function deleteRecurringCampaign(
 
   revalidatePath('/dashboard/campaigns')
   return { success: true }
-}
-
-
-// ─── Прошлая рассылка ────────────────────────────────────────────────────────
-
-/**
- * С какого момента считать «новых» клиентов для следующей рассылки.
- *
- * Берём ВРЕМЯ СОЗДАНИЯ последней неотменённой рассылки, а не время её
- * отправки. Получатели рассылки фиксируются в момент создания: кто написал
- * после этого, в неё уже не попал. Если бы граница шла от времени отправки,
- * клиент, написавший между созданием и отправкой прошлой рассылки, не
- * получил бы ни ту, ни следующую.
- *
- * Отменённые не в счёт: их никто не получил.
- */
-export async function getLastCampaignMoment(): Promise<
-  { at: string; title: string; scheduledAt: string } | null
-> {
-  const me = await viewer()
-  if (!me || !['owner', 'rop'].includes(me.role)) return null
-
-  const admin = createAdminClient()
-  const { data } = await admin
-    .from('campaigns')
-    .select('title, created_at, scheduled_at')
-    .neq('status', 'cancelled')
-    .order('created_at', { ascending: false })
-    .limit(1)
-    .maybeSingle()
-
-  const row = data as { title: string; created_at: string; scheduled_at: string } | null
-  return row ? { at: row.created_at, title: row.title, scheduledAt: row.scheduled_at } : null
 }

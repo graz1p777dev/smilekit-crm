@@ -44,3 +44,6 @@ next-env.d.ts
 # local-only agent docs (не деплоить)
 AGENTS.md
 supabase/.temp/
+
+# Рабочие копии агентов Claude Code — не код приложения, в деплой не идут
+.claude/worktrees/

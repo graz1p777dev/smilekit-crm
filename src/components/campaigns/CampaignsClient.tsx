@@ -9,7 +9,6 @@ import {
   cancelCampaign,
   getAudiencePreview,
   type AudienceExclusions,
-  getLastCampaignMoment,
   removeOptOutPhone,
   scheduleCampaign,
   type CampaignAudience,
@@ -133,7 +132,6 @@ export default function CampaignsClient({ initialData }: { initialData: Campaign
   // Для «С прошлой рассылки» — от какой именно рассылки считаем, чтобы
   // подписать это под кнопками.
   const [sinceCampaign, setSinceCampaign] = useState<string | null>(null)
-  const [presetLoading, setPresetLoading] = useState(false)
 
   function clearPeriod() {
     setDateFrom('')
@@ -142,7 +140,7 @@ export default function CampaignsClient({ initialData }: { initialData: Campaign
     setSinceCampaign(null)
   }
 
-  async function applyExactPreset(key: PresetKey) {
+  function applyExactPreset(key: PresetKey) {
     if (key === 'h24') {
       setDateFrom(hoursAgoIso(24))
       setDateTo('')
@@ -150,22 +148,23 @@ export default function CampaignsClient({ initialData }: { initialData: Campaign
       setPreset('h24')
       return
     }
-    // since_last: момент берём с сервера — там же решается, какая рассылка
-    // считается «прошлой» (отменённые не в счёт).
-    setPresetLoading(true)
-    try {
-      const last = await getLastCampaignMoment()
-      if (!last) {
-        toast.error('Прошлых рассылок нет — считать не от чего')
-        return
-      }
-      setDateFrom(last.at)
-      setDateTo('')
-      setSinceCampaign(last.title)
-      setPreset('since_last')
-    } finally {
-      setPresetLoading(false)
+    // since_last: прошлая рассылка — самая свежая неотменённая из списка,
+    // и берём время её СОЗДАНИЯ, а не отправки: получатели фиксируются при
+    // создании, кто написал позже — в неё не попал и должен попасть сюда.
+    // который уже пришёл со страницей. Раньше за ней ходили на сервер, и
+    // кнопка стояла серой, пока в очереди не досчитается пересчёт аудитории
+    // (server actions со страницы выполняются по одному).
+    const last = initialData.campaigns
+      .filter((c) => c.status !== 'cancelled')
+      .reduce<CampaignRow | null>((best, c) => (!best || c.created_at > best.created_at ? c : best), null)
+    if (!last) {
+      toast.error('Прошлых рассылок нет — считать не от чего')
+      return
     }
+    setDateFrom(last.created_at)
+    setDateTo('')
+    setSinceCampaign(last.title)
+    setPreset('since_last')
   }
   const [audience, setAudience] = useState<CampaignAudience>('not_purchased')
   const [eligibleCount, setEligibleCount] = useState<number | null>(initialData.eligibleCount)
@@ -456,10 +455,9 @@ export default function CampaignsClient({ initialData }: { initialData: Campaign
                         variant={active ? 'default' : 'outline'}
                         size="sm"
                         className={active ? 'pr-1.5' : undefined}
-                        disabled={presetLoading && item.key === 'since_last'}
                         onClick={() => {
                           if (exact) {
-                            void applyExactPreset(item.key)
+                            applyExactPreset(item.key)
                             return
                           }
                           const dayPreset = DATE_PRESETS.find((d) => d.key === item.key)
