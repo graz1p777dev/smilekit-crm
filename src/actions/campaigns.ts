@@ -405,6 +405,8 @@ const CampaignSchema = z.object({
   audience: z.enum(['not_purchased', 'purchased', 'all']).optional(),
   includeManagerChats: z.boolean().optional(),
   skipReachedSince: z.string().optional(),
+  /** Период «С прошлой рассылки»: до времени отправки, получатели — в момент отправки. */
+  refreshAtSend: z.boolean().optional(),
 }).refine(
   (data) => data.message.length > 0 || Boolean(data.voiceId),
   { message: 'Нужен текст или голосовое' }
@@ -421,14 +423,20 @@ export async function scheduleCampaign(input: unknown): Promise<{ success: true;
   if (parsed.data.voiceId && !voice) return { success: false, error: 'Такого голосового нет' }
   const scheduledAt = new Date(parsed.data.scheduledAt)
   if (scheduledAt.getTime() < Date.now() - 60_000) return { success: false, error: 'Время отправки уже прошло' }
-  const recipients = await eligibleRecipients({
+  const refreshAtSend = Boolean(parsed.data.refreshAtSend)
+  const filter: AudienceFilter = {
     from: parsed.data.dateFrom,
-    to: parsed.data.dateTo,
+    // При пересчёте в момент отправки период идёт до времени отправки, а не
+    // до того, что прислал браузер: иначе он разошёлся бы с полем «Дата и время».
+    to: refreshAtSend ? scheduledAt.toISOString() : parsed.data.dateTo,
     audience: parsed.data.audience,
     includeManagerChats: parsed.data.includeManagerChats,
     skipReachedSince: parsed.data.skipReachedSince,
-  })
-  if (!recipients.length) return { success: false, error: 'Нет клиентов под выбранные фильтры' }
+  }
+  const recipients = await eligibleRecipients(filter)
+  // С пересчётом при отправке пустой список сейчас — не ошибка: клиенты ещё
+  // могут написать до времени отправки.
+  if (!recipients.length && !refreshAtSend) return { success: false, error: 'Нет клиентов под выбранные фильтры' }
 
   const admin = createAdminClient()
   // voice_id кладём в insert ТОЛЬКО для голосовой рассылки. Колонки может
@@ -442,6 +450,7 @@ export async function scheduleCampaign(input: unknown): Promise<{ success: true;
     scheduled_at: scheduledAt.toISOString(),
     recipient_count: recipients.length,
     created_by: me.id,
+    ...(refreshAtSend ? { refresh_filter: filter } : {}),
   }).select('id').single()
   if (error || !campaign) {
     // Пока миграция 042_campaign_voice.sql не применена, в базе нет ни
@@ -456,9 +465,9 @@ export async function scheduleCampaign(input: unknown): Promise<{ success: true;
     }
     return { success: false, error: raw || 'Не удалось создать рассылку' }
   }
-  const { error: recipientError } = await admin.from('campaign_recipients').insert(
-    recipients.map((row) => ({ ...row, campaign_id: campaign.id }))
-  )
+  const { error: recipientError } = recipients.length
+    ? await admin.from('campaign_recipients').insert(recipients.map((row) => ({ ...row, campaign_id: campaign.id })))
+    : { error: null }
   if (recipientError) {
     await admin.from('campaigns').delete().eq('id', campaign.id)
     return { success: false, error: recipientError.message }

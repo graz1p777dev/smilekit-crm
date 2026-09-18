@@ -239,18 +239,25 @@ export default function CampaignsClient({ initialData }: { initialData: Campaign
         // реальные получатели разошлись бы.
         includeManagerChats,
         skipReachedSince: skipReachedToday ? bishkekTodayStartIso() : undefined,
+        // «С прошлой рассылки» — до времени отправки: сервер сохранит фильтр
+        // и подберёт получателей заново, когда рассылка стартует.
+        refreshAtSend: preset === 'since_last',
       })
       if (!result.success) {
         toast.error(result.error)
         return
       }
-      toast.success(`Рассылка запланирована для ${result.count} клиентов`)
+      toast.success(preset === 'since_last'
+        ? `Рассылка запланирована. Сейчас подходят ${result.count}, список обновится в момент отправки`
+        : `Рассылка запланирована для ${result.count} клиентов`)
       setTitle('')
       setMessage('')
       setVoiceId('')
       setScheduledAt(defaultSchedule())
       setDateFrom('')
       setDateTo('')
+      setPreset(null)
+      setSinceCampaign(null)
       setAudience('not_purchased')
       router.refresh()
     })
@@ -316,14 +323,16 @@ export default function CampaignsClient({ initialData }: { initialData: Campaign
       : Number.isNaN(new Date(scheduledAt).getTime())
         ? 'Некорректная дата'
         : null,
-    audience: eligibleCount === null
+    // «С прошлой рассылки» пересчитывается в момент отправки: ноль сейчас —
+    // не ошибка, клиенты ещё успеют написать.
+    audience: eligibleCount === null || preset === 'since_last'
       ? null
       : eligibleCount === 0
         ? 'Под выбранные фильтры не попал ни один клиент'
         : null,
   }
   const valid = !problems.title && !problems.message && !problems.scheduledAt
-    && !problems.audience && (eligibleCount ?? 0) > 0
+    && !problems.audience && eligibleCount !== null && (eligibleCount > 0 || preset === 'since_last')
 
   // Красную рамку показываем только после первой попытки отправить: подсвечивать
   // пустые поля сразу при открытии формы — это ругань на пустом месте.
@@ -503,11 +512,18 @@ export default function CampaignsClient({ initialData }: { initialData: Campaign
                   // пустых полей пишем период словами.
                   <div className="flex items-center justify-between gap-2 rounded-xl px-3 py-2.5 text-sm" style={{ background: 'var(--surface-2)' }}>
                     <span style={{ color: 'var(--ink)' }}>
-                      Клиенты, писавшие <strong>с {formatMoment(dateFrom)}</strong> по сейчас
-                      {sinceCampaign && (
-                        <span className="block text-xs" style={{ color: 'var(--ink-3)' }}>
-                          от создания рассылки «{sinceCampaign}»
-                        </span>
+                      {preset === 'since_last' ? (
+                        <>
+                          Клиенты, писавшие <strong>с {formatMoment(dateFrom)}</strong> по{' '}
+                          <strong>{Number.isNaN(new Date(scheduledAt).getTime()) ? 'время отправки' : formatMoment(new Date(scheduledAt).toISOString())}</strong>{' '}
+                          (время отправки)
+                          <span className="block text-xs" style={{ color: 'var(--ink-3)' }}>
+                            {sinceCampaign && <>от создания рассылки «{sinceCampaign}». </>}
+                            Кто напишет до отправки — тоже получит: список получателей пересчитается в момент отправки.
+                          </span>
+                        </>
+                      ) : (
+                        <>Клиенты, писавшие <strong>с {formatMoment(dateFrom)}</strong> по сейчас</>
                       )}
                     </span>
                     <Button type="button" variant="ghost" size="sm" onClick={clearPeriod}>

@@ -2,6 +2,7 @@ import { sendGreenApiMessage, sendGreenApiVoice, toGreenApiChatId } from '@/lib/
 import { smilekitBotFetch } from '@/lib/smilekit-bot-api'
 import { createAdminClient } from '@/lib/supabase/admin'
 import { runDueRecurringCampaigns } from './recurring'
+import { eligibleRecipientsForRun, type AudienceFilter } from '@/actions/campaigns'
 import { voiceById, type VoiceMessage } from '@/config/voice-messages'
 
 /**
@@ -196,7 +197,29 @@ async function poll() {
     .eq('status', 'scheduled')
     .select('*')
     .maybeSingle()
-  if (claimed) await processCampaign(claimed as Campaign)
+  if (!claimed) return
+  const refreshFilter = (claimed as { refresh_filter?: AudienceFilter | null }).refresh_filter
+  if (refreshFilter) await refreshRecipients(claimed.id as string, refreshFilter)
+  await processCampaign(claimed as Campaign)
+}
+
+/**
+ * Рассылка «С прошлой рассылки» берёт клиентов, писавших до времени
+ * отправки. При создании список был только «на тот момент» — теперь, когда
+ * время пришло, подбираем заново тем же фильтром (те же правила: купившие,
+ * стоп-список, менеджер в переписке, уже получившие сегодня).
+ */
+async function refreshRecipients(campaignId: string, filter: AudienceFilter) {
+  const admin = createAdminClient()
+  const recipients = await eligibleRecipientsForRun(filter)
+  await admin.from('campaign_recipients').delete().eq('campaign_id', campaignId).eq('status', 'pending')
+  if (recipients.length) {
+    const { error } = await admin
+      .from('campaign_recipients')
+      .insert(recipients.map((row) => ({ ...row, campaign_id: campaignId })))
+    if (error) console.error('campaign refresh recipients failed', campaignId, error.message)
+  }
+  await admin.from('campaigns').update({ recipient_count: recipients.length }).eq('id', campaignId)
 }
 
 export function startCampaignScheduler() {
