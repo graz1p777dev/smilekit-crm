@@ -4,7 +4,7 @@
 // суммы или количества — так и пишем, ничего не досчитываем.
 
 import { useEffect, useState } from 'react'
-import { getPurchasesAnalytics, type PurchasesAnalytics } from '@/actions/analytics'
+import { getPurchasesAnalytics, type PurchasesAnalytics } from '@/lib/analytics/client-api'
 import { getWhatsappSettings } from '@/actions/whatsapp-settings'
 import { daysOf, type PeriodInput } from '@/lib/analytics/period'
 import { recoverFromStaleAction } from '@/lib/stale-action'

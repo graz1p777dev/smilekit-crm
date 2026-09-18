@@ -4,7 +4,7 @@
 // телефона подписаны одним «Smilekit», поэтому человека определяет только
 // то, кто был на смене в этот момент.
 
-import { getStaffAnalytics, type ChatRef, type StaffWork } from '@/actions/analytics'
+import { getStaffAnalytics, type ChatRef, type StaffWork } from '@/lib/analytics/client-api'
 import type { PeriodInput } from '@/lib/analytics/period'
 import { useAnalyticsData } from './useAnalyticsData'
 import { Skeleton } from './ConversionAnalytics'

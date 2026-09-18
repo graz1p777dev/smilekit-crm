@@ -3,7 +3,7 @@
 // Вкладка «Рассылки»: каждая рассылка периода — сколько получателей, сколько
 // дошло, сколько ответили и купили после неё.
 
-import { getCampaignAnalytics } from '@/actions/analytics'
+import { getCampaignAnalytics } from '@/lib/analytics/client-api'
 import type { PeriodInput } from '@/lib/analytics/period'
 import { useAnalyticsData } from './useAnalyticsData'
 import { Skeleton } from './ConversionAnalytics'

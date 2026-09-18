@@ -4,7 +4,7 @@
 // сколько новых купили и какие это клиенты. Каждая цифра — с правилом.
 
 import { useEffect, useState } from 'react'
-import { getLeadsAnalytics, type LeadsAnalytics, type ReplyGroup } from '@/actions/analytics'
+import { getLeadsAnalytics, type LeadsAnalytics, type ReplyGroup } from '@/lib/analytics/client-api'
 import type { PeriodInput } from '@/lib/analytics/period'
 import { CLIENT_TYPE_LABELS, formatDuration, type ClientType } from '@/lib/analytics/client-types'
 import { useAnalyticsData } from './useAnalyticsData'

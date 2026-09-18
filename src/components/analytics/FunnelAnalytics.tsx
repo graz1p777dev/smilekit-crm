@@ -3,7 +3,7 @@
 // Вкладка «Воронка сделок»: сделки, созданные в периоде, — до какого этапа
 // дошли (история переходов deal_events + текущий этап), откуда пришли.
 
-import { getFunnelAnalytics } from '@/actions/analytics'
+import { getFunnelAnalytics } from '@/lib/analytics/client-api'
 import type { PeriodInput } from '@/lib/analytics/period'
 import { useAnalyticsData } from './useAnalyticsData'
 import { Skeleton } from './ConversionAnalytics'

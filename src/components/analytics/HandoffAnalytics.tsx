@@ -4,7 +4,7 @@
 // ли им люди и как быстро, что бот успел до этого, сколько он вёл сам.
 // Считает analytics_bot (supabase/migrations/049_…).
 
-import { getBotHandoffAnalytics } from '@/actions/analytics'
+import { getBotHandoffAnalytics } from '@/lib/analytics/client-api'
 import type { PeriodInput } from '@/lib/analytics/period'
 import { useAnalyticsData } from './useAnalyticsData'
 import { Skeleton } from './ConversionAnalytics'
