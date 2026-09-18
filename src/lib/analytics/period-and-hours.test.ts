@@ -17,6 +17,7 @@ describe('resolvePeriod — дни по Бишкеку целиком', () => {
     expect(resolvePeriod({ kind: '7d' }, NOW).firstDay).toBe('2026-09-11')
     expect(resolvePeriod({ kind: '30d' }, NOW).firstDay).toBe('2026-08-19')
     expect(resolvePeriod({ kind: 'month' }, NOW).fromIso).toBe('2026-08-31T18:00:00.000Z')
+    expect(resolvePeriod({ kind: 'all' }, NOW).firstDay).toBe('2026-08-01')
   })
   it('свои даты — проверка порядка', () => {
     expect(() => resolvePeriod({ kind: 'custom', from: '2026-09-10', to: '2026-09-01' }, NOW)).toThrow()

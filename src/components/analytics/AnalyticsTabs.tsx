@@ -10,14 +10,20 @@ import LeadsAnalyticsView from './ConversionAnalytics'
 import PurchaseAnalytics from './PurchaseAnalytics'
 import StaffAnalytics from './StaffAnalytics'
 import BotAnalytics from './BotAnalytics'
+import HandoffAnalytics from './HandoffAnalytics'
+import FunnelAnalytics from './FunnelAnalytics'
+import CampaignAnalytics from './CampaignAnalytics'
 import { INK_3, LINE } from './viz'
 
-type Tab = 'leads' | 'purchases' | 'staff' | 'bot'
+type Tab = 'leads' | 'handoff' | 'funnel' | 'purchases' | 'staff' | 'campaigns' | 'bot'
 
 const TABS: { key: Tab; label: string }[] = [
   { key: 'leads', label: 'Лиды и конверсия' },
+  { key: 'handoff', label: 'Передача от бота' },
+  { key: 'funnel', label: 'Воронка сделок' },
   { key: 'purchases', label: 'Покупки' },
   { key: 'staff', label: 'Сотрудники' },
+  { key: 'campaigns', label: 'Рассылки' },
   { key: 'bot', label: 'Бот' },
 ]
 
@@ -27,6 +33,7 @@ const PERIODS: { key: Exclude<PeriodKind, 'custom'>; label: string }[] = [
   { key: '7d', label: '7 дней' },
   { key: '30d', label: '30 дней' },
   { key: 'month', label: 'Этот месяц' },
+  { key: 'all', label: 'За всё время' },
 ]
 
 function PeriodPicker({ value, onChange }: { value: PeriodInput; onChange: (p: PeriodInput) => void }) {
@@ -114,7 +121,10 @@ export default function AnalyticsTabs() {
           </div>
         )}
         {tab === 'leads' && <LeadsAnalyticsView period={period} />}
+        {tab === 'handoff' && <HandoffAnalytics period={period} />}
+        {tab === 'funnel' && <FunnelAnalytics period={period} />}
         {tab === 'purchases' && <PurchaseAnalytics period={period} />}
+        {tab === 'campaigns' && <CampaignAnalytics period={period} />}
         {tab === 'staff' && <StaffAnalytics period={period} />}
         {tab === 'bot' && <BotAnalytics />}
       </div>

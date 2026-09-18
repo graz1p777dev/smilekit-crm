@@ -1,6 +1,6 @@
 // Период аналитики. Дни — по Бишкеку (UTC+6 круглый год), целиком.
 
-export type PeriodKind = 'today' | 'yesterday' | '7d' | '30d' | 'month' | 'custom'
+export type PeriodKind = 'today' | 'yesterday' | '7d' | '30d' | 'month' | 'all' | 'custom'
 
 export interface PeriodInput {
   kind: PeriodKind
@@ -23,6 +23,8 @@ const OFFSET_MS = 6 * 3600_000
 const DAY_MS = 86_400_000
 const DAY_RE = /^\d{4}-\d{2}-\d{2}$/
 export const MAX_CUSTOM_DAYS = 366
+/** Раньше этой даты в базе нет ни переписки, ни заказов — начало «За всё время». */
+export const DATA_START_DAY = '2026-08-01'
 
 const dayStartUtc = (day: string) => Date.parse(`${day}T00:00:00Z`) - OFFSET_MS
 const dayOf = (utcMs: number) => new Date(utcMs + OFFSET_MS).toISOString().slice(0, 10)
@@ -53,6 +55,9 @@ export function resolvePeriod(input: PeriodInput, now = Date.now()): PeriodRange
       break
     case 'month':
       first = `${today.slice(0, 7)}-01`
+      break
+    case 'all':
+      first = DATA_START_DAY
       break
     case 'custom': {
       const from = input.from ?? ''

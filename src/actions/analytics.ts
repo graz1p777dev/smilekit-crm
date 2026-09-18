@@ -287,3 +287,85 @@ export async function getClientProfile(phone: string): Promise<ClientProfile | n
   if (digits.length < 9) return null
   return loadClientProfile(digits)
 }
+
+// ─── Бот и передача менеджеру (049) ─────────────────────────────────────────
+
+export interface BotHandoffAnalytics {
+  range: PeriodRange
+  generatedAt: string
+  wrote: number
+  handedOff: number
+  handedAnswered: number
+  handedWaiting: number
+  handedBought: number
+  handoffMedianMin: number | null
+  handoffOver15: number
+  handoffOver60: number
+  botOnly: number
+  botOnlyBought: number
+  /** Сколько разных чатов получили служебную метку бота в периоде, по виду метки. */
+  steps: Record<string, number>
+  qrSent: number
+  speed: {
+    botMedianMin: number | null
+    botAnswered: number
+    humanMedianMin: number | null
+    humanAnswered: number
+    firstReplyOver15: number
+    noReplyAtAll: number
+  }
+  waiting: (ChatRef & { handedAt: string })[]
+}
+
+export async function getBotHandoffAnalytics(period: PeriodInput): Promise<BotHandoffAnalytics> {
+  await guard()
+  const range = resolvePeriod(period)
+  return cached(`bot:${range.fromIso}:${range.toIso}`, async () => {
+    const raw = await rpc<Omit<BotHandoffAnalytics, 'range' | 'generatedAt'>>('analytics_bot', rangeArgs(range))
+    return { ...raw, range, generatedAt: new Date().toISOString() }
+  })
+}
+
+// ─── Воронка сделок ─────────────────────────────────────────────────────────
+
+export interface FunnelAnalytics {
+  range: PeriodRange
+  deals: number
+  stages: { name: string; kind: string; isDefault: boolean; reached: number; now: number }[]
+  sources: { source: string; deals: number }[]
+  cities: { city: string; deals: number }[]
+}
+
+export async function getFunnelAnalytics(period: PeriodInput): Promise<FunnelAnalytics> {
+  await guard()
+  const range = resolvePeriod(period)
+  return cached(`funnel:${range.fromIso}:${range.toIso}`, async () => {
+    const raw = await rpc<Omit<FunnelAnalytics, 'range'>>('analytics_funnel', rangeArgs(range))
+    return { ...raw, range }
+  })
+}
+
+// ─── Рассылки ───────────────────────────────────────────────────────────────
+
+export interface CampaignStat {
+  id: string
+  title: string
+  status: string
+  at: string
+  recipients: number
+  sent: number
+  failed: number
+  skipped: number
+  pending: number
+  replied: number
+  bought: number
+}
+
+export async function getCampaignAnalytics(period: PeriodInput): Promise<{ range: PeriodRange; campaigns: CampaignStat[] }> {
+  await guard()
+  const range = resolvePeriod(period)
+  return cached(`campaigns:${range.fromIso}:${range.toIso}`, async () => ({
+    range,
+    campaigns: await rpc<CampaignStat[]>('analytics_campaigns', rangeArgs(range)),
+  }))
+}
