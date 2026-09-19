@@ -4,12 +4,14 @@
 // каждые N дней в заданное время. Сами отправки уходят в общую историю —
 // там они помечены как автоматические.
 
-import { useState, useTransition } from 'react'
-import { Plus, Power, Repeat, Trash2 } from 'lucide-react'
+import { useEffect, useRef, useState, useTransition } from 'react'
+import { Plus, Power, RefreshCw, Repeat, Trash2, UsersRound } from 'lucide-react'
 import { toast } from 'sonner'
 import { useRouter } from 'next/navigation'
 import {
   deleteRecurringCampaign,
+  getAudiencePreview,
+  refreshRecurringEstimate,
   saveRecurringCampaign,
   setRecurringActive,
   type CampaignAudience,
@@ -20,6 +22,9 @@ import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { Textarea } from '@/components/ui/textarea'
 import { VOICE_MESSAGES, voiceById, voiceSrc } from '@/config/voice-messages'
+import {
+  recurringAudienceFilter, recurringPeriodLabel, type RecurringAudienceOptions, type RecurringPeriodMode,
+} from '@/lib/campaigns/recurring-filter'
 
 const AUDIENCE_LABELS: Record<CampaignAudience, string> = {
   not_purchased: 'кто не купил',
@@ -35,15 +40,84 @@ const INTERVALS = [
   { days: 7, label: 'раз в неделю' },
 ]
 
-/** За какой срок брать клиентов по их последнему сообщению. */
-const WINDOWS: { days: number | null; label: string }[] = [
-  { days: 1, label: 'только сегодняшние' },
-  { days: 7, label: 'за последнюю неделю' },
-  { days: 30, label: 'за последний месяц' },
-  { days: null, label: 'без ограничения' },
+/**
+ * Период по последнему сообщению клиента — те же варианты, что у обычной
+ * рассылки, плюс «с даты». Считается заново в момент каждой отправки.
+ */
+type PeriodChoice = { key: string; label: string; mode: RecurringPeriodMode; days: number | null }
+const PERIODS: PeriodChoice[] = [
+  { key: 'd1', label: 'за сегодня', mode: 'days', days: 1 },
+  { key: 'd2', label: 'за 2 дня', mode: 'days', days: 2 },
+  { key: 'd3', label: 'за 3 дня', mode: 'days', days: 3 },
+  { key: 'd5', label: 'за 5 дней', mode: 'days', days: 5 },
+  { key: 'd7', label: 'за неделю', mode: 'days', days: 7 },
+  { key: 'd30', label: 'за месяц', mode: 'days', days: 30 },
+  { key: 'h24', label: 'за сутки (24 ч)', mode: 'hours24', days: null },
+  { key: 'since', label: 'с прошлой рассылки', mode: 'since_last', days: null },
+  { key: 'date', label: 'с даты…', mode: 'from_date', days: null },
+  { key: 'all', label: 'без ограничения', mode: 'days', days: null },
 ]
 
-export default function RecurringCampaigns({ rules }: { rules: RecurringCampaignRow[] }) {
+const time = (iso: string) =>
+  new Date(iso).toLocaleString('ru-RU', { timeZone: 'Asia/Bishkek', day: '2-digit', month: 'short', hour: '2-digit', minute: '2-digit' })
+
+/**
+ * Маленькая панель «сколько получат» — считает тем же правилом, что и
+ * отправка, на текущий момент. С задержкой, чтобы не считать на каждый клик.
+ */
+function AudienceBadge({ options, lastCampaignAt }: { options: RecurringAudienceOptions; lastCampaignAt: string | null }) {
+  const [state, setState] = useState<{ key: string; count: number | null; manager: number; reached: number; loading: boolean }>({
+    key: '', count: null, manager: 0, reached: 0, loading: false,
+  })
+  const seq = useRef(0)
+  const key = JSON.stringify(options) + (lastCampaignAt ?? '')
+
+  useEffect(() => {
+    const id = ++seq.current
+    const timer = setTimeout(() => {
+      const filter = recurringAudienceFilter(options, Date.now(), lastCampaignAt)
+      if (!filter) {
+        setState({ key, count: 0, manager: 0, reached: 0, loading: false })
+        return
+      }
+      setState((prev) => ({ ...prev, loading: true }))
+      getAudiencePreview({
+        dateFrom: filter.from, dateTo: filter.to, audience: filter.audience,
+        includeManagerChats: filter.includeManagerChats, skipReachedSince: filter.skipReachedSince,
+      })
+        .then((preview) => {
+          if (id !== seq.current) return
+          setState({ key, count: preview.count, manager: preview.excluded.managerChats, reached: preview.excluded.alreadyReached, loading: false })
+        })
+        .catch(() => { if (id === seq.current) setState((prev) => ({ ...prev, loading: false })) })
+    }, 400)
+    return () => clearTimeout(timer)
+    // options сериализованы в key — зависимость по нему, а не по объекту.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [key])
+
+  return (
+    <div className="flex flex-wrap items-center gap-x-3 gap-y-1 rounded-xl px-3 py-2.5 text-sm" style={{ background: '#f1ebfa' }}>
+      <UsersRound className="size-4" style={{ color: '#5115a4' }} />
+      <span style={{ color: 'var(--ink)' }}>
+        Если отправить сейчас, получат:{' '}
+        <strong style={{ color: '#5115a4' }}>{state.loading || state.count === null ? '…' : state.count}</strong>
+      </span>
+      {!state.loading && (state.manager > 0 || state.reached > 0) && (
+        <span className="text-xs" style={{ color: 'var(--ink-3)' }}>
+          пропущено: {state.manager > 0 && `${state.manager} в переписке с менеджером`}
+          {state.manager > 0 && state.reached > 0 && ', '}
+          {state.reached > 0 && `${state.reached} уже получили сегодня`}
+        </span>
+      )}
+      {options.period_mode === 'since_last' && !lastCampaignAt && (
+        <span className="text-xs" style={{ color: '#b45309' }}>прошлых рассылок нет — считать не от чего</span>
+      )}
+    </div>
+  )
+}
+
+export default function RecurringCampaigns({ rules, lastCampaignAt }: { rules: RecurringCampaignRow[]; lastCampaignAt: string | null }) {
   const router = useRouter()
   const [pending, startTransition] = useTransition()
   const [open, setOpen] = useState(false)
@@ -54,20 +128,51 @@ export default function RecurringCampaigns({ rules }: { rules: RecurringCampaign
   const [audience, setAudience] = useState<CampaignAudience>('not_purchased')
   const [intervalDays, setIntervalDays] = useState(1)
   const [sendAtTime, setSendAtTime] = useState('12:00')
-  const [windowDays, setWindowDays] = useState<number | null>(1)
+  const [periodKey, setPeriodKey] = useState('d1')
+  const [fromDate, setFromDate] = useState('')
+  const [includeManagerChats, setIncludeManagerChats] = useState(false)
+  const [skipReachedToday, setSkipReachedToday] = useState(true)
+  const [refreshing, setRefreshing] = useState<string | null>(null)
+
+  const period = PERIODS.find((p) => p.key === periodKey) ?? PERIODS[0]
+  const options: RecurringAudienceOptions = {
+    audience,
+    period_mode: period.mode,
+    window_days: period.mode === 'days' ? period.days : null,
+    from_date: period.mode === 'from_date' ? fromDate || null : null,
+    include_manager_chats: includeManagerChats,
+    skip_reached_today: skipReachedToday,
+  }
 
   function save() {
     if (!title.trim()) return toast.error('Введите название')
     if (!message.trim() && !voiceId) return toast.error('Напишите текст или выберите голосовое')
+    if (period.mode === 'from_date' && !fromDate) return toast.error('Выберите дату, с которой брать клиентов')
 
     startTransition(async () => {
       const result = await saveRecurringCampaign({
         title, message, voiceId: voiceId || undefined,
-        audience, intervalDays, sendAtTime, windowDays,
+        audience, intervalDays, sendAtTime,
+        windowDays: options.window_days,
+        periodMode: options.period_mode,
+        fromDate: options.from_date,
+        includeManagerChats,
+        skipReachedToday,
       })
       if (!result.success) return void toast.error(result.error)
       toast.success('Автоматическая рассылка создана')
       setTitle(''); setMessage(''); setVoiceId(''); setOpen(false)
+      router.refresh()
+    })
+  }
+
+  function refreshEstimate(id: string) {
+    setRefreshing(id)
+    startTransition(async () => {
+      const result = await refreshRecurringEstimate(id)
+      setRefreshing(null)
+      if (!result.success) return void toast.error(result.error)
+      toast.success(`Аудитория пересчитана: ${result.count}`)
       router.refresh()
     })
   }
@@ -192,19 +297,42 @@ export default function RecurringCampaigns({ rules }: { rules: RecurringCampaign
           <div className="space-y-2">
             <Label>Какие клиенты по последнему сообщению</Label>
             <div className="flex flex-wrap gap-2">
-              {WINDOWS.map((item) => (
+              {PERIODS.map((item) => (
                 <Button
-                  key={String(item.days)}
+                  key={item.key}
                   type="button"
                   size="sm"
-                  variant={windowDays === item.days ? 'default' : 'outline'}
-                  onClick={() => setWindowDays(item.days)}
+                  variant={periodKey === item.key ? 'default' : 'outline'}
+                  onClick={() => setPeriodKey(item.key)}
                 >
                   {item.label}
                 </Button>
               ))}
             </div>
+            {period.mode === 'from_date' && (
+              <div className="flex flex-wrap items-center gap-2">
+                <Input type="date" value={fromDate} onChange={(e) => setFromDate(e.target.value)} className="max-w-[200px]" aria-label="С какой даты" />
+                <span className="text-xs" style={{ color: 'var(--ink-3)' }}>клиенты, писавшие с этой даты по момент отправки</span>
+              </div>
+            )}
+            <p className="text-xs" style={{ color: 'var(--ink-3)' }}>
+              Период считается заново при каждой отправке: «за сегодня» — сутки дня отправки по Бишкеку,
+              «за сутки» — ровно 24 часа до отправки, «с прошлой рассылки» — от создания предыдущей рассылки.
+            </p>
           </div>
+
+          <div className="space-y-2">
+            <label className="flex cursor-pointer items-start gap-2 text-sm" style={{ color: 'var(--ink)' }}>
+              <input type="checkbox" className="mt-0.5 size-4" checked={skipReachedToday} onChange={(e) => setSkipReachedToday(e.target.checked)} />
+              <span>Не слать тем, кто уже получил рассылку сегодня</span>
+            </label>
+            <label className="flex cursor-pointer items-start gap-2 text-sm" style={{ color: 'var(--ink)' }}>
+              <input type="checkbox" className="mt-0.5 size-4" checked={includeManagerChats} onChange={(e) => setIncludeManagerChats(e.target.checked)} />
+              <span>Слать и тем, с кем менеджер переписывается прямо сейчас (писал за последние 30 минут)</span>
+            </label>
+          </div>
+
+          <AudienceBadge options={options} lastCampaignAt={lastCampaignAt} />
 
           <Button className="w-full" disabled={pending} onClick={save}>
             {pending ? 'Сохраняем…' : 'Создать автоматическую рассылку'}
@@ -221,7 +349,6 @@ export default function RecurringCampaigns({ rules }: { rules: RecurringCampaign
         {rules.map((rule) => {
           const voice = voiceById(rule.voice_id)
           const interval = INTERVALS.find((item) => item.days === rule.interval_days)
-          const window = WINDOWS.find((item) => item.days === rule.window_days)
           return (
             <article key={rule.id} className="rounded-2xl bg-white p-5 ring-1 ring-black/5">
               <div className="flex flex-wrap items-center gap-2">
@@ -248,12 +375,30 @@ export default function RecurringCampaigns({ rules }: { rules: RecurringCampaign
 
               <p className="mt-2 text-xs" style={{ color: 'var(--ink-3)' }}>
                 {interval?.label ?? `раз в ${rule.interval_days} дн.`} в {rule.send_at_time.slice(0, 5)} ·{' '}
-                {AUDIENCE_LABELS[rule.audience]} · {window?.label ?? 'без ограничения'}
+                {AUDIENCE_LABELS[rule.audience]} · {recurringPeriodLabel(rule)}
+                {rule.skip_reached_today ? ' · без повтора за день' : ''}
+                {rule.include_manager_chats ? ' · и в чаты с менеджером' : ''}
                 {rule.last_run_at && ` · последний запуск ${new Date(rule.last_run_at).toLocaleString('ru-RU', { day: '2-digit', month: 'short', hour: '2-digit', minute: '2-digit' })}`}
               </p>
               <p className="mt-1 text-xs" style={{ color: 'var(--ink-3)' }}>
                 Создал: <strong style={{ color: 'var(--ink-2)' }}>{rule.author ?? 'неизвестно'}</strong>
               </p>
+
+              <div className="mt-3 flex flex-wrap items-center gap-2 rounded-xl px-3 py-2 text-sm" style={{ background: '#f1ebfa' }}>
+                <UsersRound className="size-4" style={{ color: '#5115a4' }} />
+                <span style={{ color: 'var(--ink)' }}>
+                  Аудитория:{' '}
+                  <strong style={{ color: '#5115a4' }}>{rule.audience_estimate ?? '—'}</strong>
+                </span>
+                <span className="text-xs" style={{ color: 'var(--ink-3)' }}>
+                  {rule.audience_estimated_at
+                    ? `посчитано ${time(rule.audience_estimated_at)}, пересчёт раз в сутки`
+                    : 'ещё не считалась'}
+                </span>
+                <Button variant="ghost" size="sm" className="ml-auto h-7" disabled={pending} onClick={() => refreshEstimate(rule.id)}>
+                  <RefreshCw className={refreshing === rule.id ? 'animate-spin' : undefined} /> Обновить
+                </Button>
+              </div>
 
               <div className="mt-3 flex flex-wrap gap-2">
                 <Button variant="outline" size="sm" disabled={pending} onClick={() => toggle(rule)}>

@@ -549,6 +549,14 @@ export interface RecurringCampaignRow {
   send_at_time: string
   /** За сколько последних дней брать клиентов. null — без фильтра. */
   window_days: number | null
+  period_mode: 'days' | 'hours24' | 'since_last' | 'from_date'
+  /** Для «с даты»: 'YYYY-MM-DD'. */
+  from_date: string | null
+  include_manager_chats: boolean
+  skip_reached_today: boolean
+  /** Сколько человек получили бы рассылку на момент подсчёта. */
+  audience_estimate: number | null
+  audience_estimated_at: string | null
   is_active: boolean
   last_run_at: string | null
   created_at: string
@@ -564,9 +572,16 @@ const RecurringSchema = z.object({
   intervalDays: z.number().int().min(1).max(30),
   sendAtTime: z.string().regex(/^\d{2}:\d{2}$/, 'Время в формате ЧЧ:ММ'),
   windowDays: z.number().int().min(1).max(365).nullable(),
+  periodMode: z.enum(['days', 'hours24', 'since_last', 'from_date']).default('days'),
+  fromDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).nullable().optional(),
+  includeManagerChats: z.boolean().default(false),
+  skipReachedToday: z.boolean().default(true),
 }).refine(
   (data) => data.message.length > 0 || Boolean(data.voiceId),
   { message: 'Нужен текст или голосовое' }
+).refine(
+  (data) => data.periodMode !== 'from_date' || Boolean(data.fromDate),
+  { message: 'Выберите дату, с которой брать клиентов' }
 )
 
 export async function getRecurringCampaigns(): Promise<RecurringCampaignRow[]> {
@@ -576,14 +591,15 @@ export async function getRecurringCampaigns(): Promise<RecurringCampaignRow[]> {
   const admin = createAdminClient()
   const { data, error } = await admin
     .from('recurring_campaigns')
-    .select('id, title, message, voice_id, audience, interval_days, send_at_time, window_days, is_active, last_run_at, created_at, created_by')
+    .select('id, title, message, voice_id, audience, interval_days, send_at_time, window_days, period_mode, from_date, ' +
+      'include_manager_chats, skip_reached_today, audience_estimate, audience_estimated_at, is_active, last_run_at, created_at, created_by')
     .is('deleted_at', null)
     .order('created_at', { ascending: false })
 
   // Таблицы может ещё не быть (миграция 045) — страница должна открываться.
   if (error || !data) return []
 
-  const rows = data as (Omit<RecurringCampaignRow, 'author'> & { created_by: string | null })[]
+  const rows = data as unknown as (Omit<RecurringCampaignRow, 'author'> & { created_by: string | null })[]
   const authorIds = [...new Set(rows.flatMap((row) => row.created_by ? [row.created_by] : []))]
   const names = await employeeNames(authorIds)
 
@@ -612,16 +628,20 @@ export async function saveRecurringCampaign(
   if (parsed.data.voiceId && !voice) return { success: false, error: 'Такого голосового нет' }
 
   const admin = createAdminClient()
-  const { error } = await admin.from('recurring_campaigns').insert({
+  const { data: created, error } = await admin.from('recurring_campaigns').insert({
     title: parsed.data.title,
     message: parsed.data.message || null,
     voice_id: voice?.id ?? null,
     audience: parsed.data.audience,
     interval_days: parsed.data.intervalDays,
     send_at_time: parsed.data.sendAtTime,
-    window_days: parsed.data.windowDays,
+    window_days: parsed.data.periodMode === 'days' ? parsed.data.windowDays : null,
+    period_mode: parsed.data.periodMode,
+    from_date: parsed.data.periodMode === 'from_date' ? parsed.data.fromDate : null,
+    include_manager_chats: parsed.data.includeManagerChats,
+    skip_reached_today: parsed.data.skipReachedToday,
     created_by: me.id,
-  })
+  }).select('id').single()
   if (error) {
     if (error.message.includes('recurring_campaigns')) {
       return {
@@ -632,8 +652,26 @@ export async function saveRecurringCampaign(
     return { success: false, error: error.message }
   }
 
+  // Сразу считаем, сколько человек получит рассылка, — чтобы в карточке
+  // правила число было с первой минуты, а не через сутки.
+  const { estimateRecurringAudience } = await import('@/lib/campaigns/recurring')
+  await estimateRecurringAudience((created as { id: string }).id).catch(() => null)
+
   revalidatePath('/dashboard/campaigns')
   return { success: true }
+}
+
+/** Кнопка «Обновить» в карточке правила: пересчитать аудиторию сейчас. */
+export async function refreshRecurringEstimate(
+  id: string
+): Promise<{ success: true; count: number } | { success: false; error: string }> {
+  const me = await viewer()
+  if (!me || !['owner', 'rop'].includes(me.role)) return { success: false, error: 'Нет доступа' }
+  const { estimateRecurringAudience } = await import('@/lib/campaigns/recurring')
+  const count = await estimateRecurringAudience(id)
+  if (count === null) return { success: false, error: 'Правило не найдено' }
+  revalidatePath('/dashboard/campaigns')
+  return { success: true, count }
 }
 
 /** Включить или выключить правило. Выключенное не запускается, но остаётся. */

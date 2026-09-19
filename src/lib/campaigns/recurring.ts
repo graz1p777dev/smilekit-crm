@@ -8,6 +8,7 @@
 import { createAdminClient } from '@/lib/supabase/admin'
 import { eligibleRecipientsForRun, type CampaignAudience } from '@/actions/campaigns'
 import { voiceById } from '@/config/voice-messages'
+import { recurringAudienceFilter, type RecurringPeriodMode } from './recurring-filter'
 
 /** Asia/Bishkek — круглый год UTC+6. */
 const BISHKEK_OFFSET_MS = 6 * 3600_000
@@ -21,9 +22,20 @@ interface RecurringRow {
   interval_days: number
   send_at_time: string
   window_days: number | null
+  period_mode: RecurringPeriodMode
+  from_date: string | null
+  include_manager_chats: boolean
+  skip_reached_today: boolean
   last_run_at: string | null
   created_by: string | null
+  audience_estimated_at: string | null
 }
+
+const RULE_COLUMNS = 'id, title, message, voice_id, audience, interval_days, send_at_time, window_days, period_mode, ' +
+  'from_date, include_manager_chats, skip_reached_today, last_run_at, created_by, audience_estimated_at'
+
+/** Оценку аудитории пересчитываем примерно раз в сутки. */
+const ESTIMATE_TTL_MS = 24 * 3600_000
 
 /** Локальные «сегодня» и «сейчас» по Бишкеку. */
 function bishkekNow() {
@@ -36,11 +48,6 @@ function todaysRunMoment(sendAtTime: string): Date {
   const [hours, minutes] = sendAtTime.split(':').map(Number)
   const localMidnight = Date.UTC(local.getUTCFullYear(), local.getUTCMonth(), local.getUTCDate())
   return new Date(localMidnight + (hours * 60 + minutes) * 60_000 - BISHKEK_OFFSET_MS)
-}
-
-/** Дата (YYYY-MM-DD) по Бишкеку со сдвигом на N суток назад. */
-function bishkekDay(daysAgo = 0): string {
-  return new Date(bishkekNow().getTime() - daysAgo * 86400_000).toISOString().slice(0, 10)
 }
 
 function shouldRun(rule: RecurringRow, now: Date): boolean {
@@ -65,7 +72,7 @@ export async function runDueRecurringCampaigns(): Promise<void> {
   const admin = createAdminClient()
   const { data, error } = await admin
     .from('recurring_campaigns')
-    .select('id, title, message, voice_id, audience, interval_days, send_at_time, window_days, last_run_at, created_by')
+    .select(RULE_COLUMNS)
     .eq('is_active', true)
     .is('deleted_at', null)
 
@@ -74,17 +81,55 @@ export async function runDueRecurringCampaigns(): Promise<void> {
   if (error || !data?.length) return
 
   const now = new Date()
-  for (const rule of data as RecurringRow[]) {
-    if (!shouldRun(rule, now)) continue
-    try {
-      await launch(rule)
-    } catch (launchError) {
-      console.error(
-        `recurring campaign ${rule.id}: не удалось запустить —`,
-        launchError instanceof Error ? launchError.message : launchError
-      )
+  for (const rule of data as unknown as RecurringRow[]) {
+    if (shouldRun(rule, now)) {
+      try {
+        await launch(rule)
+      } catch (launchError) {
+        console.error(
+          `recurring campaign ${rule.id}: не удалось запустить —`,
+          launchError instanceof Error ? launchError.message : launchError
+        )
+      }
+      continue
+    }
+    // Раз в сутки обновляем оценку «сколько человек получат», чтобы число
+    // в карточке правила не устаревало, даже если на страницу не заходят.
+    const estimatedAt = rule.audience_estimated_at ? new Date(rule.audience_estimated_at).getTime() : 0
+    if (now.getTime() - estimatedAt >= ESTIMATE_TTL_MS) {
+      await estimateRecurringAudience(rule.id).catch((error) =>
+        console.error(`recurring campaign ${rule.id}: оценка аудитории не удалась`, error))
     }
   }
+}
+
+/** Когда создана последняя неотменённая рассылка — начало периода «с прошлой рассылки». */
+async function lastCampaignAt(): Promise<string | null> {
+  const { data } = await createAdminClient()
+    .from('campaigns')
+    .select('created_at')
+    .neq('status', 'cancelled')
+    .order('created_at', { ascending: false })
+    .limit(1)
+    .maybeSingle()
+  return (data as { created_at?: string } | null)?.created_at ?? null
+}
+
+/**
+ * Считает, сколько человек получили бы рассылку правила прямо сейчас, и
+ * запоминает число. Правила те же, что при реальной отправке.
+ */
+export async function estimateRecurringAudience(ruleId: string): Promise<number | null> {
+  const admin = createAdminClient()
+  const { data } = await admin.from('recurring_campaigns').select(RULE_COLUMNS).eq('id', ruleId).maybeSingle()
+  const rule = data as unknown as RecurringRow | null
+  if (!rule) return null
+  const filter = recurringAudienceFilter(rule, Date.now(), await lastCampaignAt())
+  const count = filter ? (await eligibleRecipientsForRun(filter)).length : 0
+  await admin.from('recurring_campaigns')
+    .update({ audience_estimate: count, audience_estimated_at: new Date().toISOString() })
+    .eq('id', ruleId)
+  return count
 }
 
 async function launch(rule: RecurringRow): Promise<void> {
@@ -97,12 +142,15 @@ async function launch(rule: RecurringRow): Promise<void> {
     .update({ last_run_at: new Date().toISOString() })
     .eq('id', rule.id)
 
-  const window = rule.window_days
-  const recipients = await eligibleRecipientsForRun({
-    audience: rule.audience,
-    from: window ? bishkekDay(window - 1) : undefined,
-    to: window ? bishkekDay(0) : undefined,
-  })
+  const filter = recurringAudienceFilter(rule, Date.now(), await lastCampaignAt())
+  if (!filter) {
+    console.error(`recurring campaign ${rule.id}: прошлых рассылок нет — период «с прошлой рассылки» не от чего считать`)
+    return
+  }
+  const recipients = await eligibleRecipientsForRun(filter)
+  await admin.from('recurring_campaigns')
+    .update({ audience_estimate: recipients.length, audience_estimated_at: new Date().toISOString() })
+    .eq('id', rule.id)
   if (!recipients.length) {
     console.error(`recurring campaign ${rule.id}: под фильтры не попал никто, пропускаем`)
     return

@@ -653,7 +653,12 @@ export default function CampaignsClient({ initialData }: { initialData: Campaign
           </aside>
         </div>
 
-        <RecurringCampaigns rules={initialData.recurring} />
+        <RecurringCampaigns
+          rules={initialData.recurring}
+          lastCampaignAt={initialData.campaigns
+            .filter((c) => c.status !== 'cancelled')
+            .reduce<string | null>((best, c) => (!best || c.created_at > best ? c.created_at : best), null)}
+        />
 
         <section className="mt-8">
           <div className="mb-3 flex items-center justify-between">
