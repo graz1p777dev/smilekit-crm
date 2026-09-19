@@ -37,6 +37,8 @@
   .toc a:hover{background:var(--brand-soft); color:var(--brand)}
   .toc a.sub{padding-left:24px; font-size:12.5px; color:var(--ink-3)}
   .toc a.hot{color:var(--bad); font-weight:700}
+  /* Раздел, который сейчас на экране. */
+  .toc a.current{background:var(--brand-soft); color:var(--brand); font-weight:700; box-shadow:inset 3px 0 0 var(--brand)}
   .toc-group{margin:14px 0 4px; padding:0 12px; font-size:10.5px; font-weight:700; letter-spacing:.14em; text-transform:uppercase; color:var(--ink-3)}
 
   main{padding:28px 0 90px; min-width:0}
@@ -787,6 +789,43 @@
       burger.setAttribute('aria-expanded', 'false');
     }
   });
+  // Оглавление следит за прокруткой: подсвечивает раздел, который сейчас на
+  // экране, и само прокручивается к нему. На телефоне кнопка «Разделы»
+  // показывает название текущего раздела.
+  var links = Array.prototype.slice.call(document.querySelectorAll('#toc-nav a[href^="#"]'));
+  var targets = links.map(function (a) { return document.getElementById(a.getAttribute('href').slice(1)); });
+  var burgerLabel = burger.textContent;
+  var current = null;
+  var ticking = false;
+  function markCurrent() {
+    ticking = false;
+    var line = 110; // чуть ниже верха экрана — «где сейчас читаю»
+    var index = -1;
+    for (var i = 0; i < targets.length; i++) {
+      if (targets[i] && targets[i].getBoundingClientRect().top <= line) index = i;
+    }
+    // Дочитали до конца страницы — последний пункт.
+    if (window.innerHeight + window.scrollY >= document.documentElement.scrollHeight - 4) index = links.length - 1;
+    var next = index >= 0 ? links[index] : null;
+    if (next === current) return;
+    if (current) current.classList.remove('current');
+    current = next;
+    if (!current) { burger.textContent = burgerLabel; return; }
+    current.classList.add('current');
+    burger.textContent = '☰ ' + current.textContent.trim();
+    // Прокручиваем только саму панель, не страницу.
+    var box = toc.getBoundingClientRect();
+    var item = current.getBoundingClientRect();
+    if (toc.scrollHeight > toc.clientHeight && (item.top < box.top + 60 || item.bottom > box.bottom - 60)) {
+      toc.scrollTop += item.top - box.top - toc.clientHeight / 3;
+    }
+  }
+  window.addEventListener('scroll', function () {
+    if (!ticking) { ticking = true; window.requestAnimationFrame(markCurrent); }
+  }, { passive: true });
+  window.addEventListener('resize', markCurrent);
+  markCurrent();
+
   // Кнопка «Наверх» — появляется после первого экрана.
   var toTop = document.getElementById('toTop');
   window.addEventListener('scroll', function () {
