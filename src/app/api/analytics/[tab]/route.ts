@@ -11,7 +11,8 @@ import { NextResponse, type NextRequest } from 'next/server'
 import { isFailure, requireManagement } from '@/lib/auth-guards'
 import { resolvePeriod, type PeriodInput } from '@/lib/analytics/period'
 import {
-  loadAdSource, loadAlmostBought,loadBotFunnel, loadBotHandoff, loadCampaigns, loadCities, loadDiscounts, loadFunnel, loadLeads, loadLoad,loadPurchases, loadReceipts, loadReturning, loadStaff,
+  loadAdSource, loadAlmostBought, loadBotFunnel, loadBotHandoff, loadCampaigns, loadCities, loadDiscounts, loadFunnel,
+  loadLeads, loadLoad, loadPurchases, loadReceipts, loadReturning, loadStaff, loadStaffSpeed,
 } from '@/lib/analytics/load'
 
 export const dynamic = 'force-dynamic'
@@ -32,6 +33,7 @@ const LOADERS = {
   cities: loadCities,
   returning: loadReturning,
   receipts: loadReceipts,
+  staffspeed: loadStaffSpeed,
 } as const
 
 export async function GET(request: NextRequest, { params }: { params: Promise<{ tab: string }> }) {

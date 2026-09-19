@@ -163,7 +163,7 @@ export default function AnalyticsTabs() {
       {tab === 'leads' && <LeadsAnalyticsView period={period} onStamp={onStamp} />}
       {tab === 'almost' && <AlmostBoughtAnalytics period={period} onStamp={onStamp} />}
       {tab === 'load' && <LoadAnalyticsTab period={period} onStamp={onStamp} />}
-      {tab === 'handoff' &&<HandoffAnalytics period={period} onStamp={onStamp} />}
+      {tab === 'handoff' && <HandoffAnalytics period={period} onStamp={onStamp} />}
       {tab === 'funnel' && <FunnelAnalytics period={period} onStamp={onStamp} />}
       {tab === 'purchases' && <PurchaseAnalytics period={period} onStamp={onStamp} />}
       {tab === 'campaigns' && <CampaignAnalytics period={period} onStamp={onStamp} />}

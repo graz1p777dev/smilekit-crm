@@ -533,6 +533,23 @@ export async function loadReceipts(range: PeriodRange): Promise<ReceiptsAnalytic
   })
 }
 
+// ─── Скорость сотрудников в смены (061) ─────────────────────────────────────
+
+export interface StaffSpeedRow {
+  staffId: string
+  medianMin: number | null
+  waits: number
+  answered: number
+  over15: number
+}
+
+export async function loadStaffSpeed(range: PeriodRange): Promise<{ range: PeriodRange; staff: StaffSpeedRow[] }> {
+  return cached(`staffspeed:${range.fromIso}:${range.toIso}`, async () => ({
+    range,
+    staff: await rpc<StaffSpeedRow[]>('analytics_staff_speed', rangeArgs(range)),
+  }))
+}
+
 // ─── Нагрузка по часам (055) ────────────────────────────────────────────────
 
 export interface LoadHour {
