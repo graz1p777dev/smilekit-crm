@@ -83,9 +83,9 @@ export default function Sidebar({ mobileOpen = false, onClose }: SidebarProps) {
         onFocusCapture={() => setHovered(true)}
         onBlurCapture={() => setHovered(false)}
         className={cn(
-          'flex flex-col h-screen overflow-hidden',
+          'flex flex-col h-screen h-dvh overflow-hidden',
           'fixed inset-y-0 left-0 z-50 transition-all duration-200 ease-out',
-          'w-48 md:translate-x-0',
+          'w-64 max-w-[85vw] md:max-w-none md:translate-x-0',
           hovered ? 'md:w-48 md:shadow-2xl' : 'md:w-16',
           mobileOpen ? 'translate-x-0 shadow-2xl' : '-translate-x-full',
         )}
@@ -290,11 +290,12 @@ export default function Sidebar({ mobileOpen = false, onClose }: SidebarProps) {
           <button
             onClick={() => signOut()}
             className={cn(
-              'flex-shrink-0 transition-all duration-200',
+              'flex-shrink-0 grid size-10 place-items-center rounded-md -mr-2 transition-all duration-200 md:size-auto md:mr-0',
               expanded ? 'opacity-100' : 'opacity-0 pointer-events-none',
             )}
             style={{ color: 'rgba(255,255,255,0.9)' }}
             title="Выйти"
+            aria-label="Выйти"
             onMouseEnter={(e) => {
               (e.currentTarget as HTMLButtonElement).style.color = '#ffffff'
             }}

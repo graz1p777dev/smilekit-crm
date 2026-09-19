@@ -46,14 +46,14 @@ export default function DashboardShell({ children }: { children: React.ReactNode
       <Sidebar mobileOpen={menuOpen} onClose={() => setMenuOpen(false)} />
       <div className="flex-1 flex flex-col min-w-0">
         {impersonating && (
-          <div className="flex items-center justify-between px-4 py-2 text-sm font-medium shrink-0 bg-gradient-to-r from-amber-400 to-orange-400 text-amber-950">
+          <div className="flex flex-wrap items-center justify-between gap-2 px-4 py-2 text-sm font-medium shrink-0 bg-gradient-to-r from-amber-400 to-orange-400 text-amber-950">
             <span>
               👤 Вы просматриваете систему от имени <strong>{impersonating.name}</strong> ({impersonating.role})
             </span>
             <button
               onClick={handleExitImpersonation}
               disabled={pending}
-              className="ml-4 px-3 py-1 rounded-lg text-xs font-semibold transition-colors bg-black/10 hover:bg-black/15"
+              className="min-h-9 px-3 py-1 rounded-lg text-xs font-semibold transition-colors bg-black/10 hover:bg-black/15"
             >
               {pending ? '...' : '← Выйти в свой аккаунт'}
             </button>

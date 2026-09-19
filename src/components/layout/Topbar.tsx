@@ -81,7 +81,7 @@ export default function Topbar({ onMenuClick }: { onMenuClick?: () => void }) {
 
   return (
     <header
-      className="flex-shrink-0 flex items-center px-5 gap-4"
+      className="flex-shrink-0 flex items-center px-3 gap-2 md:px-5 md:gap-4"
       style={{
         height: 52,
         backgroundColor: 'rgba(255,255,255,0.88)',
@@ -97,8 +97,8 @@ export default function Topbar({ onMenuClick }: { onMenuClick?: () => void }) {
       {/* Гамбургер — только мобильный */}
       <button
         onClick={onMenuClick}
-        className="md:hidden flex items-center justify-center rounded-md flex-shrink-0"
-        style={{ width: 32, height: 32, color: '#1b1517' }}
+        className="md:hidden flex items-center justify-center rounded-md flex-shrink-0 transition-colors hover:bg-black/5"
+        style={{ width: 40, height: 40, color: '#1b1517' }}
         title="Меню"
         aria-label="Открыть меню"
       >
@@ -116,7 +116,7 @@ export default function Topbar({ onMenuClick }: { onMenuClick?: () => void }) {
       </div>
 
       {/* Правая часть */}
-      <div className="flex items-center gap-3 flex-shrink-0">
+      <div className="flex items-center gap-1 md:gap-3 flex-shrink-0">
         {/* Дата */}
         {today && (
           <span
@@ -130,8 +130,9 @@ export default function Topbar({ onMenuClick }: { onMenuClick?: () => void }) {
         {/* Колокол */}
         <Link
           href="/dashboard/notifications"
-          className="relative flex items-center justify-center rounded-md transition-colors"
-          style={{ width: 32, height: 32, color: '#6b7280' }}
+          className="relative flex items-center justify-center rounded-md transition-colors hover:bg-black/5"
+          style={{ width: 40, height: 40, color: '#6b7280' }}
+          aria-label="Уведомления"
           title="Уведомления"
         >
           <Bell style={{ width: 16, height: 16 }} />
@@ -139,7 +140,7 @@ export default function Topbar({ onMenuClick }: { onMenuClick?: () => void }) {
             <span
               className="absolute flex items-center justify-center text-white font-bold"
               style={{
-                top: 4, right: 4,
+                top: 6, right: 6,
                 minWidth: 14, height: 14,
                 backgroundColor: '#5115a4',
                 borderRadius: 7,
@@ -157,7 +158,7 @@ export default function Topbar({ onMenuClick }: { onMenuClick?: () => void }) {
         <button
           type="button"
           onClick={() => setProfileOpen(true)}
-          className="flex items-center gap-2 rounded-lg px-1.5 py-1 -mx-1.5 transition-colors hover:bg-black/5"
+          className="flex min-h-10 min-w-10 items-center justify-center gap-2 rounded-lg px-1.5 py-1 md:-mx-1.5 transition-colors hover:bg-black/5"
           title={role ? `${ROLE_LABELS[role]} · открыть профиль` : 'Открыть профиль'}
         >
           <div
