@@ -177,10 +177,13 @@ export default function CustomersPage() {
         supabase, 'orders',
         'id, customer_name, customer_phone, quantity, total_amount, currency, city, status, created_at'
       ),
-      fetchAll<DealRow>(
-        supabase, 'deals',
-        'id, customer_name, customer_phone, customer_username, city, source, created_at'
-      ),
+      // Сделок 12+ тыс.: постранично это 13 последовательных запросов с
+      // проверкой RLS по всей таблице на каждом. deals_list_json (миграция
+      // 066) отдаёт те же колонки и порядок одним ответом.
+      supabase.rpc('deals_list_json', { p_compact: true }).then(({ data, error }) => {
+        if (error) throw new Error(error.message)
+        return (data ?? []) as DealRow[]
+      }),
     ])
       .then(([orderRows, dealRows]) => {
         setOrders(orderRows)
