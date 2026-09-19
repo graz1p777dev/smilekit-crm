@@ -507,6 +507,32 @@ export async function loadReturning(range: PeriodRange): Promise<ReturningAnalyt
   })
 }
 
+// ─── Чеки и оплата (060) ────────────────────────────────────────────────────
+
+export type ReceiptKind = 'verified' | 'unchecked' | 'rejected' | 'manager' | 'cod' | 'other'
+
+export interface ReceiptGroup {
+  orders: number
+  sum: number
+  withAmount: number
+  noAmount: number
+}
+
+export interface ReceiptsAnalytics {
+  range: PeriodRange
+  generatedAt: string
+  kinds: Partial<Record<ReceiptKind, ReceiptGroup>>
+}
+
+export async function loadReceipts(range: PeriodRange): Promise<ReceiptsAnalytics> {
+  return cached(`receipts:${range.fromIso}:${range.toIso}`, async () => {
+    const raw = await rpc<Partial<Record<ReceiptKind, ReceiptGroup>>>('analytics_receipts', rangeArgs(range))
+    const kinds: Partial<Record<ReceiptKind, ReceiptGroup>> = {}
+    for (const [k, g] of Object.entries(raw) as [ReceiptKind, ReceiptGroup][]) kinds[k] = { ...g, sum: Number(g.sum) }
+    return { range, generatedAt: new Date().toISOString(), kinds }
+  })
+}
+
 // ─── Нагрузка по часам (055) ────────────────────────────────────────────────
 
 export interface LoadHour {

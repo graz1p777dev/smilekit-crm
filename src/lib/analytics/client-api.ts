@@ -6,14 +6,14 @@
 import type { PeriodInput, PeriodRange } from './period'
 import type {
   AdSourceAnalytics, AlmostBoughtAnalytics, BotFunnelAnalytics, BotHandoffAnalytics, CampaignStat, CitiesAnalytics,
-  DiscountAnalytics, FunnelAnalytics, LeadsAnalytics, LoadAnalytics, PurchasesAnalytics, ReturningAnalytics,
-  StaffAnalytics,
+  DiscountAnalytics, FunnelAnalytics, LeadsAnalytics, LoadAnalytics, PurchasesAnalytics, ReceiptsAnalytics,
+  ReturningAnalytics, StaffAnalytics,
 } from './load'
 
 export type {
   AdSourceAnalytics, AlmostBoughtAnalytics, AlmostRow, BotFunnelAnalytics, BotHandoffAnalytics, BoughtGroup, CampaignStat,
   ChatRef, CitiesAnalytics, CityRow, DiscountAnalytics, FunnelAnalytics, LeadsAnalytics, LoadAnalytics, LoadHour,
-  PurchasesAnalytics, ReadySignal, ReplyGroup, ReturningAnalytics, StaffAnalytics, StaffRow, StaffWork, TypeClientRow, WaitingRow,
+  PurchasesAnalytics, ReadySignal, ReceiptKind, ReceiptsAnalytics, ReplyGroup, ReturningAnalytics, StaffAnalytics, StaffRow, StaffWork, TypeClientRow, WaitingRow,
 } from './load'
 
 /** Дольше этого ждать бессмысленно: самый тяжёлый расчёт («Лиды» за всё время) идёт ~7 с. */
@@ -49,4 +49,5 @@ export const getAdSourceAnalytics = (period: PeriodInput) => fetchTab<AdSourceAn
 export const getDiscountAnalytics = (period: PeriodInput) => fetchTab<DiscountAnalytics>('discounts', period)
 export const getLoadAnalytics = (period: PeriodInput) => fetchTab<LoadAnalytics>('load', period)
 export const getCitiesAnalytics = (period: PeriodInput) => fetchTab<CitiesAnalytics>('cities', period)
-export const getReturningAnalytics = (period: PeriodInput) => fetchTab<ReturningAnalytics>('returning', period)
+export const getReceiptsAnalytics = (period: PeriodInput) => fetchTab<ReceiptsAnalytics>('receipts', period)
+export const getReturningAnalytics =(period: PeriodInput) => fetchTab<ReturningAnalytics>('returning', period)

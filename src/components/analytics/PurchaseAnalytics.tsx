@@ -10,6 +10,7 @@ import { getWhatsappSettings } from '@/actions/whatsapp-settings'
 import { daysOf, type PeriodInput } from '@/lib/analytics/period'
 import { recoverFromStaleAction } from '@/lib/stale-action'
 import { useAnalyticsData, useReportStamp, type Stamp } from './useAnalyticsData'
+import ReceiptsCard from './ReceiptsCard'
 import {
   Bars, Card, EmptyState, ErrorState, INK, INK_2, INK_3, Kpi, KpiGrid, LINE, Lead, SERIES, TabBody, TabSkeleton, money, num,
 } from './viz'
@@ -118,11 +119,15 @@ export default function PurchaseAnalytics({ period, onStamp }: { period: PeriodI
 
   if (error) return <ErrorState text={error} />
   if (loading || !data) return <TabSkeleton text="Считаем покупки…" tiles={7} blocks={['chart', 'bars']} />
-  return <PurchasesView data={data} stock={stock} />
+  return <PurchasesView data={data} stock={stock} extra={<ReceiptsCard period={period} />} />
 }
 
-/** `stock`: undefined — ещё грузится, null — склад не ведётся. */
-export function PurchasesView({ data, stock }: { data: PurchasesAnalytics; stock: number | null | undefined }) {
+/** `stock`: undefined — ещё грузится, null — склад не ведётся. `extra` — карточки со своей загрузкой. */
+export function PurchasesView({ data, stock, extra }: {
+  data: PurchasesAnalytics
+  stock: number | null | undefined
+  extra?: React.ReactNode
+}) {
   const avg = data.withAmount ? data.revenue / data.withAmount : null
 
   return (
@@ -162,6 +167,8 @@ export function PurchasesView({ data, stock }: { data: PurchasesAnalytics; stock
             : <Bars items={data.cities.map((c) => ({ label: c.city, value: c.orders, hint: `${num(c.orders)} зак.` }))} />}
         </Card>
       </div>
+
+      {extra}
     </TabBody>
   )
 }
