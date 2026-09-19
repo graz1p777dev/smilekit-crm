@@ -383,3 +383,39 @@ export async function loadBotFunnel(range: PeriodRange): Promise<BotFunnelAnalyt
     return { ...buildBotFunnel(raw.leads, raw.masks), range, generatedAt: new Date().toISOString() }
   })
 }
+
+// ─── Нагрузка по часам (055) ────────────────────────────────────────────────
+
+export interface LoadHour {
+  hour: number
+  clients: number
+  botMedianMin: number | null
+  botAnswered: number
+  humanMedianMin: number | null
+  humanAnswered: number
+  over15: number
+}
+
+export interface LoadAnalytics {
+  range: PeriodRange
+  generatedAt: string
+  /** [день недели 1=пн…7=вс, час, разных клиентов] */
+  heat: [number, number, number][]
+  hours: LoadHour[]
+}
+
+type LoadHourTuple = [number, number, number | null, number, number | null, number, number]
+
+export async function loadLoad(range: PeriodRange): Promise<LoadAnalytics> {
+  return cached(`load:${range.fromIso}:${range.toIso}`, async () => {
+    const raw = await rpc<{ heat: [number, number, number][]; hours: LoadHourTuple[] }>('analytics_load', rangeArgs(range))
+    return {
+      range,
+      generatedAt: new Date().toISOString(),
+      heat: raw.heat,
+      hours: raw.hours.map(([hour, clients, botMedianMin, botAnswered, humanMedianMin, humanAnswered, over15]) => ({
+        hour, clients, botMedianMin, botAnswered, humanMedianMin, humanAnswered, over15,
+      })),
+    }
+  })
+}
