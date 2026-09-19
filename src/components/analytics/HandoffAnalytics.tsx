@@ -9,6 +9,7 @@ import { getBotHandoffAnalytics, type BotHandoffAnalytics } from '@/lib/analytic
 import type { PeriodInput } from '@/lib/analytics/period'
 import { useAnalyticsData, useReportStamp, type Stamp } from './useAnalyticsData'
 import BotFunnelCard from './BotFunnelCard'
+import DiscountCard from './DiscountCard'
 import {
   Bars, Card, ErrorState, Expand, INK, INK_2, INK_3, Kpi, KpiGrid, Lead, MiniStat, Note, PersonRow, Ring, SERIES,
   ShowMore, Split, TabBody, TabSkeleton, WaitPill, num, pct, useNow,
@@ -49,7 +50,7 @@ export default function HandoffAnalytics({ period, onStamp }: { period: PeriodIn
   useReportStamp(data?.generatedAt, loadedAt, onStamp)
   if (error) return <ErrorState text={error} />
   if (loading || !data) return <TabSkeleton text="Считаем передачи от бота…" tiles={4} blocks={['bars', 'list', 'bars', 'bars']} />
-  return <HandoffView data={data} top={<BotFunnelCard period={period} />} />
+  return <HandoffView data={data} top={<><BotFunnelCard period={period} /><DiscountCard period={period} /></>} />
 }
 
 /** `top` — блоки со своей загрузкой (воронка бота), встают перед цифрами передачи. */

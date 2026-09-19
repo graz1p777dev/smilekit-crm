@@ -384,6 +384,30 @@ export async function loadBotFunnel(range: PeriodRange): Promise<BotFunnelAnalyt
   })
 }
 
+// ─── Скидки (056) ───────────────────────────────────────────────────────────
+
+export interface BoughtGroup {
+  clients: number
+  bought: number
+}
+
+export interface DiscountAnalytics {
+  range: PeriodRange
+  generatedAt: string
+  d13: BoughtGroup
+  d20: BoughtGroup
+  anyDiscount: BoughtGroup
+  newNoDiscount: BoughtGroup
+  newDiscount: BoughtGroup
+}
+
+export async function loadDiscounts(range: PeriodRange): Promise<DiscountAnalytics> {
+  return cached(`discounts:${range.fromIso}:${range.toIso}`, async () => {
+    const raw = await rpc<Omit<DiscountAnalytics, 'range' | 'generatedAt'>>('analytics_discounts', rangeArgs(range))
+    return { ...raw, range, generatedAt: new Date().toISOString() }
+  })
+}
+
 // ─── Нагрузка по часам (055) ────────────────────────────────────────────────
 
 export interface LoadHour {
