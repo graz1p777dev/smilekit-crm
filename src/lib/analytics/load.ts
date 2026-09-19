@@ -13,6 +13,7 @@ import {
 } from '@/lib/analytics/client-types'
 import { computeStaffHours, type StaffHours } from '@/lib/analytics/shift-hours'
 import { buildBotFunnel, type BotFunnel } from '@/lib/analytics/bot-funnel'
+import { detectCity, type Country } from '@/lib/analytics/city'
 
 // ─── Кэш на 2 минуты по периоду ─────────────────────────────────────────────
 
@@ -422,6 +423,69 @@ export async function loadAdSource(range: PeriodRange): Promise<AdSourceAnalytic
   return cached(`adsource:${range.fromIso}:${range.toIso}`, async () => {
     const raw = await rpc<Omit<AdSourceAnalytics, 'range' | 'generatedAt'>>('analytics_ad_source', rangeArgs(range))
     return { ...raw, range, generatedAt: new Date().toISOString() }
+  })
+}
+
+// ─── Города из переписки (058) ──────────────────────────────────────────────
+
+export interface CityRow extends BoughtGroup {
+  city: string
+  country: Country
+}
+
+export interface CitiesAnalytics {
+  range: PeriodRange
+  generatedAt: string
+  /** Бот спросил город в периоде. */
+  asked: number
+  /** Клиент ответил после вопроса. */
+  answered: number
+  cities: CityRow[]
+  unrecognized: BoughtGroup & { examples: { text: string; clients: number }[] }
+  noAnswer: BoughtGroup
+}
+
+export async function loadCities(range: PeriodRange): Promise<CitiesAnalytics> {
+  return cached(`cities:${range.fromIso}:${range.toIso}`, async () => {
+    const rows = await rpc<[string, string | null, 0 | 1][]>('analytics_city_answers', rangeArgs(range))
+    const byCity = new Map<string, CityRow>()
+    const unrecognized = { clients: 0, bought: 0 }
+    const noAnswer = { clients: 0, bought: 0 }
+    const examples = new Map<string, number>()
+    for (const [, text, bought] of rows) {
+      if (text === null) {
+        noAnswer.clients++
+        noAnswer.bought += bought
+        continue
+      }
+      const match = detectCity(text)
+      if (!match) {
+        unrecognized.clients++
+        unrecognized.bought += bought
+        const key = text.replace(/\s+/g, ' ').trim().slice(0, 60) || '(пусто)'
+        examples.set(key, (examples.get(key) ?? 0) + 1)
+        continue
+      }
+      const row = byCity.get(match.city) ?? { ...match, clients: 0, bought: 0 }
+      row.clients++
+      row.bought += bought
+      byCity.set(match.city, row)
+    }
+    return {
+      range,
+      generatedAt: new Date().toISOString(),
+      asked: rows.length,
+      answered: rows.length - noAnswer.clients,
+      cities: [...byCity.values()].sort((a, b) => b.clients - a.clients || a.city.localeCompare(b.city, 'ru')),
+      unrecognized: {
+        ...unrecognized,
+        examples: [...examples.entries()]
+          .sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0], 'ru'))
+          .slice(0, 12)
+          .map(([text, clients]) => ({ text, clients })),
+      },
+      noAnswer,
+    }
   })
 }
 

@@ -5,13 +5,14 @@
 
 import type { PeriodInput, PeriodRange } from './period'
 import type {
-  AdSourceAnalytics, AlmostBoughtAnalytics, BotFunnelAnalytics, BotHandoffAnalytics, CampaignStat, DiscountAnalytics, FunnelAnalytics, LeadsAnalytics,
-  LoadAnalytics, PurchasesAnalytics, StaffAnalytics,
+  AdSourceAnalytics, AlmostBoughtAnalytics, BotFunnelAnalytics, BotHandoffAnalytics, CampaignStat, CitiesAnalytics,
+  DiscountAnalytics, FunnelAnalytics, LeadsAnalytics, LoadAnalytics, PurchasesAnalytics, StaffAnalytics,
 } from './load'
 
 export type {
-  AdSourceAnalytics, AlmostBoughtAnalytics, AlmostRow, ReadySignal, BotFunnelAnalytics, BotHandoffAnalytics, BoughtGroup, DiscountAnalytics, LoadAnalytics, LoadHour, CampaignStat, ChatRef, FunnelAnalytics, LeadsAnalytics, PurchasesAnalytics,
-  ReplyGroup, StaffAnalytics, StaffRow, StaffWork, TypeClientRow, WaitingRow,
+  AdSourceAnalytics, AlmostBoughtAnalytics, AlmostRow, BotFunnelAnalytics, BotHandoffAnalytics, BoughtGroup, CampaignStat,
+  ChatRef, CitiesAnalytics, CityRow, DiscountAnalytics, FunnelAnalytics, LeadsAnalytics, LoadAnalytics, LoadHour,
+  PurchasesAnalytics, ReadySignal, ReplyGroup, StaffAnalytics, StaffRow, StaffWork, TypeClientRow, WaitingRow,
 } from './load'
 
 /** Дольше этого ждать бессмысленно: самый тяжёлый расчёт («Лиды» за всё время) идёт ~7 с. */
@@ -44,5 +45,6 @@ export const getCampaignAnalytics = (period: PeriodInput) =>
 export const getAlmostBoughtAnalytics = (period: PeriodInput) => fetchTab<AlmostBoughtAnalytics>('almost', period)
 export const getBotFunnelAnalytics = (period: PeriodInput) => fetchTab<BotFunnelAnalytics>('botfunnel', period)
 export const getAdSourceAnalytics = (period: PeriodInput) => fetchTab<AdSourceAnalytics>('adsource', period)
-export const getDiscountAnalytics =(period: PeriodInput) => fetchTab<DiscountAnalytics>('discounts', period)
-export const getLoadAnalytics =(period: PeriodInput) => fetchTab<LoadAnalytics>('load', period)
+export const getDiscountAnalytics = (period: PeriodInput) => fetchTab<DiscountAnalytics>('discounts', period)
+export const getLoadAnalytics = (period: PeriodInput) => fetchTab<LoadAnalytics>('load', period)
+export const getCitiesAnalytics = (period: PeriodInput) => fetchTab<CitiesAnalytics>('cities', period)
