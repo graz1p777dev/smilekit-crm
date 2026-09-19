@@ -50,7 +50,8 @@ async function recoverInterruptedCampaigns() {
   await admin.from('campaigns').update({ status: 'scheduled' }).in('id', ids)
 }
 
-async function send(recipient: Recipient, campaign: Campaign) {
+/** Возвращает id сообщения в WhatsApp — к нему потом придут статусы «доставлено/прочитано». */
+async function send(recipient: Recipient, campaign: Campaign): Promise<string | null> {
   const voice = voiceById(campaign.voice_id)
   // В историю чата и в Telegram уходит текст; для голосовой рассылки без
   // текста подписываем её названием — иначе в переписке будет пустая строка.
@@ -64,7 +65,7 @@ async function send(recipient: Recipient, campaign: Campaign) {
       { method: 'POST', body: { text } }
     )
     if (!result.ok) throw new Error(result.error)
-    return
+    return null
   }
   // Записываем ДО отправки как своё сообщение: иначе исходящее эхо из вебхука
   // amoCRM не опознаётся (registerOutgoingAmoMessage ищет свежую строку с
@@ -87,14 +88,14 @@ async function send(recipient: Recipient, campaign: Campaign) {
   if (/^\d{9,}$/.test(recipient.chat_id)) {
     const chatId = toGreenApiChatId(recipient.chat_id)
     if (voice) {
-      await sendGreenApiVoice(chatId, voiceUrl(voice), voice.file)
+      const sent = await sendGreenApiVoice(chatId, voiceUrl(voice), voice.file)
       // Текст рядом с голосовым шлём, только если менеджер его написал:
       // подпись-заглушка клиенту не нужна.
       if (campaign.message?.trim()) await sendGreenApiMessage(chatId, campaign.message.trim())
-      return
+      return sent.idMessage ?? null
     }
-    await sendGreenApiMessage(chatId, text)
-    return
+    const sent = await sendGreenApiMessage(chatId, text)
+    return sent.idMessage ?? null
   }
   // Канал один — Green API, он адресуется номером. Получатель без номера
   // (старый чат amoCRM) теперь недостижим — помечаем ошибкой, а не делаем
@@ -148,10 +149,11 @@ async function processCampaign(campaign: Campaign) {
       .select('id')
     if (!claimed?.length) continue
     try {
-      await send(recipient, campaign)
+      const providerMessageId = await send(recipient, campaign)
       await admin.from('campaign_recipients').update({
         status: 'sent',
         sent_at: new Date().toISOString(),
+        provider_message_id: providerMessageId,
       }).eq('id', recipient.id)
       sentSoFar += 1
       // Счётчик в карточке рассылки двигаем ПО ХОДУ дела. Раньше он писался

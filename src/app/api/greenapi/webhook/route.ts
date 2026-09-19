@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { staffPhones } from '@/lib/staff/phones'
+import { recordCampaignDeliveryStatus } from '@/lib/campaigns/delivery-status'
 import { phoneFromGreenApiChatId } from '@/lib/greenapi/client'
 import { processInboundGreenApiMessage, registerOutgoingGreenApiMessage, type InboundGreenApiMessage } from '@/lib/greenapi/bot-reply'
 import { isBodyTooLarge, matchesRotatableSecret } from '@/lib/webhook-auth'
@@ -54,6 +55,9 @@ function isAuthorized(request: NextRequest): boolean {
 interface GreenApiWebhookBody {
   typeWebhook: string
   idMessage?: string
+  /** outgoingMessageStatus: sent | delivered | read | failed | … */
+  status?: string
+  timestamp?: number
   senderData?: { chatId?: string; sender?: string; senderName?: string; chatName?: string }
   messageData?: {
     typeMessage?: string
@@ -100,6 +104,13 @@ export async function POST(request: NextRequest) {
 
   const body = (await request.json().catch(() => null)) as GreenApiWebhookBody | null
   if (!body) return NextResponse.json({ error: 'invalid_json' }, { status: 400 })
+
+  // Статус нашего сообщения (доставлено/прочитано) — для отчёта по рассылкам.
+  if (body.typeWebhook === 'outgoingMessageStatus') {
+    if (body.idMessage) void recordCampaignDeliveryStatus(body.idMessage, body.status, body.timestamp)
+      .catch((error) => console.error('greenapi webhook: delivery status failed', error))
+    return NextResponse.json({ ok: true })
+  }
 
   const chatId = body.senderData?.chatId
   const providerMessageId = body.idMessage
