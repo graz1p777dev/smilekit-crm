@@ -6,9 +6,11 @@
 
 import { useCallback, useState } from 'react'
 import type { LucideIcon } from 'lucide-react'
-import { Bot, CalendarDays, Filter, Handshake, Megaphone, MessagesSquare, ShoppingBag, UsersRound } from 'lucide-react'
+import { Bot, CalendarClock, CalendarDays, Filter, HandCoins, Handshake, Megaphone, MessagesSquare, ShoppingBag, UsersRound } from 'lucide-react'
 import type { PeriodInput, PeriodKind } from '@/lib/analytics/period'
 import LeadsAnalyticsView from './ConversionAnalytics'
+import AlmostBoughtAnalytics from './AlmostBoughtAnalytics'
+import LoadAnalyticsTab from './LoadAnalytics'
 import PurchaseAnalytics from './PurchaseAnalytics'
 import StaffAnalytics from './StaffAnalytics'
 import BotAnalytics from './BotAnalytics'
@@ -18,11 +20,13 @@ import CampaignAnalytics from './CampaignAnalytics'
 import type { Stamp } from './useAnalyticsData'
 import { BRAND, BRAND_SOFT, INK, INK_2, INK_3, LINE } from './viz'
 
-type Tab = 'leads' | 'handoff' | 'funnel' | 'purchases' | 'staff' | 'campaigns' | 'bot'
+type Tab = 'leads' | 'almost' | 'load' | 'handoff' | 'funnel' | 'purchases' | 'staff' | 'campaigns' | 'bot'
 
 const TABS: { key: Tab; label: string; icon: LucideIcon }[] = [
   { key: 'leads', label: 'Лиды и конверсия', icon: MessagesSquare },
-  { key: 'handoff', label: 'Передача от бота', icon: Handshake },
+  { key: 'almost', label: 'Почти купили', icon: HandCoins },
+  { key: 'handoff', label: 'Бот и передача', icon: Handshake },
+  { key: 'load', label: 'Нагрузка', icon: CalendarClock },
   { key: 'funnel', label: 'Воронка сделок', icon: Filter },
   { key: 'purchases', label: 'Покупки', icon: ShoppingBag },
   { key: 'staff', label: 'Сотрудники', icon: UsersRound },
@@ -157,6 +161,8 @@ export default function AnalyticsTabs() {
       </header>
 
       {tab === 'leads' && <LeadsAnalyticsView period={period} onStamp={onStamp} />}
+      {tab === 'almost' && <AlmostBoughtAnalytics period={period} onStamp={onStamp} />}
+      {tab === 'load' && <LoadAnalyticsTab period={period} onStamp={onStamp} />}
       {tab === 'handoff' && <HandoffAnalytics period={period} onStamp={onStamp} />}
       {tab === 'funnel' && <FunnelAnalytics period={period} onStamp={onStamp} />}
       {tab === 'purchases' && <PurchaseAnalytics period={period} onStamp={onStamp} />}

@@ -12,6 +12,8 @@ import {
   type ClientType,
 } from '@/lib/analytics/client-types'
 import { computeStaffHours, type StaffHours } from '@/lib/analytics/shift-hours'
+import { buildBotFunnel, type BotFunnel } from '@/lib/analytics/bot-funnel'
+import { detectCity, type Country } from '@/lib/analytics/city'
 
 // ─── Кэш на 2 минуты по периоду ─────────────────────────────────────────────
 
@@ -326,6 +328,12 @@ export interface CampaignStat {
   pending: number
   replied: number
   bought: number
+  /** Отправленных с сохранённым id сообщения Green API — по ним приходит статус (062). */
+  tracked: number
+  /** Отправленных с delivered_at или read_at. */
+  delivered: number
+  /** Отправленных с read_at. */
+  read: number
 }
 
 export async function loadCampaigns(range: PeriodRange): Promise<{ range: PeriodRange; campaigns: CampaignStat[] }> {
@@ -333,4 +341,253 @@ export async function loadCampaigns(range: PeriodRange): Promise<{ range: Period
     range,
     campaigns: await rpc<CampaignStat[]>('analytics_campaigns', rangeArgs(range)),
   }))
+}
+
+// ─── Почти купили (053) ─────────────────────────────────────────────────────
+
+export type ReadySignal = 'qr' | 'cod' | 'ready'
+
+export interface AlmostRow extends ChatRef {
+  qrAt: string | null
+  codAt: string | null
+  readyAt: string | null
+  lastSignalAt: string
+  /** Кто написал последним: клиент, человек, бот; null — сообщений диалога нет. */
+  lastBy: 'c' | 'h' | 'b' | null
+  lastMsgAt: string | null
+}
+
+export interface AlmostBoughtAnalytics {
+  range: PeriodRange
+  generatedAt: string
+  /** Клиентов (номеров) с сигналом готовности в периоде. */
+  signaled: number
+  /** Из них заказали после первого сигнала. */
+  bought: number
+  almost: number
+  byKind: Record<ReadySignal, number>
+  signaledByKind: Record<ReadySignal, number>
+  rows: AlmostRow[]
+}
+
+export async function loadAlmostBought(range: PeriodRange): Promise<AlmostBoughtAnalytics> {
+  return cached(`almost:${range.fromIso}:${range.toIso}`, async () => {
+    const raw = await rpc<Omit<AlmostBoughtAnalytics, 'range' | 'generatedAt'>>('analytics_almost_bought', rangeArgs(range))
+    return { ...raw, range, generatedAt: new Date().toISOString() }
+  })
+}
+
+// ─── Воронка бота по новым лидам (054) ──────────────────────────────────────
+
+export interface BotFunnelAnalytics extends BotFunnel {
+  range: PeriodRange
+  generatedAt: string
+}
+
+export async function loadBotFunnel(range: PeriodRange): Promise<BotFunnelAnalytics> {
+  return cached(`botfunnel:${range.fromIso}:${range.toIso}`, async () => {
+    const raw = await rpc<{ leads: number; masks: Record<string, number> }>('analytics_bot_lead_funnel', rangeArgs(range))
+    return { ...buildBotFunnel(raw.leads, raw.masks), range, generatedAt: new Date().toISOString() }
+  })
+}
+
+// ─── Скидки (056) ───────────────────────────────────────────────────────────
+
+export interface BoughtGroup {
+  clients: number
+  bought: number
+}
+
+export interface DiscountAnalytics {
+  range: PeriodRange
+  generatedAt: string
+  d13: BoughtGroup
+  d20: BoughtGroup
+  anyDiscount: BoughtGroup
+  newNoDiscount: BoughtGroup
+  newDiscount: BoughtGroup
+}
+
+export async function loadDiscounts(range: PeriodRange): Promise<DiscountAnalytics> {
+  return cached(`discounts:${range.fromIso}:${range.toIso}`, async () => {
+    const raw = await rpc<Omit<DiscountAnalytics, 'range' | 'generatedAt'>>('analytics_discounts', rangeArgs(range))
+    return { ...raw, range, generatedAt: new Date().toISOString() }
+  })
+}
+
+// ─── Реклама или остальные (057) ────────────────────────────────────────────
+
+export interface AdSourceAnalytics {
+  range: PeriodRange
+  generatedAt: string
+  ad: BoughtGroup
+  other: BoughtGroup
+  otherTop: { text: string; clients: number }[]
+}
+
+export async function loadAdSource(range: PeriodRange): Promise<AdSourceAnalytics> {
+  return cached(`adsource:${range.fromIso}:${range.toIso}`, async () => {
+    const raw = await rpc<Omit<AdSourceAnalytics, 'range' | 'generatedAt'>>('analytics_ad_source', rangeArgs(range))
+    return { ...raw, range, generatedAt: new Date().toISOString() }
+  })
+}
+
+// ─── Города из переписки (058) ──────────────────────────────────────────────
+
+export interface CityRow extends BoughtGroup {
+  city: string
+  country: Country
+}
+
+export interface CitiesAnalytics {
+  range: PeriodRange
+  generatedAt: string
+  /** Бот спросил город в периоде. */
+  asked: number
+  /** Клиент ответил после вопроса. */
+  answered: number
+  cities: CityRow[]
+  unrecognized: BoughtGroup & { examples: { text: string; clients: number }[] }
+  noAnswer: BoughtGroup
+}
+
+export async function loadCities(range: PeriodRange): Promise<CitiesAnalytics> {
+  return cached(`cities:${range.fromIso}:${range.toIso}`, async () => {
+    const rows = await rpc<[string, string | null, 0 | 1][]>('analytics_city_answers', rangeArgs(range))
+    const byCity = new Map<string, CityRow>()
+    const unrecognized = { clients: 0, bought: 0 }
+    const noAnswer = { clients: 0, bought: 0 }
+    const examples = new Map<string, number>()
+    for (const [, text, bought] of rows) {
+      if (text === null) {
+        noAnswer.clients++
+        noAnswer.bought += bought
+        continue
+      }
+      const match = detectCity(text)
+      if (!match) {
+        unrecognized.clients++
+        unrecognized.bought += bought
+        const key = text.replace(/\s+/g, ' ').trim().slice(0, 60) || '(пусто)'
+        examples.set(key, (examples.get(key) ?? 0) + 1)
+        continue
+      }
+      const row = byCity.get(match.city) ?? { ...match, clients: 0, bought: 0 }
+      row.clients++
+      row.bought += bought
+      byCity.set(match.city, row)
+    }
+    return {
+      range,
+      generatedAt: new Date().toISOString(),
+      asked: rows.length,
+      answered: rows.length - noAnswer.clients,
+      cities: [...byCity.values()].sort((a, b) => b.clients - a.clients || a.city.localeCompare(b.city, 'ru')),
+      unrecognized: {
+        ...unrecognized,
+        examples: [...examples.entries()]
+          .sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0], 'ru'))
+          .slice(0, 12)
+          .map(([text, clients]) => ({ text, clients })),
+      },
+      noAnswer,
+    }
+  })
+}
+
+// ─── Вернувшиеся клиенты (059) ──────────────────────────────────────────────
+
+export interface ReturningAnalytics {
+  range: PeriodRange
+  generatedAt: string
+  wrote: number
+  returned: number
+  afterCampaign: BoughtGroup
+  self: BoughtGroup
+}
+
+export async function loadReturning(range: PeriodRange): Promise<ReturningAnalytics> {
+  return cached(`returning:${range.fromIso}:${range.toIso}`, async () => {
+    const raw = await rpc<Omit<ReturningAnalytics, 'range' | 'generatedAt'>>('analytics_returning', rangeArgs(range))
+    return { ...raw, range, generatedAt: new Date().toISOString() }
+  })
+}
+
+// ─── Чеки и оплата (060) ────────────────────────────────────────────────────
+
+export type ReceiptKind = 'verified' | 'unchecked' | 'rejected' | 'manager' | 'cod' | 'other'
+
+export interface ReceiptGroup {
+  orders: number
+  sum: number
+  withAmount: number
+  noAmount: number
+}
+
+export interface ReceiptsAnalytics {
+  range: PeriodRange
+  generatedAt: string
+  kinds: Partial<Record<ReceiptKind, ReceiptGroup>>
+}
+
+export async function loadReceipts(range: PeriodRange): Promise<ReceiptsAnalytics> {
+  return cached(`receipts:${range.fromIso}:${range.toIso}`, async () => {
+    const raw = await rpc<Partial<Record<ReceiptKind, ReceiptGroup>>>('analytics_receipts', rangeArgs(range))
+    const kinds: Partial<Record<ReceiptKind, ReceiptGroup>> = {}
+    for (const [k, g] of Object.entries(raw) as [ReceiptKind, ReceiptGroup][]) kinds[k] = { ...g, sum: Number(g.sum) }
+    return { range, generatedAt: new Date().toISOString(), kinds }
+  })
+}
+
+// ─── Скорость сотрудников в смены (061) ─────────────────────────────────────
+
+export interface StaffSpeedRow {
+  staffId: string
+  medianMin: number | null
+  waits: number
+  answered: number
+  over15: number
+}
+
+export async function loadStaffSpeed(range: PeriodRange): Promise<{ range: PeriodRange; staff: StaffSpeedRow[] }> {
+  return cached(`staffspeed:${range.fromIso}:${range.toIso}`, async () => ({
+    range,
+    staff: await rpc<StaffSpeedRow[]>('analytics_staff_speed', rangeArgs(range)),
+  }))
+}
+
+// ─── Нагрузка по часам (055) ────────────────────────────────────────────────
+
+export interface LoadHour {
+  hour: number
+  clients: number
+  botMedianMin: number | null
+  botAnswered: number
+  humanMedianMin: number | null
+  humanAnswered: number
+  over15: number
+}
+
+export interface LoadAnalytics {
+  range: PeriodRange
+  generatedAt: string
+  /** [день недели 1=пн…7=вс, час, разных клиентов] */
+  heat: [number, number, number][]
+  hours: LoadHour[]
+}
+
+type LoadHourTuple = [number, number, number | null, number, number | null, number, number]
+
+export async function loadLoad(range: PeriodRange): Promise<LoadAnalytics> {
+  return cached(`load:${range.fromIso}:${range.toIso}`, async () => {
+    const raw = await rpc<{ heat: [number, number, number][]; hours: LoadHourTuple[] }>('analytics_load', rangeArgs(range))
+    return {
+      range,
+      generatedAt: new Date().toISOString(),
+      heat: raw.heat,
+      hours: raw.hours.map(([hour, clients, botMedianMin, botAnswered, humanMedianMin, humanAnswered, over15]) => ({
+        hour, clients, botMedianMin, botAnswered, humanMedianMin, humanAnswered, over15,
+      })),
+    }
+  })
 }

@@ -5,12 +5,16 @@
 
 import type { PeriodInput, PeriodRange } from './period'
 import type {
-  BotHandoffAnalytics, CampaignStat, FunnelAnalytics, LeadsAnalytics, PurchasesAnalytics, StaffAnalytics,
+  AdSourceAnalytics, AlmostBoughtAnalytics, BotFunnelAnalytics, BotHandoffAnalytics, CampaignStat, CitiesAnalytics,
+  DiscountAnalytics, FunnelAnalytics, LeadsAnalytics, LoadAnalytics, PurchasesAnalytics, ReceiptsAnalytics,
+  ReturningAnalytics, StaffAnalytics, StaffSpeedRow,
 } from './load'
 
 export type {
-  BotHandoffAnalytics, CampaignStat, ChatRef, FunnelAnalytics, LeadsAnalytics, PurchasesAnalytics,
-  ReplyGroup, StaffAnalytics, StaffRow, StaffWork, TypeClientRow, WaitingRow,
+  AdSourceAnalytics, AlmostBoughtAnalytics, AlmostRow, BotFunnelAnalytics, BotHandoffAnalytics, BoughtGroup, CampaignStat,
+  ChatRef, CitiesAnalytics, CityRow, DiscountAnalytics, FunnelAnalytics, LeadsAnalytics, LoadAnalytics, LoadHour,
+  PurchasesAnalytics, ReadySignal, ReceiptKind, ReceiptsAnalytics, ReplyGroup, ReturningAnalytics, StaffAnalytics,
+  StaffRow, StaffSpeedRow, StaffWork, TypeClientRow, WaitingRow,
 } from './load'
 
 /** Дольше этого ждать бессмысленно: самый тяжёлый расчёт («Лиды» за всё время) идёт ~7 с. */
@@ -40,3 +44,13 @@ export const getBotHandoffAnalytics = (period: PeriodInput) => fetchTab<BotHando
 export const getFunnelAnalytics = (period: PeriodInput) => fetchTab<FunnelAnalytics>('funnel', period)
 export const getCampaignAnalytics = (period: PeriodInput) =>
   fetchTab<{ range: PeriodRange; campaigns: CampaignStat[] }>('campaigns', period)
+export const getAlmostBoughtAnalytics = (period: PeriodInput) => fetchTab<AlmostBoughtAnalytics>('almost', period)
+export const getBotFunnelAnalytics = (period: PeriodInput) => fetchTab<BotFunnelAnalytics>('botfunnel', period)
+export const getAdSourceAnalytics = (period: PeriodInput) => fetchTab<AdSourceAnalytics>('adsource', period)
+export const getDiscountAnalytics = (period: PeriodInput) => fetchTab<DiscountAnalytics>('discounts', period)
+export const getLoadAnalytics = (period: PeriodInput) => fetchTab<LoadAnalytics>('load', period)
+export const getCitiesAnalytics = (period: PeriodInput) => fetchTab<CitiesAnalytics>('cities', period)
+export const getReceiptsAnalytics = (period: PeriodInput) => fetchTab<ReceiptsAnalytics>('receipts', period)
+export const getReturningAnalytics = (period: PeriodInput) => fetchTab<ReturningAnalytics>('returning', period)
+export const getStaffSpeedAnalytics = (period: PeriodInput) =>
+  fetchTab<{ range: PeriodRange; staff: StaffSpeedRow[] }>('staffspeed', period)

@@ -5,7 +5,10 @@
 // то, кто был на смене в этот момент.
 
 import { CalendarX, Moon } from 'lucide-react'
-import { getStaffAnalytics, type ChatRef, type StaffAnalytics as StaffData, type StaffWork } from '@/lib/analytics/client-api'
+import {
+  getStaffAnalytics, getStaffSpeedAnalytics, type ChatRef, type StaffAnalytics as StaffData, type StaffSpeedRow, type StaffWork,
+} from '@/lib/analytics/client-api'
+import { minutesLabel } from './LoadAnalytics'
 import type { PeriodInput } from '@/lib/analytics/period'
 import { useAnalyticsData, useReportStamp, type Stamp } from './useAnalyticsData'
 import {
@@ -63,24 +66,44 @@ function WorkStats({ work, unansweredTotal }: { work: StaffWork; unansweredTotal
 
 export default function StaffAnalytics({ period, onStamp }: { period: PeriodInput; onStamp?: (s: Stamp | null) => void }) {
   const { data, error, loading, loadedAt } = useAnalyticsData(getStaffAnalytics, period)
+  const speed = useAnalyticsData(getStaffSpeedAnalytics, period)
   useReportStamp(data?.generatedAt, loadedAt, onStamp)
   if (error) return <ErrorState text={error} />
   if (loading || !data) return <TabSkeleton text="Считаем смены…" tiles={0} blocks={['bars', 'bars']} />
-  return <StaffView data={data} />
+  return <StaffView data={data} speed={speed.error ? { error: speed.error } : speed.data?.staff ?? null} />
 }
 
-export function StaffView({ data }: { data: StaffData }) {
+/** Скорость и ожидание в смену: медиана ответа, клиентов в час, ждали > 15 мин (061). */
+function SpeedStats({ row, leads, hoursMs }: { row: StaffSpeedRow | undefined; leads: number; hoursMs: number }) {
+  const perHour = hoursMs > 0 ? leads / (hoursMs / 3_600_000) : null
+  return (
+    <div className="mb-3 grid grid-cols-3 gap-2">
+      <MiniStat label="Ответ, медиана" value={minutesLabel(row?.medianMin ?? null)}
+        sub={row ? `ответил на ${num(row.answered)} из ${num(row.waits)}` : 'обращений не было'} />
+      <MiniStat label="Клиентов в час" value={perHour === null ? '—' : perHour.toLocaleString('ru-RU', { maximumFractionDigits: 1 })}
+        sub={`${num(leads)} за смены`} />
+      <MiniStat label="Ждали > 15 мин" value={num(row?.over15 ?? 0)} sub="разных клиентов" />
+    </div>
+  )
+}
+
+export function StaffView({ data, speed }: { data: StaffData; speed?: StaffSpeedRow[] | { error: string } | null }) {
+  const speedRows = Array.isArray(speed) ? speed : null
   return (
     <TabBody>
       <Lead>
         Всё, что было во время смены, засчитывается тем, кто был на смене. «Работа вместе» — засчитывается обоим.
         Смены обрезаются границами периода; открытая смена считается до текущего момента.
+        Ответ — от обращения клиента (первое его сообщение после ответа человека или после передачи от бота) до
+        следующего сообщения человека в этом чате; диалоги, которые целиком ведёт бот, сюда не входят.
+        Клиентов в час — лиды смены на часы смены.
       </Lead>
 
       <div className="grid items-start gap-4 md:grid-cols-2 md:gap-5">
         {data.staff.length === 0 ? (
           <Card title="Сотрудники">
-            <EmptyState icon={CalendarX} text="Смен за период не было" sub="Когда сотрудник откроет смену, его лиды, ответы и продажи появятся здесь." />
+            <EmptyState icon={CalendarX} text="Смен за период не было"
+              sub="Когда сотрудник откроет смену, здесь появятся его лиды, ответы, продажи, медиана времени ответа, клиентов в час и сколько клиентов ждали ответа дольше 15 минут." />
           </Card>
         ) : (
           data.staff.map((s) => (
@@ -98,6 +121,11 @@ export function StaffView({ data }: { data: StaffData }) {
                   </p>
                 </div>
               </div>
+              {speedRows
+                ? <SpeedStats row={speedRows.find((r) => r.staffId === s.hours.staffId)} leads={s.leads} hoursMs={s.hours.totalMs} />
+                : <p className="mb-3 text-[11px]" style={{ color: INK_3 }}>
+                    {speed && 'error' in speed ? `Скорость ответа не посчитана: ${speed.error}` : 'Считаем скорость ответа…'}
+                  </p>}
               <WorkStats work={s} unansweredTotal={s.leads - s.answered} />
             </section>
           ))

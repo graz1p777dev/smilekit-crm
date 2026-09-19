@@ -8,6 +8,8 @@ import { BadgeCheck, Gauge, Handshake, HelpCircle, ListChecks, ShoppingBag, Time
 import { getBotHandoffAnalytics, type BotHandoffAnalytics } from '@/lib/analytics/client-api'
 import type { PeriodInput } from '@/lib/analytics/period'
 import { useAnalyticsData, useReportStamp, type Stamp } from './useAnalyticsData'
+import BotFunnelCard from './BotFunnelCard'
+import DiscountCard from './DiscountCard'
 import {
   Bars, Card, ErrorState, Expand, INK, INK_2, INK_3, Kpi, KpiGrid, Lead, MiniStat, Note, PersonRow, Ring, SERIES,
   ShowMore, Split, TabBody, TabSkeleton, WaitPill, num, pct, useNow,
@@ -48,10 +50,11 @@ export default function HandoffAnalytics({ period, onStamp }: { period: PeriodIn
   useReportStamp(data?.generatedAt, loadedAt, onStamp)
   if (error) return <ErrorState text={error} />
   if (loading || !data) return <TabSkeleton text="Считаем передачи от бота…" tiles={4} blocks={['bars', 'list', 'bars', 'bars']} />
-  return <HandoffView data={data} />
+  return <HandoffView data={data} top={<><BotFunnelCard period={period} /><DiscountCard period={period} /></>} />
 }
 
-export function HandoffView({ data }: { data: BotHandoffAnalytics }) {
+/** `top` — блоки со своей загрузкой (воронка бота), встают перед цифрами передачи. */
+export function HandoffView({ data, top }: { data: BotHandoffAnalytics; top?: React.ReactNode }) {
   const now = useNow()
   const handedNotBought = data.handedOff - data.handedBought
   const steps = STEPS.map((s) => ({ label: s.label, value: data.steps[s.key] ?? 0 }))
@@ -59,6 +62,8 @@ export function HandoffView({ data }: { data: BotHandoffAnalytics }) {
 
   return (
     <TabBody>
+      {top}
+
       <Lead>
         Передача — метка бота «передано менеджеру»: бот отправил карточку клиента в группу «Передача от бота» и дальше
         молчит. Если за сутки никто не ответил, бот шлёт карточку повторно — тогда считается время последней карточки.
