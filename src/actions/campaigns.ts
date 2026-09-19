@@ -628,7 +628,9 @@ export async function saveRecurringCampaign(
   if (parsed.data.voiceId && !voice) return { success: false, error: 'Такого голосового нет' }
 
   const admin = createAdminClient()
-  const { data: created, error } = await admin.from('recurring_campaigns').insert({
+  // id передан — правим существующее правило, иначе создаём новое.
+  const ruleId = typeof (input as { id?: unknown })?.id === 'string' ? (input as { id: string }).id : null
+  const fields = {
     title: parsed.data.title,
     message: parsed.data.message || null,
     voice_id: voice?.id ?? null,
@@ -640,8 +642,10 @@ export async function saveRecurringCampaign(
     from_date: parsed.data.periodMode === 'from_date' ? parsed.data.fromDate : null,
     include_manager_chats: parsed.data.includeManagerChats,
     skip_reached_today: parsed.data.skipReachedToday,
-    created_by: me.id,
-  }).select('id').single()
+  }
+  const { data: created, error } = ruleId
+    ? await admin.from('recurring_campaigns').update(fields).eq('id', ruleId).is('deleted_at', null).select('id').single()
+    : await admin.from('recurring_campaigns').insert({ ...fields, created_by: me.id }).select('id').single()
   if (error) {
     if (error.message.includes('recurring_campaigns')) {
       return {

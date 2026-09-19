@@ -12,7 +12,7 @@ import { createAdminClient } from '@/lib/supabase/admin'
 import { getChatControlStatus, setChatBotEnabled } from '@/lib/chat-control'
 import { sendGreenApiMessage, toGreenApiChatId } from '@/lib/greenapi/client'
 import { recordAudit } from '@/actions/audit'
-import { isAllowedBotControlRole } from '@/lib/bot-control-roles'
+import { isAllowedChatControlRole } from '@/lib/bot-control-roles'
 import type {
   Deal,
   DealEmployee,
@@ -354,6 +354,9 @@ export async function sendDealMessage(dealId: string, text: string): Promise<Dea
   try {
     await sendGreenApiMessage(toGreenApiChatId(phone), trimmed)
   } catch (error) {
+    // Не ушло — убираем запись: иначе в истории висело бы сообщение, которого
+    // клиент не получал, а бот считал бы, что чат ведёт менеджер, и молчал.
+    await admin.from('chat_messages').delete().eq('amo_message_id', `ga:${messageId}`)
     return { success: false, error: error instanceof Error ? error.message : 'Не удалось отправить' }
   }
   revalidatePath('/dashboard/deals')
@@ -480,7 +483,7 @@ export async function getDealBotControl(dealId: string): Promise<DealBotControl>
 export async function setDealBotControl(chatId: string, botEnabled: boolean): Promise<DealActionResult> {
   const me = await getViewer()
   if (!me) return { success: false, error: 'Нет авторизации' }
-  if (!isAllowedBotControlRole(me.role)) return { success: false, error: 'Недостаточно прав' }
+  if (!isAllowedChatControlRole(me.role)) return { success: false, error: 'Недостаточно прав' }
   try {
     const admin = createAdminClient()
     const { data: before } = await admin

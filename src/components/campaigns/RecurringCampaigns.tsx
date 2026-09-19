@@ -5,7 +5,7 @@
 // там они помечены как автоматические.
 
 import { useEffect, useRef, useState, useTransition } from 'react'
-import { Plus, Power, RefreshCw, Repeat, Trash2, UsersRound } from 'lucide-react'
+import { Pencil, Plus, Power, RefreshCw, Repeat, Trash2, UsersRound } from 'lucide-react'
 import { toast } from 'sonner'
 import { useRouter } from 'next/navigation'
 import {
@@ -133,6 +133,7 @@ export default function RecurringCampaigns({ rules, lastCampaignAt }: { rules: R
   const [includeManagerChats, setIncludeManagerChats] = useState(false)
   const [skipReachedToday, setSkipReachedToday] = useState(true)
   const [refreshing, setRefreshing] = useState<string | null>(null)
+  const [editingId, setEditingId] = useState<string | null>(null)
 
   const period = PERIODS.find((p) => p.key === periodKey) ?? PERIODS[0]
   const options: RecurringAudienceOptions = {
@@ -151,6 +152,7 @@ export default function RecurringCampaigns({ rules, lastCampaignAt }: { rules: R
 
     startTransition(async () => {
       const result = await saveRecurringCampaign({
+        id: editingId ?? undefined,
         title, message, voiceId: voiceId || undefined,
         audience, intervalDays, sendAtTime,
         windowDays: options.window_days,
@@ -160,10 +162,31 @@ export default function RecurringCampaigns({ rules, lastCampaignAt }: { rules: R
         skipReachedToday,
       })
       if (!result.success) return void toast.error(result.error)
-      toast.success('Автоматическая рассылка создана')
-      setTitle(''); setMessage(''); setVoiceId(''); setOpen(false)
+      toast.success(editingId ? 'Изменения сохранены' : 'Автоматическая рассылка создана')
+      setTitle(''); setMessage(''); setVoiceId(''); setOpen(false); setEditingId(null)
       router.refresh()
     })
+  }
+
+  /** Открыть форму с настройками правила — для правки. */
+  function startEdit(rule: RecurringCampaignRow) {
+    setEditingId(rule.id)
+    setTitle(rule.title)
+    setMessage(rule.message ?? '')
+    setVoiceId(rule.voice_id ?? '')
+    setAudience(rule.audience)
+    setIntervalDays(rule.interval_days)
+    setSendAtTime(rule.send_at_time.slice(0, 5))
+    const key = rule.period_mode === 'hours24' ? 'h24'
+      : rule.period_mode === 'since_last' ? 'since'
+        : rule.period_mode === 'from_date' ? 'date'
+          : rule.window_days ? (PERIODS.find((p) => p.mode === 'days' && p.days === rule.window_days)?.key ?? 'd1') : 'all'
+    setPeriodKey(key)
+    setFromDate(rule.from_date ?? '')
+    setIncludeManagerChats(rule.include_manager_chats)
+    setSkipReachedToday(rule.skip_reached_today)
+    setOpen(true)
+    document.getElementById('recurring-campaigns')?.scrollIntoView({ block: 'start' })
   }
 
   function refreshEstimate(id: string) {
@@ -196,13 +219,13 @@ export default function RecurringCampaigns({ rules, lastCampaignAt }: { rules: R
   }
 
   return (
-    <section className="mt-8">
+    <section id="recurring-campaigns" className="mt-8">
       <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
         <div className="flex items-center gap-2">
           <Repeat className="size-4" style={{ color: 'var(--ink-3)' }} />
           <h2 className="text-base font-bold" style={{ color: 'var(--ink)' }}>Автоматические рассылки</h2>
         </div>
-        <Button variant={open ? 'outline' : 'default'} size="sm" onClick={() => setOpen((v) => !v)}>
+        <Button variant={open ? 'outline' : 'default'} size="sm" onClick={() => { setOpen((v) => !v); setEditingId(null) }}>
           <Plus /> {open ? 'Свернуть' : 'Создать'}
         </Button>
       </div>
@@ -335,7 +358,7 @@ export default function RecurringCampaigns({ rules, lastCampaignAt }: { rules: R
           <AudienceBadge options={options} lastCampaignAt={lastCampaignAt} />
 
           <Button className="w-full" disabled={pending} onClick={save}>
-            {pending ? 'Сохраняем…' : 'Создать автоматическую рассылку'}
+            {pending ? 'Сохраняем…' : editingId ? 'Сохранить изменения' : 'Создать автоматическую рассылку'}
           </Button>
         </div>
       )}
@@ -401,6 +424,9 @@ export default function RecurringCampaigns({ rules, lastCampaignAt }: { rules: R
               </div>
 
               <div className="mt-3 flex flex-wrap gap-2">
+                <Button variant="outline" size="sm" disabled={pending} onClick={() => startEdit(rule)}>
+                  <Pencil /> Изменить
+                </Button>
                 <Button variant="outline" size="sm" disabled={pending} onClick={() => toggle(rule)}>
                   <Power /> {rule.is_active ? 'Остановить' : 'Включить'}
                 </Button>

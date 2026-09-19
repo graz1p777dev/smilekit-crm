@@ -646,9 +646,23 @@ export default function CampaignsClient({ initialData }: { initialData: Campaign
               <div className="flex gap-3"><Clock3 className="mt-0.5 size-4 shrink-0 text-violet-200" /><div><p className="text-xs text-white/55">Отправка</p><p className="mt-1 text-sm font-semibold">{scheduleLabel}</p></div></div>
             </div>
             <div className="space-y-3 p-6 text-sm text-white/75">
-              <div className="flex gap-3"><ShieldCheck className="size-4 shrink-0 text-emerald-300" /><span>Купившие автоматически исключены</span></div>
-              <div className="flex gap-3"><UsersRound className="size-4 shrink-0 text-emerald-300" /><span>Чаты, где менеджер писал последние 30 минут, не затрагиваются</span></div>
-              <div className="flex gap-3"><CheckCircle2 className="size-4 shrink-0 text-emerald-300" /><span>Повторная отправка одному клиенту заблокирована</span></div>
+              {/* Подписи — по реальным настройкам формы, а не всегда одни и те же. */}
+              <div className="flex gap-3"><ShieldCheck className="size-4 shrink-0 text-emerald-300" /><span>
+                {audience === 'not_purchased' && 'Купившие исключены: есть заказ по сделке или по номеру'}
+                {audience === 'purchased' && 'Только купившие: есть заказ по сделке или по номеру'}
+                {audience === 'all' && 'Купившие не исключаются — уйдёт всем'}
+              </span></div>
+              <div className="flex gap-3"><UsersRound className="size-4 shrink-0 text-emerald-300" /><span>
+                {includeManagerChats
+                  ? 'Уйдёт и в чаты, где менеджер пишет прямо сейчас'
+                  : 'Чаты, где менеджер писал последние 30 минут, не затрагиваются'}
+              </span></div>
+              <div className="flex gap-3"><CheckCircle2 className="size-4 shrink-0 text-emerald-300" /><span>
+                {skipReachedToday
+                  ? 'Кто уже получил рассылку сегодня, второй раз не получит'
+                  : 'Повтор не блокируется: получившие сегодня получат ещё раз'}
+              </span></div>
+              <div className="flex gap-3"><ShieldCheck className="size-4 shrink-0 text-emerald-300" /><span>Номера из стоп-списка исключены всегда</span></div>
             </div>
           </aside>
         </div>

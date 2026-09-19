@@ -51,6 +51,11 @@ export default function DealCard({
   onDragEnd,
   onClick,
 }: Props) {
+  // «Оформлено» — успех, зелёным; «Оформляет» — нужно внимание менеджера,
+  // янтарным. Красный в CRM — только сигнал ошибки (CLAUDE.md).
+  const tone = urgentLabel === 'Оформлено'
+    ? { line: '#047857', soft: '#ecfdf5', badge: '#047857' }
+    : { line: '#b45309', soft: '#fffbeb', badge: '#b45309' }
   const source = DEAL_SOURCE[deal.source]
   const SourceIcon = source.icon
   const responsible = deal.responsible_employee_id
@@ -71,12 +76,12 @@ export default function DealCard({
       className={cn(
         'group relative cursor-pointer select-none rounded-xl border bg-white p-3 shadow-sm',
         'transition-all duration-150 hover:-translate-y-0.5 hover:shadow-md',
-        urgentLabel ? 'border-[var(--bad)] hover:border-[var(--bad)]' : 'border-gray-100 hover:border-gray-200',
+        urgentLabel ? '' : 'border-gray-100 hover:border-gray-200',
         dragging && 'opacity-40 rotate-[1.5deg]'
       )}
       style={{
         borderLeft: `3px solid ${stageColor}`,
-        ...(urgentLabel && { background: 'var(--bad-soft)', boxShadow: '0 0 0 1px var(--bad)' }),
+        ...(urgentLabel && { borderColor: tone.line, background: tone.soft, boxShadow: `0 0 0 1px ${tone.line}` }),
       }}
     >
       <div
@@ -89,7 +94,7 @@ export default function DealCard({
       {urgentLabel && (
         <span
           className="mb-1.5 inline-flex items-center rounded-md px-1.5 py-0.5 text-[10px] font-bold uppercase tracking-wide text-white"
-          style={{ background: 'var(--bad)' }}
+          style={{ background: tone.badge }}
         >
           {urgentLabel}
         </span>
