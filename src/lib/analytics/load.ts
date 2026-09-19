@@ -12,6 +12,7 @@ import {
   type ClientType,
 } from '@/lib/analytics/client-types'
 import { computeStaffHours, type StaffHours } from '@/lib/analytics/shift-hours'
+import { buildBotFunnel, type BotFunnel } from '@/lib/analytics/bot-funnel'
 
 // ─── Кэш на 2 минуты по периоду ─────────────────────────────────────────────
 
@@ -366,5 +367,19 @@ export async function loadAlmostBought(range: PeriodRange): Promise<AlmostBought
   return cached(`almost:${range.fromIso}:${range.toIso}`, async () => {
     const raw = await rpc<Omit<AlmostBoughtAnalytics, 'range' | 'generatedAt'>>('analytics_almost_bought', rangeArgs(range))
     return { ...raw, range, generatedAt: new Date().toISOString() }
+  })
+}
+
+// ─── Воронка бота по новым лидам (054) ──────────────────────────────────────
+
+export interface BotFunnelAnalytics extends BotFunnel {
+  range: PeriodRange
+  generatedAt: string
+}
+
+export async function loadBotFunnel(range: PeriodRange): Promise<BotFunnelAnalytics> {
+  return cached(`botfunnel:${range.fromIso}:${range.toIso}`, async () => {
+    const raw = await rpc<{ leads: number; masks: Record<string, number> }>('analytics_bot_lead_funnel', rangeArgs(range))
+    return { ...buildBotFunnel(raw.leads, raw.masks), range, generatedAt: new Date().toISOString() }
   })
 }

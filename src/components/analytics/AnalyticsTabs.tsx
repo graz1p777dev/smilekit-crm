@@ -24,7 +24,7 @@ type Tab = 'leads' | 'almost' | 'handoff' | 'funnel' | 'purchases' | 'staff' | '
 const TABS: { key: Tab; label: string; icon: LucideIcon }[] = [
   { key: 'leads', label: 'Лиды и конверсия', icon: MessagesSquare },
   { key: 'almost', label: 'Почти купили', icon: HandCoins },
-  { key: 'handoff', label: 'Передача от бота', icon: Handshake },
+  { key: 'handoff', label: 'Бот и передача', icon: Handshake },
   { key: 'funnel', label: 'Воронка сделок', icon: Filter },
   { key: 'purchases', label: 'Покупки', icon: ShoppingBag },
   { key: 'staff', label: 'Сотрудники', icon: UsersRound },
