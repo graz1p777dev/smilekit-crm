@@ -72,7 +72,7 @@ function RuleButton({ text, open, onClick, light }: { text: string; open: boolea
       title={text}
       aria-expanded={open}
       aria-label="Как считается"
-      className="grid size-6 shrink-0 place-items-center rounded-full transition-colors"
+      className="-m-2 grid size-10 shrink-0 place-items-center rounded-full transition-colors md:m-0 md:size-6"
       style={{
         color: light ? 'rgba(255,255,255,0.85)' : INK_3,
         background: open ? (light ? 'rgba(255,255,255,0.18)' : BRAND_SOFT) : 'transparent',
@@ -187,7 +187,7 @@ export function Kpi({
         </span>
         {rule && <RuleButton text={rule} open={open} onClick={toggle} light={hero} />}
       </div>
-      <div className="mt-3 text-[26px] font-bold leading-none tracking-tight" style={{ color: hero ? '#fff' : INK }}>
+      <div className="mt-3 break-words text-[22px] font-bold leading-tight tracking-tight sm:text-[26px] sm:leading-none" style={{ color: hero ? '#fff' : INK }}>
         {value}
       </div>
       <div className="mt-1.5 text-[13px] font-medium leading-snug" style={{ color: hero ? 'rgba(255,255,255,0.92)' : INK_2 }}>
@@ -429,14 +429,18 @@ export function PersonRow({
   return (
     <li className="flex items-start gap-3 py-2.5" style={{ borderTop: `1px solid ${LINE}` }}>
       <Avatar name={name} />
+      {/* Плашка справа — только рядом с именем: подробности ниже идут на всю
+          ширину, иначе на телефоне они сжимаются в узкую колонку. */}
       <div className="min-w-0 flex-1">
-        <div className="flex flex-wrap items-baseline gap-x-2 text-sm">
-          <ClientCell name={name} dealId={dealId} />
-          <span className="text-xs tabular-nums" style={{ color: INK_3 }}>{phoneLabel(chatId)}</span>
+        <div className="flex items-start justify-between gap-2">
+          <div className="flex min-w-0 flex-wrap items-baseline gap-x-2 text-sm">
+            <ClientCell name={name} dealId={dealId} />
+            <span className="text-xs tabular-nums" style={{ color: INK_3 }}>{phoneLabel(chatId)}</span>
+          </div>
+          {right}
         </div>
         {detail && <div className="mt-0.5 text-xs" style={{ color: INK_2 }}>{detail}</div>}
       </div>
-      {right}
     </li>
   )
 }
@@ -452,7 +456,7 @@ export function ShowMore<T>({ items, initial = 8, render }: { items: T[]; initia
         <button
           type="button"
           onClick={() => setAll((v) => !v)}
-          className="mt-2 w-full rounded-xl py-2 text-xs font-semibold transition-colors hover:bg-[#ebe2f7]"
+          className="mt-2 min-h-10 w-full rounded-xl py-2 text-xs font-semibold transition-colors hover:bg-[#ebe2f7]"
           style={{ background: BRAND_SOFT, color: BRAND }}
         >
           {all ? 'Свернуть' : `Показать все ${num(items.length)}`}
@@ -478,11 +482,14 @@ export function Expand({ summary, children }: { summary: React.ReactNode; childr
   )
 }
 
-/** Таблица, которая на узком экране прокручивается сама, а не страница. */
+/**
+ * Таблица, которая на узком экране прокручивается сама, а не страница.
+ * Первая колонка (кто/что) при прокрутке остаётся на месте.
+ */
 export function ScrollTable({ head, children, minWidth = 520 }: { head: string[]; children: React.ReactNode; minWidth?: number }) {
   return (
-    <div className="-mx-1 overflow-x-auto px-1">
-      <table className="w-full text-xs" style={{ minWidth }}>
+    <div className="-mx-1 overflow-x-auto overscroll-x-contain px-1">
+      <table className="w-full text-xs [&_tr>*:first-child]:sticky [&_tr>*:first-child]:left-0 [&_tr>*:first-child]:z-[1] [&_tr>*:first-child]:bg-white" style={{ minWidth }}>
         <thead>
           <tr className="text-left" style={{ color: INK_3 }}>
             {head.map((h) => <th key={h} className="whitespace-nowrap py-2 pr-3 font-medium">{h}</th>)}
@@ -499,7 +506,7 @@ export function ClientCell({ name, dealId }: { name: string | null; dealId: stri
   const label = name?.trim() || 'Без имени'
   if (!dealId) return <span className="font-medium" style={{ color: INK }}>{label}</span>
   return (
-    <a href={`/dashboard/deals?deal=${dealId}`} className="font-semibold underline-offset-2 hover:underline" style={{ color: BRAND }}>
+    <a href={`/dashboard/deals?deal=${dealId}`} className="-my-2.5 py-2.5 font-semibold underline-offset-2 hover:underline" style={{ color: BRAND }}>
       {label}
     </a>
   )
