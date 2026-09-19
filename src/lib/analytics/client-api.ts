@@ -5,11 +5,12 @@
 
 import type { PeriodInput, PeriodRange } from './period'
 import type {
-  BotHandoffAnalytics, CampaignStat, FunnelAnalytics, LeadsAnalytics, PurchasesAnalytics, StaffAnalytics,
+  AlmostBoughtAnalytics, BotHandoffAnalytics, CampaignStat, FunnelAnalytics, LeadsAnalytics, PurchasesAnalytics,
+  StaffAnalytics,
 } from './load'
 
 export type {
-  BotHandoffAnalytics, CampaignStat, ChatRef, FunnelAnalytics, LeadsAnalytics, PurchasesAnalytics,
+  AlmostBoughtAnalytics, AlmostRow, ReadySignal, BotHandoffAnalytics, CampaignStat, ChatRef, FunnelAnalytics, LeadsAnalytics, PurchasesAnalytics,
   ReplyGroup, StaffAnalytics, StaffRow, StaffWork, TypeClientRow, WaitingRow,
 } from './load'
 
@@ -40,3 +41,4 @@ export const getBotHandoffAnalytics = (period: PeriodInput) => fetchTab<BotHando
 export const getFunnelAnalytics = (period: PeriodInput) => fetchTab<FunnelAnalytics>('funnel', period)
 export const getCampaignAnalytics = (period: PeriodInput) =>
   fetchTab<{ range: PeriodRange; campaigns: CampaignStat[] }>('campaigns', period)
+export const getAlmostBoughtAnalytics = (period: PeriodInput) => fetchTab<AlmostBoughtAnalytics>('almost', period)

@@ -6,9 +6,10 @@
 
 import { useCallback, useState } from 'react'
 import type { LucideIcon } from 'lucide-react'
-import { Bot, CalendarDays, Filter, Handshake, Megaphone, MessagesSquare, ShoppingBag, UsersRound } from 'lucide-react'
+import { Bot, CalendarDays, Filter, HandCoins, Handshake, Megaphone, MessagesSquare, ShoppingBag, UsersRound } from 'lucide-react'
 import type { PeriodInput, PeriodKind } from '@/lib/analytics/period'
 import LeadsAnalyticsView from './ConversionAnalytics'
+import AlmostBoughtAnalytics from './AlmostBoughtAnalytics'
 import PurchaseAnalytics from './PurchaseAnalytics'
 import StaffAnalytics from './StaffAnalytics'
 import BotAnalytics from './BotAnalytics'
@@ -18,10 +19,11 @@ import CampaignAnalytics from './CampaignAnalytics'
 import type { Stamp } from './useAnalyticsData'
 import { BRAND, BRAND_SOFT, INK, INK_2, INK_3, LINE } from './viz'
 
-type Tab = 'leads' | 'handoff' | 'funnel' | 'purchases' | 'staff' | 'campaigns' | 'bot'
+type Tab = 'leads' | 'almost' | 'handoff' | 'funnel' | 'purchases' | 'staff' | 'campaigns' | 'bot'
 
 const TABS: { key: Tab; label: string; icon: LucideIcon }[] = [
   { key: 'leads', label: 'Лиды и конверсия', icon: MessagesSquare },
+  { key: 'almost', label: 'Почти купили', icon: HandCoins },
   { key: 'handoff', label: 'Передача от бота', icon: Handshake },
   { key: 'funnel', label: 'Воронка сделок', icon: Filter },
   { key: 'purchases', label: 'Покупки', icon: ShoppingBag },
@@ -157,7 +159,8 @@ export default function AnalyticsTabs() {
       </header>
 
       {tab === 'leads' && <LeadsAnalyticsView period={period} onStamp={onStamp} />}
-      {tab === 'handoff' && <HandoffAnalytics period={period} onStamp={onStamp} />}
+      {tab === 'almost' && <AlmostBoughtAnalytics period={period} onStamp={onStamp} />}
+      {tab === 'handoff' &&<HandoffAnalytics period={period} onStamp={onStamp} />}
       {tab === 'funnel' && <FunnelAnalytics period={period} onStamp={onStamp} />}
       {tab === 'purchases' && <PurchaseAnalytics period={period} onStamp={onStamp} />}
       {tab === 'campaigns' && <CampaignAnalytics period={period} onStamp={onStamp} />}

@@ -334,3 +334,37 @@ export async function loadCampaigns(range: PeriodRange): Promise<{ range: Period
     campaigns: await rpc<CampaignStat[]>('analytics_campaigns', rangeArgs(range)),
   }))
 }
+
+// ─── Почти купили (053) ─────────────────────────────────────────────────────
+
+export type ReadySignal = 'qr' | 'cod' | 'ready'
+
+export interface AlmostRow extends ChatRef {
+  qrAt: string | null
+  codAt: string | null
+  readyAt: string | null
+  lastSignalAt: string
+  /** Кто написал последним: клиент, человек, бот; null — сообщений диалога нет. */
+  lastBy: 'c' | 'h' | 'b' | null
+  lastMsgAt: string | null
+}
+
+export interface AlmostBoughtAnalytics {
+  range: PeriodRange
+  generatedAt: string
+  /** Клиентов (номеров) с сигналом готовности в периоде. */
+  signaled: number
+  /** Из них заказали после первого сигнала. */
+  bought: number
+  almost: number
+  byKind: Record<ReadySignal, number>
+  signaledByKind: Record<ReadySignal, number>
+  rows: AlmostRow[]
+}
+
+export async function loadAlmostBought(range: PeriodRange): Promise<AlmostBoughtAnalytics> {
+  return cached(`almost:${range.fromIso}:${range.toIso}`, async () => {
+    const raw = await rpc<Omit<AlmostBoughtAnalytics, 'range' | 'generatedAt'>>('analytics_almost_bought', rangeArgs(range))
+    return { ...raw, range, generatedAt: new Date().toISOString() }
+  })
+}
