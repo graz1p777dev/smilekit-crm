@@ -60,13 +60,15 @@ function Heatmap({ data }: { data: LoadAnalytics }) {
 
   return (
     <div>
-      <div className="relative" onMouseLeave={() => setActive(null)}>
-        <div className="grid gap-[2px]" style={{ gridTemplateColumns: '22px repeat(24, minmax(0, 1fr))' }} role="img"
+      {/* На телефоне 24 колонки не влезают читаемо: сетка шире карточки и
+          прокручивается внутри неё, дни недели остаются на месте. */}
+      <div className="relative overflow-x-auto overscroll-x-contain pb-1" onMouseLeave={() => setActive(null)}>
+        <div className="grid min-w-[520px] gap-[2px] md:min-w-0" style={{ gridTemplateColumns: '26px repeat(24, minmax(0, 1fr))' }} role="img"
           aria-label="Сколько разных клиентов писали по дням недели и часам">
           {DOW.map((label, di) => {
             const d = di + 1
             return [
-              <div key={`l${d}`} className="flex items-center text-[10px] font-medium" style={{ color: INK_3 }}>{label}</div>,
+              <div key={`l${d}`} className="sticky left-0 z-[1] flex items-center bg-white text-[10px] font-medium" style={{ color: INK_3 }}>{label}</div>,
               ...Array.from({ length: 24 }, (_, h) => {
                 const n = grid.get(`${d}:${h}`) ?? 0
                 const on = active?.d === d && active.h === h
@@ -79,7 +81,7 @@ function Heatmap({ data }: { data: LoadAnalytics }) {
               }),
             ]
           })}
-          <div />
+          <div className="sticky left-0 z-[1] bg-white" />
           {Array.from({ length: 24 }, (_, h) => (
             <div key={`h${h}`} className="text-center text-[9px] tabular-nums" style={{ color: INK_3 }}>{h % 3 === 0 ? h : ''}</div>
           ))}

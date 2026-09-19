@@ -251,7 +251,7 @@ export default function EmployeesPage() {
   const thProps = { sortKey, sortDir, onSort: handleSort }
 
   return (
-    <div className="min-h-screen" style={{ backgroundColor: '#fdfbfb' }}>
+    <div className="min-h-screen max-md:[&_[data-slot=button]]:min-h-9 max-md:[&_[data-slot=button]]:min-w-9 max-md:[&_[data-slot=input]]:min-h-10 max-md:[&_[data-slot=select-trigger]]:min-h-10" style={{ backgroundColor: '#fdfbfb' }}>
       {/* Header */}
       <div
         className="flex items-center justify-between px-6 py-4"
@@ -290,7 +290,7 @@ export default function EmployeesPage() {
         <div className="rounded-2xl overflow-hidden" style={{ backgroundColor: '#ffffff' }}>
           {/* Toolbar */}
           <div className="flex flex-wrap items-center gap-3 p-4" style={{ borderBottom: '1px solid #ebebee' }}>
-            <div className="relative flex-1" style={{ minWidth: 220 }}>
+            <div className="relative min-w-full flex-1 sm:min-w-[220px]">
               <Search style={{
                 position: 'absolute', left: 12, top: '50%',
                 transform: 'translateY(-50%)', width: 15, height: 15, color: '#7d7174',

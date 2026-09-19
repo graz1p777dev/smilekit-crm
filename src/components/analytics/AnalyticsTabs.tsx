@@ -53,7 +53,7 @@ function PeriodPicker({ value, onChange }: { value: PeriodInput; onChange: (p: P
   const customValid = /^\d{4}-\d{2}-\d{2}$/.test(from) && /^\d{4}-\d{2}-\d{2}$/.test(to) && from <= to
 
   const segment = (active: boolean) =>
-    `shrink-0 rounded-lg px-3 py-1.5 text-xs font-semibold transition-colors ${active ? '' : 'hover:bg-white/70'}`
+    `min-h-9 shrink-0 rounded-lg px-3 py-1.5 text-xs font-semibold transition-colors md:min-h-0 ${active ? '' : 'hover:bg-white/70'}`
   const segmentStyle = (active: boolean) =>
     active
       ? { background: '#fff', color: BRAND, boxShadow: '0 1px 3px rgba(23,16,42,0.12)' }
@@ -61,7 +61,7 @@ function PeriodPicker({ value, onChange }: { value: PeriodInput; onChange: (p: P
 
   return (
     <div className="flex min-w-0 flex-col gap-2">
-      <div className="-mx-4 overflow-x-auto px-4 [scrollbar-width:none] md:mx-0 md:px-0" role="radiogroup" aria-label="Период">
+      <div className="-mx-4 overflow-x-auto overscroll-x-contain px-4 [scrollbar-width:none] md:mx-0 md:px-0" role="radiogroup" aria-label="Период">
         <div className="inline-flex gap-0.5 rounded-xl p-1" style={{ background: '#ece6f5' }}>
           {PERIODS.map((p) => {
             const active = value.kind === p.key && !customOpen
@@ -85,15 +85,15 @@ function PeriodPicker({ value, onChange }: { value: PeriodInput; onChange: (p: P
       {customOpen && (
         <div className="flex flex-wrap items-center gap-1.5 text-xs" style={{ color: INK_3 }}>
           <input type="date" value={from} onChange={(e) => setFrom(e.target.value)}
-            className="rounded-lg bg-white px-2 py-1.5" style={{ border: `1px solid ${LINE}`, color: INK }} aria-label="С даты" />
+            className="min-h-10 min-w-0 flex-1 rounded-lg bg-white px-2 py-1.5 sm:flex-none md:min-h-0" style={{ border: `1px solid ${LINE}`, color: INK }} aria-label="С даты" />
           —
           <input type="date" value={to} onChange={(e) => setTo(e.target.value)}
-            className="rounded-lg bg-white px-2 py-1.5" style={{ border: `1px solid ${LINE}`, color: INK }} aria-label="По дату" />
+            className="min-h-10 min-w-0 flex-1 rounded-lg bg-white px-2 py-1.5 sm:flex-none md:min-h-0" style={{ border: `1px solid ${LINE}`, color: INK }} aria-label="По дату" />
           <button
             type="button"
             disabled={!customValid}
             onClick={() => onChange({ kind: 'custom', from, to })}
-            className="rounded-lg px-3 py-1.5 font-semibold text-white disabled:opacity-40"
+            className="min-h-10 w-full rounded-lg px-3 py-1.5 font-semibold text-white disabled:opacity-40 sm:w-auto md:min-h-0"
             style={{ background: BRAND }}
           >
             Показать
@@ -131,7 +131,7 @@ export default function AnalyticsTabs() {
           </p>
         </div>
 
-        <div className="-mx-4 overflow-x-auto px-4 [scrollbar-width:none] md:mx-0 md:px-0" style={{ borderBottom: `1px solid ${LINE}` }}>
+        <div className="-mx-4 overflow-x-auto overscroll-x-contain px-4 [scrollbar-width:none] md:mx-0 md:px-0" style={{ borderBottom: `1px solid ${LINE}` }}>
           <div className="flex w-max gap-1" role="tablist">
             {TABS.map((t) => {
               const active = tab === t.key

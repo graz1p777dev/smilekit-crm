@@ -244,7 +244,7 @@ export default function CustomersPage() {
   }
 
   return (
-    <div className="p-4 md:p-8 flex flex-col gap-5">
+    <div className="p-4 md:p-8 flex flex-col gap-5 max-md:[&_[data-slot=button]]:min-h-9">
       <div className="flex flex-wrap items-center justify-between gap-3">
         <div>
           <h1 className="text-xl font-bold" style={{ color: '#1b1517' }}>Клиенты</h1>
@@ -254,27 +254,27 @@ export default function CustomersPage() {
             {buyers.filter((c) => c.ordersCount > 1).length} с повторной покупкой
           </p>
         </div>
-        <div className="flex items-center gap-2">
+        <div className="flex w-full flex-wrap items-center gap-2 sm:w-auto">
           <div className="flex gap-1 rounded-xl p-1" style={{ background: '#fdfbfb', border: '1px solid #ece5e5' }}>
             {FILTERS.map((f) => (
               <button
                 key={f.key}
                 onClick={() => setFilter(f.key)}
-                className="rounded-lg px-3 py-1.5 text-xs font-semibold transition-colors"
+                className="min-h-8 rounded-lg px-3 py-1.5 text-xs font-semibold transition-colors"
                 style={filter === f.key ? { background: '#5115a4', color: '#fff' } : { color: '#6b6063' }}
               >
                 {f.label}
               </button>
             ))}
           </div>
-          <div className="relative">
+          <div className="relative min-w-0 flex-1 basis-full sm:flex-none sm:basis-auto">
             <Search size={14} className="absolute left-3 top-1/2 -translate-y-1/2" style={{ color: '#9a93a8' }} />
             <input
               value={search}
               onChange={(e) => setSearch(e.target.value)}
               placeholder="Поиск по имени, номеру или нику"
-              className="rounded-xl pl-8 pr-3 py-2 text-sm outline-none"
-              style={{ border: '1px solid #ece5e5', background: '#fff', minWidth: 220 }}
+              className="h-10 w-full rounded-xl pl-8 pr-3 py-2 text-base outline-none sm:w-auto sm:min-w-[220px] md:h-auto md:text-sm"
+              style={{ border: '1px solid #ece5e5', background: '#fff' }}
             />
           </div>
         </div>
@@ -285,8 +285,10 @@ export default function CustomersPage() {
       ) : filtered.length === 0 ? (
         <p className="text-sm" style={{ color: '#6b6063' }}>Ничего не найдено</p>
       ) : (
-        <div className="overflow-hidden rounded-2xl bg-white" style={{ border: '1px solid #ece5e5' }}>
-          <table className="w-full text-sm">
+        // Таблица на телефоне прокручивается внутри своей рамки, имя клиента
+        // (первая колонка) остаётся на месте.
+        <div className="overflow-x-auto overscroll-x-contain rounded-2xl bg-white" style={{ border: '1px solid #ece5e5' }}>
+          <table className="w-full min-w-[760px] text-sm md:min-w-0 max-md:[&_tr>*:first-child]:sticky max-md:[&_tr>*:first-child]:left-0 max-md:[&_tr>*:first-child]:z-[1] max-md:[&_tbody_tr>td:first-child]:bg-white max-md:[&_thead_tr>th:first-child]:bg-[#faf8f7]">
             <thead>
               <tr className="text-xs uppercase text-left" style={{ color: '#6b6063', background: '#faf8f7' }}>
                 <th className="px-4 py-3 font-medium">Клиент</th>
@@ -302,7 +304,7 @@ export default function CustomersPage() {
             <tbody>
               {filtered.map((c) => (
                 <tr key={c.key} style={{ borderTop: '1px solid #f0eaea' }}>
-                  <td className="px-4 py-3">
+                  <td className="max-w-[160px] px-4 py-3 md:max-w-none">
                     <span className="font-medium" style={{ color: '#1b1517' }}>{c.name}</span>
                     {c.ordersCount > 1 && (
                       <span
@@ -321,7 +323,7 @@ export default function CustomersPage() {
                       </span>
                     )}
                   </td>
-                  <td className="px-4 py-3 tabular-nums" style={{ color: '#4e4560' }}>
+                  <td className="whitespace-nowrap px-4 py-3 tabular-nums" style={{ color: '#4e4560' }}>
                     {c.phone || (c.username ? `@${c.username}` : '—')}
                   </td>
                   <td className="px-4 py-3 text-xs" style={{ color: '#6b6063' }}>{c.source}</td>
@@ -365,7 +367,7 @@ export default function CustomersPage() {
                   {' · '}{openCustomer.source}
                 </p>
               </div>
-              <button onClick={() => setOpenKey(null)}><X size={18} color="#6b6063" /></button>
+              <button onClick={() => setOpenKey(null)} className="-m-2 grid size-10 shrink-0 place-items-center rounded-lg" aria-label="Закрыть"><X size={18} color="#6b6063" /></button>
             </div>
 
             {openCustomer.phone.length >= 9 && !(openProfile && openProfile.data === null) && (
@@ -412,7 +414,7 @@ export default function CustomersPage() {
               ) : (
                 <div className="flex flex-col gap-1.5">
                   {openCustomer.orders.map((o) => (
-                    <div key={o.id} className="flex items-center justify-between text-xs rounded-lg px-3 py-2" style={{ background: '#fdfbfb' }}>
+                    <div key={o.id} className="flex flex-wrap items-center justify-between gap-x-3 gap-y-1 text-xs rounded-lg px-3 py-2" style={{ background: '#fdfbfb' }}>
                       <span style={{ color: '#4e4560' }}>{new Date(o.created_at).toLocaleDateString('ru-RU')}</span>
                       <span style={{ color: '#1b1517' }}>{o.quantity ?? '—'} кор.</span>
                       <span style={{ color: '#1b1517' }}>{o.total_amount ? `${Number(o.total_amount).toLocaleString('ru-RU')} сом` : '—'}</span>

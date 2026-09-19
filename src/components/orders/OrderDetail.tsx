@@ -105,7 +105,7 @@ export default function OrderDetail({
           <button
             onClick={onClose}
             aria-label="Закрыть"
-            className="flex size-8 shrink-0 items-center justify-center rounded-xl"
+            className="flex size-10 shrink-0 items-center justify-center rounded-xl md:size-8"
             style={{ border: '1px solid var(--line)', color: 'var(--ink-3)' }}
           >
             <X size={15} />
@@ -124,7 +124,7 @@ export default function OrderDetail({
                 data-order-status={value}
                 disabled={isPending}
                 onClick={() => changeStatus(value)}
-                className="rounded-xl px-3 py-1.5 text-xs font-medium transition-colors disabled:opacity-60"
+                className="min-h-9 rounded-xl px-3 py-1.5 text-xs font-medium transition-colors disabled:opacity-60 md:min-h-0"
                 style={{
                   background: active ? meta.bg : 'var(--surface)',
                   color: active ? meta.color : 'var(--ink-2)',

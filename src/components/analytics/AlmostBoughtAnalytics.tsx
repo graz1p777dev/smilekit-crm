@@ -84,14 +84,14 @@ export function AlmostView({ data }: { data: AlmostBoughtAnalytics }) {
 
       <Card icon={Wallet} title="Кому написать"
         hint="Свежие сверху — по последнему сигналу. Имя — ссылка на сделку. Справа — кто написал в чате последним.">
-        <div className="-mx-1 mb-3 overflow-x-auto px-1 [scrollbar-width:none]">
+        <div className="-mx-1 mb-3 overflow-x-auto overscroll-x-contain px-1 [scrollbar-width:none]">
           <div className="flex w-max gap-1.5" role="radiogroup" aria-label="Сигнал">
             {[{ key: 'all' as const, short: 'Все', count: data.almost }, ...SIGNALS.map((s) => ({ key: s.key, short: s.short, count: data.byKind[s.key] }))]
               .map((f) => {
                 const active = filter === f.key
                 return (
                   <button key={f.key} type="button" role="radio" aria-checked={active} onClick={() => setFilter(f.key)}
-                    className="shrink-0 rounded-full px-3 py-1.5 text-xs font-semibold transition-colors"
+                    className="min-h-9 shrink-0 rounded-full px-3 py-1.5 text-xs font-semibold transition-colors md:min-h-0"
                     style={active ? { background: BRAND, color: '#fff' } : { background: BRAND_SOFT, color: BRAND }}>
                     {f.short} · {num(f.count)}
                   </button>

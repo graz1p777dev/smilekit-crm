@@ -163,9 +163,9 @@ export default function TasksBoard({ initialTasks, employees, departments, me }:
   const total = tasks.length
 
   return (
-    <div className="flex h-[calc(100vh-52px)] flex-col">
+    <div className="flex h-[calc(100vh-52px)] h-[calc(100dvh-52px)] flex-col">
       {/* Заголовок и панель */}
-      <div className="flex flex-wrap items-center justify-between gap-3 px-6 py-4">
+      <div className="flex flex-wrap items-center justify-between gap-3 px-4 py-3 md:px-6 md:py-4">
         <div>
           <h1 className="text-xl font-bold text-gray-900">Задачи</h1>
           <p className="mt-0.5 text-[13px] text-gray-400">
@@ -175,21 +175,21 @@ export default function TasksBoard({ initialTasks, employees, departments, me }:
           </p>
         </div>
 
-        <div className="flex flex-wrap items-center gap-2">
-          <div className="relative">
+        <div className="flex w-full items-center gap-2 md:w-auto md:flex-wrap">
+          <div className="relative min-w-0 flex-1 md:flex-none">
             <Search size={15} className="absolute left-2.5 top-1/2 -translate-y-1/2 text-gray-400" />
             <input
               value={search}
               onChange={(e) => setSearch(e.target.value)}
               placeholder="Поиск…"
-              className="h-9 w-44 rounded-xl border border-gray-200 bg-white/80 pl-8 pr-3 text-[13px] outline-none transition-colors focus:border-gray-300"
+              className="h-10 w-full rounded-xl border border-gray-200 bg-white/80 pl-8 pr-3 text-base outline-none md:h-9 md:w-44 md:text-[13px] transition-colors focus:border-gray-300"
             />
           </div>
 
           <button
             onClick={() => setOnlyMine((v) => !v)}
             className={cn(
-              'flex h-9 items-center gap-1.5 rounded-xl border px-3 text-[13px] font-medium transition-colors',
+              'flex h-10 shrink-0 items-center gap-1.5 rounded-xl border px-3 text-[13px] font-medium transition-colors md:h-9',
               onlyMine
                 ? 'border-transparent text-white brand-gradient'
                 : 'border-gray-200 bg-white/80 text-gray-600 hover:bg-gray-50'
@@ -202,16 +202,17 @@ export default function TasksBoard({ initialTasks, employees, departments, me }:
 
           <button
             onClick={() => openNew()}
-            className="flex h-9 items-center gap-1.5 rounded-xl px-4 text-[13px] font-semibold text-white brand-gradient brand-shadow transition-transform hover:-translate-y-0.5"
+            className="flex h-10 shrink-0 items-center gap-1.5 rounded-xl px-3 text-[13px] font-semibold text-white brand-gradient brand-shadow transition-transform hover:-translate-y-0.5 md:h-9 md:px-4"
           >
             <Plus size={16} />
-            Новая задача
+            <span className="md:hidden">Задача</span>
+            <span className="hidden md:inline">Новая задача</span>
           </button>
         </div>
       </div>
 
       {/* Доска */}
-      <div className="flex flex-1 gap-4 overflow-x-auto px-6 pb-6 scroll-hidden">
+      <div className="flex min-h-0 flex-1 snap-x snap-mandatory scroll-px-4 gap-3 overflow-x-auto overscroll-x-contain px-4 pb-4 scroll-hidden md:snap-none md:gap-4 md:px-6 md:pb-6">
         {TASK_COLUMNS.map((col) => {
           const list = columns.get(col.key) ?? []
           const isTarget = dragOver?.col === col.key
@@ -228,7 +229,7 @@ export default function TasksBoard({ initialTasks, employees, departments, me }:
                 void performDrop(col.key)
               }}
               className={cn(
-                'flex w-[300px] shrink-0 flex-col rounded-2xl border transition-colors',
+                'flex w-[300px] max-w-[calc(100vw-56px)] shrink-0 snap-start flex-col rounded-2xl border transition-colors md:max-w-none',
                 isTarget && dragId
                   ? 'border-[#cdb8e8] bg-[#f1ebfa]/60'
                   : 'border-gray-100 bg-gray-50/60'
@@ -248,8 +249,9 @@ export default function TasksBoard({ initialTasks, employees, departments, me }:
                 </div>
                 <button
                   onClick={() => openNew(col.key)}
-                  className="rounded-lg p-1 text-gray-400 transition-colors hover:bg-white hover:text-gray-600"
+                  className="-m-1.5 rounded-lg p-2.5 text-gray-400 transition-colors hover:bg-white hover:text-gray-600 md:m-0 md:p-1"
                   title="Добавить в колонку"
+                  aria-label="Добавить в колонку"
                 >
                   <Plus size={15} />
                 </button>
