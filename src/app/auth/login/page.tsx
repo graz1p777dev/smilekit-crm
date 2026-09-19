@@ -36,7 +36,10 @@ export default function LoginPage() {
       // до того, как Next.js начнёт рендер следующей страницы (устраняет race condition).
       window.location.href = '/auth/change-password'
     } else {
-      window.location.href = '/dashboard'
+      // ?next=/instrukciya.html — вернуть туда, откуда пришли (например, из
+      // помощника на странице инструкции). Только пути своего сайта.
+      const next = new URLSearchParams(window.location.search).get('next') ?? ''
+      window.location.href = next.startsWith('/') && !next.startsWith('//') ? next : '/dashboard'
     }
   }
 

@@ -144,6 +144,34 @@
   @media (max-width:380px){
     .quick{grid-template-columns:1fr}
   }
+  /* ── Помощник: спросить ИИ по инструкции (только после входа в CRM) ── */
+  .ask-fab{position:fixed; right:16px; bottom:16px; z-index:40; display:flex; align-items:center; gap:8px; height:48px; padding:0 18px;
+    border:0; border-radius:999px; background:linear-gradient(180deg,var(--brand),var(--brand-strong)); color:#fff; font:600 14.5px 'Manrope',sans-serif;
+    box-shadow:0 10px 28px rgba(81,21,164,.35); cursor:pointer}
+  .ask-fab[hidden]{display:none}
+  .to-top{bottom:76px}
+  .ask-panel{position:fixed; right:16px; bottom:16px; z-index:41; width:min(420px, calc(100vw - 32px)); height:min(620px, calc(100vh - 32px));
+    display:flex; flex-direction:column; background:#fff; border:1px solid var(--line); border-radius:20px; box-shadow:0 24px 60px rgba(23,16,42,.22); overflow:hidden}
+  .ask-panel[hidden]{display:none}
+  .ask-head{display:flex; align-items:center; justify-content:space-between; gap:8px; padding:14px 16px; background:var(--brand-soft); border-bottom:1px solid var(--line)}
+  .ask-head b{font-family:'Unbounded',sans-serif; font-size:14px; color:var(--brand)}
+  .ask-head small{display:block; font-size:11.5px; color:var(--ink-3); margin-top:2px}
+  .ask-close{width:36px; height:36px; border:0; border-radius:999px; background:#fff; color:var(--ink-2); font-size:18px; cursor:pointer}
+  .ask-log{flex:1; overflow-y:auto; padding:14px 16px; display:flex; flex-direction:column; gap:10px}
+  .ask-msg{max-width:88%; padding:10px 12px; border-radius:14px; font-size:14px; line-height:1.5; white-space:pre-wrap; word-wrap:break-word}
+  .ask-msg.me{align-self:flex-end; background:var(--brand); color:#fff; border-bottom-right-radius:4px}
+  .ask-msg.ai{align-self:flex-start; background:#f6f3fb; color:var(--ink); border-bottom-left-radius:4px}
+  .ask-msg.err{align-self:flex-start; background:#fef2f2; color:#991b1b}
+  .ask-hints{display:flex; flex-wrap:wrap; gap:6px}
+  .ask-hints button{border:1px solid var(--line); background:#fff; border-radius:999px; padding:7px 11px; font:500 12.5px 'Manrope',sans-serif; color:var(--ink-2); cursor:pointer}
+  .ask-form{display:flex; gap:8px; padding:12px; border-top:1px solid var(--line)}
+  .ask-form textarea{flex:1; resize:none; min-height:44px; max-height:120px; padding:11px 12px; border:1px solid var(--line); border-radius:12px; font:16px 'Manrope',sans-serif; color:var(--ink)}
+  .ask-form button{min-width:44px; height:44px; border:0; border-radius:12px; background:var(--brand); color:#fff; font:600 14px 'Manrope',sans-serif; padding:0 14px; cursor:pointer}
+  .ask-form button:disabled{opacity:.5; cursor:default}
+  .ask-form[hidden]{display:none}
+  .ask-login{margin:auto; text-align:center; padding:24px; color:var(--ink-2); font-size:14px; line-height:1.55}
+  .ask-login a{display:inline-block; margin-top:12px; padding:11px 18px; border-radius:12px; background:var(--brand); color:#fff; text-decoration:none; font-weight:600}
+  @media (max-width:900px){ .ask-panel{right:8px; left:8px; bottom:8px; width:auto; height:calc(100dvh - 16px)} }
 </style>
 </head>
 <body>
@@ -274,7 +302,7 @@
       </ol>
       <div class="warn"><b>Важно:</b> как только вы отправили сообщение из карточки (или написали клиенту с телефона),
         бот в этом чате замолкает. Закончили — нажмите <span class="btn">Ведёте вы — вернуть боту</span>, иначе бот будет молчать и дальше.
-        Вернуть чат боту может только владелец или РОП.</div>
+        Вернуть чат боту может любой, кто ведёт сделки, — и менеджер тоже.</div>
       <p>Удалить сделку может только владелец — кнопка «Удалить» внизу окна.</p>
 
       <h3 id="etapy">Как сделка двигается по этапам</h3>
@@ -293,7 +321,7 @@
     <!-- ─────────────────────── КАК ВЫКЛЮЧИТЬ БОТА ─────────────────────── -->
     <section id="bot-off" class="alarm">
       <h2>Как выключить бота</h2>
-      <p class="lead">Три способа — в зависимости от того, где бот должен замолчать. Первые два доступны владельцу и РОП.</p>
+      <p class="lead">Три способа — в зависимости от того, где бот должен замолчать. Выключатель для всех чатов — у владельца и РОП, бот в одном чате — у любого, кто ведёт сделки.</p>
 
       <div class="way">
         <h3>1. Весь бот сразу — во всех чатах</h3>
@@ -774,6 +802,18 @@
 
 <a class="to-top" id="toTop" href="#top" aria-label="Наверх">↑</a>
 
+<button class="ask-fab" id="askFab" type="button" aria-controls="askPanel">💬 Спросить ИИ</button>
+<section class="ask-panel" id="askPanel" hidden aria-label="Помощник по инструкции">
+  <div class="ask-head">
+    <div><b>Помощник по CRM</b><small>Отвечает по этой инструкции</small></div>
+    <button class="ask-close" id="askClose" type="button" aria-label="Закрыть">×</button>
+  </div>
+  <div class="ask-log" id="askLog"></div>
+  <form class="ask-form" id="askForm" hidden>
+    <textarea id="askInput" rows="1" maxlength="1000" placeholder="Например: как сделать рассылку за сегодня?"></textarea>
+    <button type="submit" id="askSend" aria-label="Спросить">➤</button>
+  </form>
+</section>
 <script>
   // Мобильное меню: на узком экране оглавление свёрнуто в кнопку «Разделы».
   var burger = document.getElementById('burger');
@@ -831,6 +871,94 @@
   window.addEventListener('scroll', function () {
     toTop.classList.toggle('show', window.scrollY > 600);
   }, { passive: true });
+  // ── Помощник: спросить ИИ по инструкции. Спрашивать могут только
+  //    сотрудники, вошедшие в CRM (сервер проверяет вход сам).
+  (function () {
+    var fab = document.getElementById('askFab');
+    var panel = document.getElementById('askPanel');
+    var log = document.getElementById('askLog');
+    var form = document.getElementById('askForm');
+    var input = document.getElementById('askInput');
+    var send = document.getElementById('askSend');
+    var history = [];
+    var ready = false;
+    var HINTS = ['Как сделать рассылку за сегодня?', 'Как выключить бота?', 'Что значит «воздухан»?', 'Как добавить сотрудника на смену?'];
+
+    // Ответ модели — простой текст с **жирным**. Сначала экранируем всё,
+    // потом превращаем только **…** в <b>: чужой HTML в ответ не попадёт.
+    function render(text) {
+      var safe = text.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+      return safe.replace(/\*\*([^*\n]+)\*\*/g, '<b>$1</b>');
+    }
+    function add(role, text) {
+      var el = document.createElement('div');
+      el.className = 'ask-msg ' + role;
+      if (role === 'ai') el.innerHTML = render(text); else el.textContent = text;
+      log.appendChild(el);
+      log.scrollTop = log.scrollHeight;
+      return el;
+    }
+    function showLogin() {
+      log.innerHTML = '<div class="ask-login">Спросить помощника могут только сотрудники.<br>Войдите в CRM — и возвращайтесь сюда.' +
+        '<br><a href="/auth/login?next=/instrukciya.html">Войти в CRM</a></div>';
+      form.hidden = true;
+    }
+    function showChat(name) {
+      log.innerHTML = '';
+      add('ai', (name ? name + ', з' : 'З') + 'адайте вопрос по работе в CRM — отвечу по этой инструкции.');
+      var hints = document.createElement('div');
+      hints.className = 'ask-hints';
+      HINTS.forEach(function (h) {
+        var b = document.createElement('button');
+        b.type = 'button'; b.textContent = h;
+        b.addEventListener('click', function () { hints.remove(); ask(h); });
+        hints.appendChild(b);
+      });
+      log.appendChild(hints);
+      form.hidden = false;
+      input.focus();
+    }
+    function open() {
+      panel.hidden = false; fab.hidden = true;
+      if (ready) { input.focus(); return; }
+      log.innerHTML = '<div class="ask-login">Проверяем вход…</div>';
+      fetch('/api/guide-ask', { credentials: 'same-origin', cache: 'no-store' })
+        .then(function (r) { return r.json(); })
+        .then(function (d) { if (d.authenticated) { ready = true; showChat(d.name); } else showLogin(); })
+        .catch(showLogin);
+    }
+    function ask(question) {
+      add('me', question);
+      var wait = add('ai', 'Думаю…');
+      send.disabled = true;
+      fetch('/api/guide-ask', {
+        method: 'POST', credentials: 'same-origin',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ question: question, history: history.slice(-6) })
+      })
+        .then(function (r) { return r.json().then(function (d) { return { ok: r.ok, status: r.status, d: d }; }); })
+        .then(function (res) {
+          if (res.status === 401) { ready = false; showLogin(); return; }
+          if (!res.ok || !res.d.answer) { wait.className = 'ask-msg err'; wait.textContent = res.d.error || 'Не получилось ответить'; return; }
+          wait.innerHTML = render(res.d.answer);
+          history.push({ role: 'user', content: question }, { role: 'assistant', content: res.d.answer });
+        })
+        .catch(function () { wait.className = 'ask-msg err'; wait.textContent = 'Нет связи с сервером'; })
+        .then(function () { send.disabled = false; log.scrollTop = log.scrollHeight; });
+    }
+    fab.addEventListener('click', open);
+    document.getElementById('askClose').addEventListener('click', function () { panel.hidden = true; fab.hidden = false; });
+    form.addEventListener('submit', function (e) {
+      e.preventDefault();
+      var q = input.value.trim();
+      if (!q || send.disabled) return;
+      input.value = '';
+      ask(q);
+    });
+    input.addEventListener('keydown', function (e) {
+      if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); form.requestSubmit(); }
+    });
+  })();
 </script>
 </body>
 </html>
