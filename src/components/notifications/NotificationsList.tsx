@@ -70,8 +70,8 @@ export default function NotificationsList({
 
   return (
     <div>
-      <div className="flex items-center justify-between mb-4">
-        <h1 className="font-semibold flex items-center gap-2" style={{ fontSize: 18, color: '#1b1517' }}>
+      <div className="flex flex-wrap items-center justify-between gap-x-3 gap-y-1 mb-4">
+        <h1 className="font-semibold flex flex-wrap items-center gap-x-2" style={{ fontSize: 18, color: '#1b1517' }}>
           <Bell style={{ width: 18, height: 18 }} />
           Уведомления
           {unreadCount > 0 && (
@@ -83,7 +83,7 @@ export default function NotificationsList({
         <button
           onClick={handleMarkAllRead}
           disabled={isPending || unreadCount === 0}
-          className="flex items-center gap-1.5 rounded-md transition-colors disabled:opacity-40"
+          className="flex min-h-9 items-center gap-1.5 rounded-md transition-colors disabled:opacity-40 md:min-h-0"
           style={{ fontSize: 12, color: '#5115a4', padding: '6px 10px' }}
         >
           <CheckCheck style={{ width: 14, height: 14 }} />
@@ -94,7 +94,7 @@ export default function NotificationsList({
       <div className="flex gap-2 mb-4">
         <button
           onClick={() => setFilter('all')}
-          className="rounded-md transition-colors"
+          className="min-h-9 rounded-md transition-colors md:min-h-0"
           style={{
             fontSize: 12, padding: '6px 12px',
             backgroundColor: initialFilter === 'all' ? '#5115a4' : '#fdfbfb',
@@ -105,7 +105,7 @@ export default function NotificationsList({
         </button>
         <button
           onClick={() => setFilter('important')}
-          className="rounded-md transition-colors"
+          className="min-h-9 rounded-md transition-colors md:min-h-0"
           style={{
             fontSize: 12, padding: '6px 12px',
             backgroundColor: initialFilter === 'important' ? '#5115a4' : '#fdfbfb',
@@ -141,7 +141,7 @@ export default function NotificationsList({
                 </span>
                 <div className="flex-1 min-w-0">
                   <div className="flex items-center gap-2">
-                    <span className="font-medium" style={{ fontSize: 13, color: '#1b1517' }}>
+                    <span className="min-w-0 break-words font-medium" style={{ fontSize: 13, color: '#1b1517' }}>
                       {n.title}
                     </span>
                     {!n.is_read && (
@@ -149,7 +149,7 @@ export default function NotificationsList({
                     )}
                   </div>
                   {n.body && (
-                    <p style={{ fontSize: 12, color: '#6b7280', marginTop: 2 }}>{n.body}</p>
+                    <p className="break-words" style={{ fontSize: 12, color: '#6b7280', marginTop: 2 }}>{n.body}</p>
                   )}
                   <span style={{ fontSize: 11, color: '#7d7174' }}>{formatDateTime(n.created_at)}</span>
                 </div>
@@ -157,8 +157,9 @@ export default function NotificationsList({
                   <button
                     onClick={(e) => { e.preventDefault(); handleMarkRead(n.id) }}
                     title="Отметить прочитанным"
-                    className="flex items-center justify-center rounded-md flex-shrink-0"
-                    style={{ width: 24, height: 24, color: '#7d7174' }}
+                    className="-m-2 flex size-10 items-center justify-center rounded-md flex-shrink-0 md:m-0 md:size-6"
+                    style={{ color: '#7d7174' }}
+                    aria-label="Отметить прочитанным"
                   >
                     <Check style={{ width: 14, height: 14 }} />
                   </button>

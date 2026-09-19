@@ -82,7 +82,8 @@ export default function SalaryClient({
   }
 
   return (
-    <div className="p-5 md:p-8">
+    // На телефоне кнопки и поля — под палец (36/40px).
+    <div className="p-4 md:p-8 max-md:[&_[data-slot=button]]:min-h-9 max-md:[&_[data-slot=button]]:min-w-9 max-md:[&_[data-slot=input]]:min-h-10 max-md:[&_[data-slot=select-trigger]]:min-h-10">
       <div className="flex flex-wrap items-center justify-between gap-4">
         <div>
           <h1 className="text-2xl font-bold" style={{ color: '#1b1517' }}>Зарплата</h1>
@@ -94,7 +95,7 @@ export default function SalaryClient({
           <Button variant="outline" size="icon" onClick={() => setCurrent(new Date(year, month - 2, 1))} aria-label="Предыдущий месяц">
             <ChevronLeft className="size-4" />
           </Button>
-          <span className="min-w-40 text-center font-semibold capitalize">{MONTHS[month - 1]} {year}</span>
+          <span className="min-w-32 text-center font-semibold capitalize md:min-w-40">{MONTHS[month - 1]} {year}</span>
           <Button variant="outline" size="icon" onClick={() => setCurrent(new Date(year, month, 1))} aria-label="Следующий месяц">
             <ChevronRight className="size-4" />
           </Button>
@@ -128,7 +129,7 @@ export default function SalaryClient({
             )}
             {rules.map((rule) => (
               <div key={rule.id} className="flex flex-wrap items-center gap-2 rounded-xl p-3" style={{ background: '#fdfbfb' }}>
-                <span className="text-sm font-medium" style={{ color: '#1b1517', minWidth: 230 }}>
+                <span className="basis-full text-sm font-medium sm:basis-auto sm:min-w-[230px]" style={{ color: '#1b1517' }}>
                   {SALARY_RULE_LABELS[rule.kind]}
                 </span>
                 <Input
@@ -144,7 +145,7 @@ export default function SalaryClient({
                 <select
                   value={rule.employeeId ?? 'all'}
                   onChange={(e) => patchRule(rule.id, { employeeId: e.target.value === 'all' ? null : e.target.value })}
-                  className="h-9 rounded-xl border px-3 text-[13px] outline-none"
+                  className="h-10 min-w-0 rounded-xl border px-3 text-base outline-none md:h-9 md:text-[13px]"
                   style={{ borderColor: '#ece5e5', color: '#4e4560' }}
                 >
                   <option value="all">всем сотрудникам</option>
@@ -154,7 +155,7 @@ export default function SalaryClient({
                 </select>
                 <button
                   onClick={() => setRules((prev) => prev.filter((r) => r.id !== rule.id))}
-                  className="ml-auto rounded-lg p-1.5"
+                  className="ml-auto rounded-lg p-2.5 md:p-1.5"
                   style={{ color: '#b91c1c' }}
                   title="Убрать правило"
                 >

@@ -159,7 +159,7 @@ export default function OrdersView({
             <select
               value={city}
               onChange={e => setCity(e.target.value)}
-              className="rounded-xl px-3 py-1.5 text-xs outline-none"
+              className="min-h-9 rounded-xl px-3 py-1.5 text-base outline-none md:min-h-0 md:text-xs"
               style={{
                 border: '1px solid var(--line)',
                 background: 'var(--surface)',
@@ -279,7 +279,7 @@ function FilterGroup({
           <button
             key={option.value}
             onClick={() => onChange(option.value)}
-            className="rounded-xl px-3 py-1.5 text-xs font-medium transition-colors"
+            className="min-h-9 rounded-xl px-3 py-1.5 text-xs font-medium transition-colors md:min-h-0"
             style={{
               background: active ? 'var(--brand)' : 'var(--surface)',
               color: active ? '#ffffff' : 'var(--ink-2)',

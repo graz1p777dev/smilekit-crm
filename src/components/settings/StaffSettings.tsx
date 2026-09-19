@@ -84,7 +84,7 @@ export default function StaffSettings() {
 
   return (
     <div className="flex flex-col gap-5 p-4 md:p-8">
-      <section className="rounded-2xl border bg-white p-5">
+      <section className="rounded-2xl border bg-white p-4 md:p-5">
         <h2 className="flex items-center gap-2 text-sm font-semibold"><Users size={16} /> Как это работает</h2>
         <p className="mt-2 text-sm text-gray-600">
           Сотрудник открывает ссылку или пишет боту <b>/staffs</b> в Telegram, вводит свой пароль и нажимает
@@ -104,7 +104,7 @@ export default function StaffSettings() {
         </div>
       </section>
 
-      <section className="rounded-2xl border bg-white p-5">
+      <section className="rounded-2xl border bg-white p-4 md:p-5">
         <Label htmlFor="owner-whatsapp" className="text-sm font-semibold">Ваш WhatsApp для подтверждений</Label>
         <p className="mt-1 text-xs text-gray-500">Сюда приходит ссылка «Подтвердить / Отклонить», когда кто-то просит забрать смену.</p>
         <div className="mt-2 flex flex-wrap gap-2">
@@ -128,12 +128,12 @@ export default function StaffSettings() {
       </section>
 
       {data.pending.length > 0 && (
-        <section className="rounded-2xl border-2 p-5" style={{ borderColor: '#f5a623', background: '#fffbeb' }}>
+        <section className="rounded-2xl border-2 p-4 md:p-5" style={{ borderColor: '#f5a623', background: '#fffbeb' }}>
           <h2 className="text-sm font-semibold">Ждут подтверждения</h2>
           <ul className="mt-2 flex flex-col gap-2">
             {data.pending.map((r) => (
               <li key={r.id} className="flex flex-wrap items-center gap-2 text-sm">
-                <span className="flex-1">
+                <span className="flex-1 basis-full sm:basis-auto">
                   <b>{r.requesterName}</b> — {r.kind === 'take' ? 'просит забрать смену' : 'просит работать вместе'} ({dateTime(r.createdAt)})
                 </span>
                 <Button size="sm" disabled={busy} className="text-white" style={{ background: '#059669' }}
@@ -146,7 +146,7 @@ export default function StaffSettings() {
         </section>
       )}
 
-      <section className="rounded-2xl border bg-white p-5">
+      <section className="rounded-2xl border bg-white p-4 md:p-5">
         <h2 className="text-sm font-semibold">Сейчас на смене</h2>
         {onShift.length === 0
           ? <p className="mt-2 text-sm text-gray-500">Никого</p>
@@ -154,7 +154,7 @@ export default function StaffSettings() {
             <ul className="mt-2 flex flex-col gap-2">
               {onShift.map((s) => (
                 <li key={s.id} className="flex flex-wrap items-center gap-2 text-sm">
-                  <span className="flex-1">
+                  <span className="flex-1 basis-full sm:basis-auto">
                     🟢 <b>{s.fullName}</b> с {dateTime(s.onShiftSince as string)}{s.mode === 'joint' ? ' (вместе)' : ''}
                   </span>
                   <Button size="sm" variant="outline" disabled={busy}
@@ -165,7 +165,7 @@ export default function StaffSettings() {
           )}
       </section>
 
-      <section className="rounded-2xl border bg-white p-5">
+      <section className="rounded-2xl border bg-white p-4 md:p-5">
         <div className="flex items-center justify-between gap-2">
           <h2 className="text-sm font-semibold">Сотрудники смен</h2>
           {!form && (
@@ -205,8 +205,8 @@ export default function StaffSettings() {
         {data.staff.length === 0 && !form
           ? <p className="mt-3 text-sm text-gray-500">Сотрудников пока нет.</p>
           : (
-            <div className="mt-3 overflow-x-auto">
-              <table className="w-full text-sm">
+            <div className="mt-3 overflow-x-auto overscroll-x-contain">
+              <table className="w-full min-w-[560px] text-sm md:min-w-0">
                 <thead>
                   <tr className="text-left text-xs text-gray-500">
                     <th className="py-2 pr-3">Сотрудник</th>
@@ -241,18 +241,18 @@ export default function StaffSettings() {
           )}
       </section>
 
-      <section className="rounded-2xl border bg-white p-5">
+      <section className="rounded-2xl border bg-white p-4 md:p-5">
         <h2 className="text-sm font-semibold">Последние смены</h2>
         {data.recentShifts.length === 0
           ? <p className="mt-2 text-sm text-gray-500">Смен ещё не было.</p>
           : (
-            <div className="mt-2 overflow-x-auto">
-              <table className="w-full text-sm">
+            <div className="mt-2 overflow-x-auto overscroll-x-contain">
+              <table className="w-full min-w-[520px] text-sm md:min-w-0">
                 <tbody>
                   {data.recentShifts.map((s) => (
                     <tr key={s.id} className="border-t">
                       <td className="py-2 pr-3 font-medium">{s.staffName}</td>
-                      <td className="py-2 pr-3">{dateTime(s.startedAt)} — {s.endedAt ? dateTime(s.endedAt) : 'сейчас'}</td>
+                      <td className="whitespace-nowrap py-2 pr-3">{dateTime(s.startedAt)} — {s.endedAt ? dateTime(s.endedAt) : 'сейчас'}</td>
                       <td className="py-2 pr-3">{s.mode === 'joint' ? 'вместе' : 'одна смена'}</td>
                       <td className="py-2 text-gray-500">{s.endedReason ? REASON[s.endedReason] ?? '' : ''}</td>
                     </tr>

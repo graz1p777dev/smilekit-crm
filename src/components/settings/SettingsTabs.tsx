@@ -44,7 +44,8 @@ export default function SettingsTabs({
 
   return (
     <div className="flex flex-col">
-      <div className="flex gap-1 px-4 pt-4 md:px-8" role="tablist">
+      {/* Пять вкладок на телефоне не влезают — полоса прокручивается вбок. */}
+      <div className="flex gap-1 overflow-x-auto overscroll-x-contain px-4 pt-4 scroll-hidden md:px-8" role="tablist">
         {tabs.map((t) => {
           const Icon = t.icon
           return (
@@ -53,7 +54,7 @@ export default function SettingsTabs({
               role="tab"
               aria-selected={tab === t.key}
               onClick={() => setTab(t.key)}
-              className="flex items-center gap-1.5 rounded-t-xl px-4 py-2.5 text-sm font-semibold transition-colors"
+              className="flex shrink-0 items-center gap-1.5 rounded-t-xl px-3 py-2.5 text-sm font-semibold transition-colors md:px-4"
               style={
                 tab === t.key
                   ? { background: '#fff', color: '#5115a4', border: '1px solid #ece5e5', borderBottomColor: '#fff' }
@@ -66,7 +67,8 @@ export default function SettingsTabs({
           )
         })}
       </div>
-      <div style={{ borderTop: '1px solid #ece5e5', marginTop: -1 }}>
+      {/* На телефоне кнопки и поля всех вкладок — под палец (36/40px). */}
+      <div className="max-md:[&_[data-slot=button]]:min-h-9 max-md:[&_[data-slot=button]]:min-w-9 max-md:[&_[data-slot=input]]:min-h-10 max-md:[&_[data-slot=select-trigger]]:min-h-10" style={{ borderTop: '1px solid #ece5e5', marginTop: -1 }}>
         {/* Обе вкладки остаются в DOM: система — тяжёлая форма с несохранённым
             вводом, размонтировать её при переключении нельзя. */}
         <div hidden={tab !== 'system'}>{system}</div>
