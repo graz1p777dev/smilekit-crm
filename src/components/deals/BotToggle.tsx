@@ -62,7 +62,7 @@ export function BotToggle() {
       <button
         onClick={handleToggle}
         disabled={busy || enabled == null}
-        className="flex h-9 items-center gap-1.5 rounded-xl px-3 text-[13px] font-semibold transition-colors disabled:opacity-60"
+        className="flex h-10 items-center gap-1.5 rounded-xl px-3 text-[13px] font-semibold md:h-9 transition-colors disabled:opacity-60"
         style={
           enabled
             ? { background: '#dcfce7', color: '#15803d', border: '1px solid #86efac' }
@@ -83,7 +83,7 @@ export function BotToggle() {
           else if (value === '60') handlePause(60)
           else if (value === 'manual') handlePause(null)
         }}
-        className="h-9 rounded-xl border px-2 text-[13px] disabled:opacity-60"
+        className="h-10 rounded-xl border px-2 text-base disabled:opacity-60 md:h-9 md:text-[13px]"
         title="Временная пауза бота — сам включится по истечении"
       >
         <option value="" disabled>Пауза…</option>

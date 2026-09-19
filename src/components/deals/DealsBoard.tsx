@@ -242,13 +242,15 @@ export default function DealsBoard({ initialStages, initialDeals, employees, me,
   const closeModal = () => setModal((m) => ({ ...m, open: false }))
 
   return (
-    <div className="flex h-[calc(100vh-52px)] flex-col">
-      {/* Заголовок и панель */}
-      <div className="flex flex-wrap items-center justify-between gap-3 px-6 py-4">
+    <div className="flex h-[calc(100vh-52px)] h-[calc(100dvh-52px)] flex-col">
+      {/* Заголовок и панель. На телефоне фильтры — одна полоса с прокруткой
+          вбок, поиск и «Создать» — отдельной строкой: иначе панель занимала
+          весь экран и доски не было видно. */}
+      <div className="flex flex-wrap items-center justify-between gap-3 px-4 py-3 md:px-6 md:py-4">
         <div>
           <p className="kicker">Воронка продаж</p>
           <h1 className="block-title">Сделки</h1>
-          <span className="span-rule" aria-hidden />
+          <span className="span-rule hidden md:block" aria-hidden />
           <p className="mt-1.5 text-[13px] text-gray-400">
             {me.role === 'owner' || me.role === 'rop'
               ? `Все сделки магазина · ${filtered.length} из ${deals.length}`
@@ -256,7 +258,8 @@ export default function DealsBoard({ initialStages, initialDeals, employees, me,
           </p>
         </div>
 
-        <div className="flex flex-wrap items-center gap-2">
+        <div className="flex w-full min-w-0 flex-col gap-2 md:w-auto md:flex-row md:flex-wrap md:items-center">
+          <div className="-mx-4 flex items-center gap-2 overflow-x-auto overscroll-x-contain px-4 scroll-hidden md:mx-0 md:flex-wrap md:overflow-visible md:px-0 [&>*]:shrink-0">
           <BotToggle />
 
           {/* В работе / Успешные / Отказ */}
@@ -266,7 +269,7 @@ export default function DealsBoard({ initialStages, initialDeals, employees, me,
                 key={item.key}
                 onClick={() => { setView(item.key); setShownPerStage({}) }}
                 className={cn(
-                  'rounded-lg px-2.5 py-1.5 text-[12px] font-semibold transition-colors',
+                  'min-h-9 rounded-lg px-2.5 py-1.5 text-[12px] font-semibold transition-colors md:min-h-0',
                   view === item.key ? 'text-white brand-gradient' : 'text-gray-500 hover:text-gray-700'
                 )}
               >
@@ -278,7 +281,7 @@ export default function DealsBoard({ initialStages, initialDeals, employees, me,
           <select
             value={sort}
             onChange={(e) => setSort(e.target.value as DealSort)}
-            className="h-9 rounded-xl border border-gray-200 bg-white/80 px-3 text-[13px] text-gray-600 outline-none transition-colors focus:border-gray-300"
+            className="h-10 rounded-xl border border-gray-200 bg-white/80 px-3 text-base text-gray-600 outline-none transition-colors focus:border-gray-300 md:h-9 md:text-[13px]"
             title="Порядок карточек в колонке"
           >
             {DEAL_SORTS.map((item) => (
@@ -289,7 +292,7 @@ export default function DealsBoard({ initialStages, initialDeals, employees, me,
           <select
             value={sourceFilter}
             onChange={(e) => { setSourceFilter(e.target.value); setShownPerStage({}) }}
-            className="h-9 rounded-xl border border-gray-200 bg-white/80 px-3 text-[13px] text-gray-600 outline-none transition-colors focus:border-gray-300"
+            className="h-10 rounded-xl border border-gray-200 bg-white/80 px-3 text-base text-gray-600 outline-none transition-colors focus:border-gray-300 md:h-9 md:text-[13px]"
             title="Фильтр по источнику"
           >
             <option value="all">Все источники</option>
@@ -305,7 +308,7 @@ export default function DealsBoard({ initialStages, initialDeals, employees, me,
               // Состав колонок поменялся — показываем снова первую страницу.
               setShownPerStage({})
             }}
-            className="h-9 rounded-xl border border-gray-200 bg-white/80 px-3 text-[13px] text-gray-600 outline-none transition-colors focus:border-gray-300"
+            className="h-10 rounded-xl border border-gray-200 bg-white/80 px-3 text-base text-gray-600 outline-none transition-colors focus:border-gray-300 md:h-9 md:text-[13px]"
             title="Фильтр по ответственному"
           >
             <option value="all">Все сотрудники</option>
@@ -314,7 +317,9 @@ export default function DealsBoard({ initialStages, initialDeals, employees, me,
               <option key={e.id} value={e.id}>{e.name}</option>
             ))}
           </select>
-          <div className="relative">
+          </div>
+          <div className="flex items-center gap-2">
+          <div className="relative min-w-0 flex-1 md:flex-none">
             <Search size={15} className="absolute left-2.5 top-1/2 -translate-y-1/2 text-gray-400" />
             <input
               value={search}
@@ -323,22 +328,26 @@ export default function DealsBoard({ initialStages, initialDeals, employees, me,
                 setShownPerStage({})
               }}
               placeholder="Клиент, телефон, название…"
-              className="h-9 w-56 rounded-xl border border-gray-200 bg-white/80 pl-8 pr-3 text-[13px] outline-none transition-colors focus:border-gray-300"
+              className="h-10 w-full rounded-xl border border-gray-200 bg-white/80 pl-8 pr-3 text-base outline-none transition-colors focus:border-gray-300 md:h-9 md:w-56 md:text-[13px]"
             />
           </div>
 
           <button
             onClick={() => openNew(defaultStageId)}
-            className="flex h-9 items-center gap-1.5 rounded-xl px-4 text-[13px] font-semibold text-white brand-gradient brand-shadow transition-transform hover:-translate-y-0.5"
+            className="flex h-10 shrink-0 items-center gap-1.5 rounded-xl px-4 text-[13px] font-semibold text-white brand-gradient brand-shadow transition-transform hover:-translate-y-0.5 md:h-9"
           >
             <Plus size={16} />
-            Создать сделку
+            <span className="md:hidden">Создать</span>
+            <span className="hidden md:inline">Создать сделку</span>
           </button>
+          </div>
         </div>
       </div>
 
       {/* Доска */}
-      <div className="flex flex-1 gap-4 overflow-x-auto px-6 pb-6 scroll-hidden">
+      {/* На телефоне колонка почти во весь экран, следующая выглядывает;
+          листается по одной (snap). */}
+      <div className="flex min-h-0 flex-1 snap-x snap-mandatory scroll-px-4 gap-3 overflow-x-auto overscroll-x-contain px-4 pb-4 scroll-hidden md:snap-none md:gap-4 md:px-6 md:pb-6">
         {stages.map((stage) => {
           const list = columns.get(stage.id) ?? []
           const totals = columnTotals(list)
@@ -358,7 +367,7 @@ export default function DealsBoard({ initialStages, initialDeals, employees, me,
                 void performDrop(stage.id)
               }}
               className={cn(
-                'flex w-[290px] shrink-0 flex-col rounded-2xl border transition-colors',
+                'flex w-[290px] max-w-[calc(100vw-56px)] shrink-0 snap-start flex-col rounded-2xl border transition-colors md:max-w-none',
                 isTarget && dragId
                   ? 'border-[#cdb8e8] bg-[#f1ebfa]/60'
                   : 'border-gray-100 bg-gray-50/60'
@@ -384,8 +393,9 @@ export default function DealsBoard({ initialStages, initialDeals, employees, me,
                   </div>
                   <button
                     onClick={() => openNew(stage.id)}
-                    className="rounded-lg p-1 text-gray-400 transition-colors hover:bg-white hover:text-gray-600"
+                    className="-m-1.5 rounded-lg p-2.5 text-gray-400 transition-colors hover:bg-white hover:text-gray-600 md:m-0 md:p-1"
                     title="Добавить в этап"
+                    aria-label="Добавить в этап"
                   >
                     <Plus size={15} />
                   </button>

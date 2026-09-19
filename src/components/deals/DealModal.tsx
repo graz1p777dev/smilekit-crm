@@ -322,7 +322,7 @@ export default function DealModal({
     <Modal onClose={onClose} variant="right">
       <div className="flex h-[100dvh] w-[min(760px,100vw)] flex-col overflow-hidden bg-white shadow-2xl animate-in slide-in-from-right duration-200">
         {/* Шапка */}
-        <div className="flex items-center justify-between border-b border-gray-100 px-6 py-4">
+        <div className="flex items-center justify-between border-b border-gray-100 px-4 py-2.5 md:px-6 md:py-4">
           <div className="flex items-center gap-2.5">
             <h2 className="text-base font-bold text-gray-900">
               {isNew ? 'Новая сделка' : 'Сделка'}
@@ -339,18 +339,22 @@ export default function DealModal({
           </div>
           <button
             onClick={onClose}
-            className="rounded-lg p-1.5 text-gray-400 transition-colors hover:bg-gray-100 hover:text-gray-600"
+            className="-mr-2 rounded-lg p-2.5 text-gray-400 transition-colors hover:bg-gray-100 hover:text-gray-600 md:mr-0 md:p-1.5"
+            aria-label="Закрыть"
           >
             <X size={18} />
           </button>
         </div>
 
         {/* Тело */}
-        <div className="flex-1 space-y-4 overflow-y-auto px-6 py-5 scroll-hidden">
+        {/* На телефоне поля и выпадающие списки 40px — под палец. */}
+        <div className="flex-1 space-y-4 overflow-y-auto overscroll-contain px-4 py-4 scroll-hidden max-md:[&_[data-slot=input]]:h-10 max-md:[&_[data-slot=select-trigger]]:h-10 max-md:[&_[data-slot=select-trigger]]:w-full md:px-6 md:py-5">
           <div className="space-y-1.5">
             <Label>Название</Label>
             <Input
-              autoFocus
+              // Существующую сделку на телефоне открывают читать переписку —
+              // клавиатура сразу не нужна; для новой фокус в названии.
+              autoFocus={isNew}
               value={form.title}
               onChange={(e) => set('title', e.target.value)}
               placeholder="Например: Smilekit, 2 коробки — клиент из Telegram"
@@ -467,7 +471,7 @@ export default function DealModal({
             </div>
           </div>
 
-          <div className="grid grid-cols-[180px_1fr] gap-3">
+          <div className="grid grid-cols-1 gap-3 sm:grid-cols-[180px_1fr]">
             <div className="space-y-1.5">
               <Label>Город</Label>
               <Input
@@ -534,7 +538,7 @@ export default function DealModal({
                 <div className="space-y-1.5">
                   {purchases.map((p) => (
                     <div key={p.id} className="rounded-xl bg-gray-50/70 px-3 py-2">
-                      <div className="flex items-center justify-between gap-2 text-[12px]">
+                      <div className="flex flex-wrap items-center justify-between gap-x-3 gap-y-1 text-[12px]">
                         <span className="text-gray-500">
                           {new Date(p.created_at).toLocaleDateString('ru-RU')}
                         </span>
@@ -593,7 +597,7 @@ export default function DealModal({
                         : 'Сейчас отвечает бот — нажмите, чтобы забрать чат себе'
                     }
                     className={cn(
-                      'flex items-center gap-1.5 rounded-full px-2.5 py-1 text-[11px] font-semibold transition-colors disabled:opacity-60',
+                      'flex min-h-9 items-center gap-1.5 rounded-full px-2.5 py-1 text-[11px] font-semibold transition-colors disabled:opacity-60 md:min-h-0',
                       botControl.managerControls
                         ? 'bg-amber-50 text-amber-700 hover:bg-amber-100'
                         : 'bg-[#f1ebfa] text-[#5115a4] hover:bg-[#e7dcf6]'
@@ -657,11 +661,18 @@ export default function DealModal({
                         handleSendReply()
                       }
                     }}
+                    // Клавиатура телефона поднимается не сразу — после неё
+                    // возвращаем поле ответа в видимую часть карточки.
+                    onFocus={(event) => {
+                      const field = event.currentTarget
+                      window.setTimeout(() => field.scrollIntoView({ block: 'nearest' }), 300)
+                    }}
                     placeholder="Написать клиенту…"
                     disabled={sendingReply}
-                    className="text-[13px]"
+                    className="text-base md:text-[13px]"
+                    enterKeyHint="send"
                   />
-                  <Button size="sm" onClick={handleSendReply} disabled={sendingReply || !replyText.trim()}>
+                  <Button size="sm" className="h-10 px-3 md:h-7" onClick={handleSendReply} disabled={sendingReply || !replyText.trim()}>
                     {sendingReply ? '…' : 'Отправить'}
                   </Button>
                 </div>
@@ -671,12 +682,12 @@ export default function DealModal({
         </div>
 
         {/* Низ */}
-        <div className="flex items-center justify-between gap-3 border-t border-gray-100 px-6 py-4">
+        <div className="flex items-center justify-between gap-3 border-t border-gray-100 px-4 py-3 pb-[max(0.75rem,env(safe-area-inset-bottom))] md:px-6 md:py-4">
           {!isNew && me.role === 'owner' ? (
             <button
               onClick={handleDelete}
               disabled={isPending}
-              className="flex items-center gap-1.5 rounded-lg px-2.5 py-1.5 text-[13px] text-gray-400 transition-colors hover:bg-[#f1ebfa] hover:text-[#5115a4] disabled:opacity-50"
+              className="flex min-h-10 items-center gap-1.5 rounded-lg px-2.5 py-1.5 text-[13px] text-gray-400 md:min-h-0 transition-colors hover:bg-[#f1ebfa] hover:text-[#5115a4] disabled:opacity-50"
             >
               <Trash2 size={15} />
               Удалить
@@ -685,10 +696,10 @@ export default function DealModal({
             <span />
           )}
           <div className="flex items-center gap-2">
-            <Button variant="outline" onClick={onClose} disabled={isPending}>
+            <Button variant="outline" className="h-10 md:h-8" onClick={onClose} disabled={isPending}>
               Отмена
             </Button>
-            <Button onClick={handleSave} disabled={isPending}>
+            <Button className="h-10 md:h-8" onClick={handleSave} disabled={isPending}>
               {isPending ? 'Сохраняем…' : isNew ? 'Создать' : 'Сохранить'}
             </Button>
           </div>
