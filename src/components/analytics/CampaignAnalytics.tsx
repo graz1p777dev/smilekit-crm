@@ -38,6 +38,26 @@ export default function CampaignAnalytics({ period, onStamp }: { period: PeriodI
   return <CampaignsView data={data} />
 }
 
+/** Доставлено / прочитано: без id сообщения статусы не приходят — тогда честное «нет данных». */
+function StatusCell({ c, value, label }: { c: CampaignStat; value: number; label: string }) {
+  if (c.sent === 0) return <td className="py-2.5 pr-3" style={{ color: INK_3 }}>—</td>
+  if (c.tracked === 0) {
+    return (
+      <td className="py-2.5 pr-3 text-[11px] leading-snug" style={{ color: INK_3 }} title="У отправленных сообщений нет id — статусы WhatsApp по ним не приходят">
+        нет данных<br />(рассылка до начала учёта)
+      </td>
+    )
+  }
+  return (
+    <td className="py-2.5 pr-3 tabular-nums" title={`${label}: ${num(value)} из ${num(c.sent)} отправленных; статус отслеживается у ${num(c.tracked)}`}>
+      <span className="whitespace-nowrap">{num(value)} <span style={{ color: INK_3 }}>({pct(value, c.sent)})</span></span>
+      {c.tracked < c.sent && (
+        <span className="block text-[10px]" style={{ color: INK_3 }}>учёт у {num(c.tracked)} из {num(c.sent)}</span>
+      )}
+    </td>
+  )
+}
+
 export function CampaignsView({ data }: { data: { campaigns: CampaignStat[] } }) {
   const sent = data.campaigns.reduce((sum, c) => sum + c.sent, 0)
   const replied = data.campaigns.reduce((sum, c) => sum + c.replied, 0)
@@ -58,11 +78,11 @@ export function CampaignsView({ data }: { data: { campaigns: CampaignStat[] } })
         <Kpi icon={ShoppingBag} tone="good" label="Купили за 7 дней" value={num(bought)} sub={`${pct(bought, sent)} от отправленных`} />
       </KpiGrid>
 
-      <Card icon={Megaphone} title="По рассылкам" hint="Не отправлено — пропущены при отмене или ещё ждут очереди. Полоса у «Ответили» — доля ответивших, сравнение между рассылками.">
+      <Card icon={Megaphone} title="По рассылкам" hint="Не отправлено — пропущены при отмене или ещё ждут очереди. Доставлено и прочитано — по статусам WhatsApp (прочитанное считается и доставленным), доля — от отправленных; «нет данных» — рассылка ушла до начала учёта статусов. Полоса у «Ответили» — доля ответивших, сравнение между рассылками.">
         {data.campaigns.length === 0
           ? <EmptyState icon={Megaphone} text="Рассылок за период не было" />
           : (
-            <ScrollTable minWidth={760} head={['Рассылка', 'Когда', 'Статус', 'Получателей', 'Отправлено', 'Не отправлено', 'Ответили', 'Купили']}>
+            <ScrollTable minWidth={940} head={['Рассылка', 'Когда', 'Статус', 'Получателей', 'Отправлено', 'Не отправлено', 'Доставлено', 'Прочитано', 'Ответили', 'Купили']}>
               {data.campaigns.map((c) => {
                 const rate = c.sent ? c.replied / c.sent : 0
                 return (
@@ -78,6 +98,8 @@ export function CampaignsView({ data }: { data: { campaigns: CampaignStat[] } })
                     <td className="py-2.5 pr-3 tabular-nums">{num(c.recipients)}</td>
                     <td className="py-2.5 pr-3 tabular-nums">{num(c.sent)}</td>
                     <td className="py-2.5 pr-3 tabular-nums" style={{ color: INK_2 }}>{num(c.skipped + c.pending + c.failed)}</td>
+                    <StatusCell c={c} value={c.delivered} label="Доставлено" />
+                    <StatusCell c={c} value={c.read} label="Прочитано" />
                     <td className="py-2.5 pr-3">
                       <div className="flex items-center gap-2 tabular-nums" title={`Ответили ${num(c.replied)} из ${num(c.sent)}`}>
                         <span className="whitespace-nowrap">{num(c.replied)} <span style={{ color: INK_3 }}>({pct(c.replied, c.sent)})</span></span>

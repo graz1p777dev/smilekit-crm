@@ -328,6 +328,12 @@ export interface CampaignStat {
   pending: number
   replied: number
   bought: number
+  /** Отправленных с сохранённым id сообщения Green API — по ним приходит статус (062). */
+  tracked: number
+  /** Отправленных с delivered_at или read_at. */
+  delivered: number
+  /** Отправленных с read_at. */
+  read: number
 }
 
 export async function loadCampaigns(range: PeriodRange): Promise<{ range: PeriodRange; campaigns: CampaignStat[] }> {
