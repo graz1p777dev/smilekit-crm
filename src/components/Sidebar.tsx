@@ -146,6 +146,8 @@ export default function Sidebar({ mobileOpen = false, onClose }: SidebarProps) {
           {NAV_GROUPS.map((group) => {
             const visible = group.items.filter(
               (item) => role && item.roles.includes(role)
+                // Аналитику можно закрыть лично сотруднику, не меняя роль.
+                && !(item.href === '/dashboard/analytics' && user?.analytics_blocked)
             )
             if (!visible.length) return null
 

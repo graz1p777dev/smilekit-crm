@@ -4,13 +4,13 @@
 // Вкладки «Аналитики» грузятся не отсюда, а через GET /api/analytics/<вкладка>
 // (см. src/app/api/analytics/[tab]/route.ts).
 
-import { isFailure, requireManagement } from '@/lib/auth-guards'
+import { isFailure, requireAnalytics } from '@/lib/auth-guards'
 import { loadClientProfile, type ClientProfile } from '@/lib/analytics/client-profile'
 
 export type { ClientProfile, ServedGroup } from '@/lib/analytics/client-profile'
 
 export async function getClientProfile(phone: string): Promise<ClientProfile | null> {
-  const result = await requireManagement()
+  const result = await requireAnalytics()
   if (isFailure(result)) return null
   const digits = String(phone ?? '').replace(/\D/g, '')
   if (digits.length < 9) return null

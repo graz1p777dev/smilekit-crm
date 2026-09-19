@@ -8,7 +8,7 @@
 // Обычный GET не стоит в общей очереди и страницу не трогает.
 
 import { NextResponse, type NextRequest } from 'next/server'
-import { isFailure, requireManagement } from '@/lib/auth-guards'
+import { isFailure, requireAnalytics } from '@/lib/auth-guards'
 import { resolvePeriod, type PeriodInput } from '@/lib/analytics/period'
 import {
   loadAdSource, loadAlmostBought, loadBotFunnel, loadBotHandoff, loadCampaigns, loadCities, loadDiscounts, loadFunnel,
@@ -42,7 +42,7 @@ export async function GET(request: NextRequest, { params }: { params: Promise<{ 
   if (!load) return NextResponse.json({ error: 'Неизвестная вкладка' }, { status: 404 })
 
   // Admin-клиент в расчёте читает в обход RLS — роль проверяем здесь.
-  const guard = await requireManagement()
+  const guard = await requireAnalytics()
   if (isFailure(guard)) return NextResponse.json({ error: guard.error }, { status: 403 })
 
   let period: PeriodInput

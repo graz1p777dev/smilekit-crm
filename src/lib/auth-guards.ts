@@ -12,6 +12,8 @@ export interface Viewer {
   id: string
   role: UserRole
   name: string
+  /** Раздел «Аналитика» закрыт лично этому сотруднику (миграция 069). */
+  analytics_blocked?: boolean
 }
 
 /** Текущий сотрудник или null, если сессии нет. */
@@ -22,7 +24,7 @@ export async function currentViewer(): Promise<Viewer | null> {
 
   const { data } = await supabase
     .from('employees')
-    .select('id, role, name')
+    .select('id, role, name, analytics_blocked')
     .eq('user_id', session.user.id)
     .is('deleted_at', null)
     .maybeSingle()
@@ -56,6 +58,16 @@ export async function requireEmployee(): Promise<Viewer | GuardFailure> {
 
 /** Руководство: видит данные всей компании (выручка, зарплаты, аналитика). */
 export const requireManagement = () => requireRole('owner', 'rop')
+
+/**
+ * Аналитика: руководство, кроме тех, кому раздел закрыт лично
+ * (employees.analytics_blocked) — роль при этом не меняется.
+ */
+export async function requireAnalytics(): Promise<Viewer | GuardFailure> {
+  const viewer = await requireManagement()
+  if (isFailure(viewer)) return viewer
+  return viewer.analytics_blocked ? NO_RIGHTS : viewer
+}
 
 /** Только владелец: настройки, справочники, деньги компании. */
 export const requireOwnerRole = () => requireRole('owner')

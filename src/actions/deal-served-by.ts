@@ -4,7 +4,7 @@
 // моменты сообщений человека в чате этого клиента.
 
 import { createAdminClient } from '@/lib/supabase/admin'
-import { isFailure, requireManagement } from '@/lib/auth-guards'
+import { isFailure, requireAnalytics } from '@/lib/auth-guards'
 import { loadClientProfile, type ServedGroup } from '@/lib/analytics/client-profile'
 
 export interface DealServedBy {
@@ -15,7 +15,7 @@ export interface DealServedBy {
 
 /** null — нет прав или у сделки нет номера. */
 export async function getDealServedBy(dealId: string): Promise<DealServedBy | null> {
-  const guard = await requireManagement()
+  const guard = await requireAnalytics()
   if (isFailure(guard)) return null
 
   const { data } = await createAdminClient()
