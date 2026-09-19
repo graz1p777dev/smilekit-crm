@@ -7,6 +7,7 @@ import { Archive, Filter, Inbox, Layers, MapPin, Share2, Trophy } from 'lucide-r
 import { getFunnelAnalytics, type FunnelAnalytics as FunnelData } from '@/lib/analytics/client-api'
 import type { PeriodInput } from '@/lib/analytics/period'
 import { useAnalyticsData, useReportStamp, type Stamp } from './useAnalyticsData'
+import CitiesCard from './CitiesCard'
 import {
   BRAND, BRAND_SOFT, Bars, Card, EmptyState, ErrorState, INK, INK_2, INK_3, Kpi, KpiGrid, Lead, Note, SERIES, TRACK,
   TabBody, TabSkeleton, num, pct,
@@ -22,7 +23,9 @@ export default function FunnelAnalytics({ period, onStamp }: { period: PeriodInp
   useReportStamp(null, loadedAt, onStamp)
   if (error) return <ErrorState text={error} />
   if (loading || !data) return <TabSkeleton text="Считаем воронку…" blocks={['bars', 'bars']} />
-  return <FunnelView data={data} />
+  // Город в карточке сделки почти никогда не заполнен — показываем города,
+  // которые клиенты назвали боту в переписке (та же карточка, что на «Лидах»).
+  return <FunnelView data={data} cities={<CitiesCard period={period} />} />
 }
 
 /**
@@ -69,7 +72,7 @@ function StageBars({ stages, deals }: { stages: FunnelData['stages']; deals: num
   )
 }
 
-export function FunnelView({ data }: { data: FunnelData }) {
+export function FunnelView({ data, cities }: { data: FunnelData; cities?: React.ReactNode }) {
   const won = data.stages.filter((s) => s.kind === 'won').reduce((sum, s) => sum + s.now, 0)
   const lost = data.stages.filter((s) => s.kind === 'lost').reduce((sum, s) => sum + s.now, 0)
   const unsorted = data.stages.filter((s) => s.isDefault).reduce((sum, s) => sum + s.now, 0)
@@ -97,11 +100,13 @@ export function FunnelView({ data }: { data: FunnelData }) {
         <Card icon={Share2} title="Откуда пришли" hint="Канал, в котором заведена сделка.">
           <Bars items={data.sources.map((s) => ({ label: SOURCE_LABEL[s.source] ?? s.source, value: s.deals }))} />
         </Card>
-        <Card icon={MapPin} title="Города" hint="Город из карточки сделки (до 20 самых частых).">
-          {knownCities.length === 0
-            ? <EmptyState icon={MapPin} text="В сделках этого периода город не заполнен." />
-            : <Bars items={data.cities.map((c) => ({ label: c.city, value: c.deals }))} />}
-        </Card>
+        {cities ?? (
+          <Card icon={MapPin} title="Города" hint="Город из карточки сделки (до 20 самых частых).">
+            {knownCities.length === 0
+              ? <EmptyState icon={MapPin} text="В сделках этого периода город не заполнен." />
+              : <Bars items={data.cities.map((c) => ({ label: c.city, value: c.deals }))} />}
+          </Card>
+        )}
       </div>
     </TabBody>
   )
