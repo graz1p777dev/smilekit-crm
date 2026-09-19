@@ -57,11 +57,6 @@ async function viewer() {
   return data as { id: string; role: string } | null
 }
 
-/** Только цифры — так же нормализован campaign_opt_outs.phone и телефон в чеке. */
-function normalizePhone(value: string | null | undefined): string {
-  return String(value || '').replace(/\D/g, '')
-}
-
 /**
  * Supabase (PostgREST) молча обрезает любую выборку до 1000 строк — сервер
  * игнорирует .limit() больше этого потолка (project max-rows), проверено
@@ -128,12 +123,14 @@ export async function eligibleRecipientsForRun(filter?: AudienceFilter): Promise
 }
 
 async function eligibleRecipients(filter?: AudienceFilter): Promise<Recipient[]> {
-  return (await selectRecipients(filter)).recipients
+  return (await selectRecipients(filter, true)).recipients
 }
 
+/** withList = false — только числа (предпросмотр): список получателей не собирается. */
 async function selectRecipients(
-  filter?: AudienceFilter
-): Promise<{ recipients: Recipient[]; excluded: AudienceExclusions }> {
+  filter: AudienceFilter | undefined,
+  withList: boolean
+): Promise<{ recipients: Recipient[]; count: number; excluded: AudienceExclusions }> {
   const excluded: AudienceExclusions = { managerChats: 0, alreadyReached: 0 }
   const admin = createAdminClient()
   const audience: CampaignAudience = filter?.audience ?? 'not_purchased'
@@ -163,21 +160,17 @@ async function selectRecipients(
   const fromDate = dateFilter?.from ? lowerBound(dateFilter.from) : null
   const toDate = dateFilter?.to ? upperBound(dateFilter.to) : null
   if ((fromDate && Number.isNaN(fromDate.getTime())) || (toDate && Number.isNaN(toDate.getTime()))) {
-    return { recipients: [], excluded }
+    return { recipients: [], count: 0, excluded }
   }
-  const fromTime = fromDate ? fromDate.getTime() : null
-  const toTime = toDate ? toDate.getTime() : null
 
-  const [deals, { data: orders }, operatorRows, { data: optOuts }, chatControls] = await Promise.all([
-    fetchAllRows<{ id: string; source: string; external_key: string | null; customer_phone: string | null }>(
-      admin, 'deals', 'id, source, external_key, customer_phone',
-      (q) => (audience === 'all' ? q : q.neq('status', 'won')).is('deleted_at', null).order('id')
-    ),
-    admin
-      .from('orders')
-      .select('deal_id')
-      .neq('status', 'cancelled')
-      .is('deleted_at', null),
+  // Сами правила подбора (покупка, стоп-список, период, «уже получили») —
+  // в функции базы campaign_audience (миграция 064). Раньше здесь в Node
+  // вычитывались все сделки (12+ тыс. строк постранично по 1000), весь
+  // chat_control и все сообщения клиентов за период — на каждое изменение
+  // фильтра в предпросмотре. Здесь остаётся только «менеджер в переписке»:
+  // это правило живёт в isManagerActiveInChat и нужно ему немного строк.
+  const cutoff = new Date(Date.now() - MANAGER_ACTIVE_WINDOW_MS).toISOString()
+  const [operatorRows, chatControls] = await Promise.all([
     // ТОЛЬКО сообщения менеджеров. Раньше здесь вычитывалась вся таблица
     // переписки целиком (десятки тысяч строк, постранично по 1000) — ради
     // двух производных величин. Именно это подвешивало страницу рассылок:
@@ -190,26 +183,18 @@ async function selectRecipients(
       // (~20 тыс. строк, 5–8 с на каждый пересчёт аудитории), и страница
       // рассылок стояла в очереди за этим запросом.
       (q) => q.eq('sender', 'operator')
-        .gte('created_at', new Date(Date.now() - MANAGER_ACTIVE_WINDOW_MS).toISOString())
+        .gte('created_at', cutoff)
         .order('id', { ascending: false })
     ),
-    admin.from('campaign_opt_outs').select('phone'),
+    // Отметки chat_control старше окна на ответ isManagerActiveInChat не
+    // влияют: если после отметки менеджер писал, решает его сообщение, а если
+    // не писал — последняя активность старше окна и чат не «у менеджера».
+    // Поэтому читаем только свежие отметки, а не всю таблицу.
     fetchAllRows<{ chat_id: string; bot_enabled: boolean; updated_at: string }>(
-      admin, 'chat_control', 'chat_id, bot_enabled, updated_at', (q) => q.order('chat_id')
+      admin, 'chat_control', 'chat_id, bot_enabled, updated_at',
+      (q) => q.gte('updated_at', cutoff).order('chat_id')
     ),
   ])
-
-  const reached = new Set<string>()
-  if (filter?.skipReachedSince) {
-    const reachedRows = await fetchAllRows<{ chat_id: string }>(
-      admin, 'campaign_recipients', 'chat_id',
-      (q) => q.eq('status', 'sent').gte('sent_at', filter.skipReachedSince).order('id')
-    )
-    for (const row of reachedRows) reached.add(normalizePhone(row.chat_id))
-  }
-
-  const purchased = new Set((orders ?? []).flatMap((row) => row.deal_id ? [String(row.deal_id)] : []))
-  const excludedPhones = new Set((optOuts ?? []).map((row) => row.phone as string))
 
   // «Менеджер ведёт чат»: явная отметка перекрывает прошлые сообщения
   // менеджера, но только до его следующего сообщения.
@@ -235,95 +220,30 @@ async function selectRecipients(
   // Это правило ТОЛЬКО для рассылок. Отвечает ли в чате бот, решает другая
   // логика (src/lib/chat-control.ts) — её не трогаем.
   const now = Date.now()
-  const managerChats = new Set(
-    [...new Set([...lastOperatorAtByChat.keys(), ...controlByChat.keys()])].filter((chatId) =>
-      isManagerActiveInChat(lastOperatorAtByChat.get(chatId) ?? null, controlByChat.get(chatId), now)
-    )
+  const managerChats = [...new Set([...lastOperatorAtByChat.keys(), ...controlByChat.keys()])].filter((chatId) =>
+    isManagerActiveInChat(lastOperatorAtByChat.get(chatId) ?? null, controlByChat.get(chatId), now)
   )
 
-  // Сообщения клиентов читаем ТОЛЬКО когда задан фильтр по дате, и сразу
-  // обрезаем по нижней границе. Для «кто писал сегодня» это несколько сотен
-  // строк вместо всей истории.
-  const lastClientAtByPhone = new Map<string, string>()
-  if (fromTime || toTime) {
-    const clientRows = await fetchAllRows<{ chat_id: string; created_at: string }>(
-      admin, 'chat_messages', 'chat_id, created_at',
-      (q) => {
-        const base = q.eq('sender', 'client')
-        const bounded = fromDate ? base.gte('created_at', fromDate.toISOString()) : base
-        return bounded.order('id', { ascending: false })
-      }
-    )
-    // Строки идут id DESC, поэтому первое попадание на номер — самое свежее.
-    for (const row of clientRows) {
-      const phone = normalizePhone(row.chat_id)
-      if (phone && !lastClientAtByPhone.has(phone)) lastClientAtByPhone.set(phone, row.created_at)
-    }
-  }
-
-  const recipients = (deals ?? []).flatMap((deal): Recipient[] => {
-    const id = String(deal.id)
-    const key = String(deal.external_key || '')
-    if (!key) return []
-    if (audience === 'not_purchased' && purchased.has(id)) return []
-    if (audience === 'purchased' && !purchased.has(id)) return []
-
-    const phone = normalizePhone(
-      key.startsWith('greenapi:') ? key.slice('greenapi:'.length) : deal.customer_phone
-    )
-    if (excludedPhones.has(phone)) return []
-
-    if (deal.source === 'telegram' && key.startsWith('telegram:')) {
-      // У Telegram своя переписка в боте витрины, здесь её нет — по дате
-      // отфильтровать нечем.
-      if (fromTime || toTime) return []
-      const chatId = key.slice('telegram:'.length)
-      return /^-?\d+$/.test(chatId) ? [{
-        deal_id: id,
-        channel: 'telegram',
-        external_key: key,
-        chat_id: chatId,
-        lead_id: null,
-        contact_id: null,
-      }] : []
-    }
-
-    // Остальное — WhatsApp через Green API, адресуем по номеру. Сюда попадают
-    // и старые сделки с ключом amocrm:<lead_id>: у них номер лежит в карточке
-    // клиента, а переписка — в том же chat_id по номеру.
-    if (!greenApiReady || phone.length < 9) return []
-
-    if (fromTime || toTime) {
-      // Фильтр по дате теперь работает и для сделок Green API. Раньше эта
-      // ветка возвращала пусто при ЛЮБОМ диапазоне — то есть рассылка
-      // «тем, кто писал сегодня» молча получала ноль получателей.
-      const lastAt = lastClientAtByPhone.get(phone)
-      if (!lastAt) return []
-      const lastTime = new Date(lastAt).getTime()
-      if (fromTime && lastTime < fromTime) return []
-      if (toTime && lastTime > toTime) return []
-    }
-
-    if (reached.has(phone)) {
-      excluded.alreadyReached += 1
-      return []
-    }
-    if (managerChats.has(phone)) {
-      excluded.managerChats += 1
-      if (!filter?.includeManagerChats) return []
-    }
-
-    return [{
-      deal_id: id,
-      channel: 'whatsapp',
-      external_key: key,
-      chat_id: phone,
-      lead_id: key.startsWith('amocrm:') ? key.slice('amocrm:'.length) : null,
-      contact_id: null,
-    }]
+  const { data, error } = await admin.rpc('campaign_audience', {
+    p_audience: audience,
+    p_from: fromDate ? fromDate.toISOString() : null,
+    p_to: toDate ? toDate.toISOString() : null,
+    p_skip_reached_since: filter?.skipReachedSince || null,
+    p_manager_chat_ids: managerChats,
+    p_include_manager_chats: Boolean(filter?.includeManagerChats),
+    p_whatsapp_ready: greenApiReady,
+    p_with_list: withList,
   })
-
-  return { recipients, excluded }
+  if (error) throw new Error(`campaign_audience: ${error.message}`)
+  const result = data as {
+    count: number
+    already_reached: number
+    manager_chats: number
+    recipients: Recipient[] | null
+  }
+  excluded.alreadyReached = result.already_reached
+  excluded.managerChats = result.manager_chats
+  return { recipients: result.recipients ?? [], count: result.count, excluded }
 }
 
 /**
@@ -383,14 +303,14 @@ export async function getAudiencePreview(input: {
   const empty: AudiencePreview = { count: 0, excluded: { managerChats: 0, alreadyReached: 0 } }
   const me = await viewer()
   if (!me || !['owner', 'rop'].includes(me.role)) return empty
-  const { recipients, excluded } = await selectRecipients({
+  const { count, excluded } = await selectRecipients({
     from: input.dateFrom || undefined,
     to: input.dateTo || undefined,
     audience: input.audience,
     includeManagerChats: input.includeManagerChats,
     skipReachedSince: input.skipReachedSince,
-  })
-  return { count: recipients.length, excluded }
+  }, false)
+  return { count, excluded }
 }
 
 const CampaignSchema = z.object({
@@ -478,7 +398,7 @@ export async function scheduleCampaign(input: unknown): Promise<{ success: true;
 
 // ─── Стоп-список рассылок ─────────────────────────────────────────────────
 // Номера здесь исключаются из аудитории всегда, независимо от того, купили
-// они или нет (см. excludedPhones в eligibleRecipients).
+// они или нет (см. campaign_opt_outs в функции campaign_audience, миграция 064).
 
 export interface OptOutRow {
   phone: string

@@ -61,29 +61,20 @@ export interface DealsData {
  * и не находился по прямой ссылке (?deal=...), хотя переход по ссылке
  * технически срабатывал.
  */
-// Доске нужны не все поля строки: note может быть длинным текстом, а на
-// тысяче сделок это лишние сотни килобайт в каждом ответе (и на первой
-// загрузке страницы, и на каждом обновлении по Realtime). Читаем ровно то,
-// что рисует карточка и открывает модалка до своих собственных запросов.
-// Одной строкой, без конкатенации: supabase-js выводит типы результата из
-// литерала, а склейка через + превращает его в обычный string и ломает вывод.
-const DEAL_BOARD_COLUMNS = 'id, title, stage_id, amount, currency, customer_name, customer_phone, customer_username, city, address, source, external_key, responsible_employee_id, note, status, stage_changed_at, created_at, updated_at'
-
+// Доске нужны не все поля строки: список колонок (прежний DEAL_BOARD_COLUMNS:
+// id, title, stage_id, amount, currency, customer_*, city, address, source,
+// external_key, responsible_employee_id, note, status, stage_changed_at,
+// created_at, updated_at) теперь задан в функции базы deals_list_json.
+//
+// Раньше сделки читались постранично — 13 последовательных запросов, и
+// каждый заново проверял RLS и сортировал всю таблицу (~0,3 с на страницу,
+// ~4 с только в базе). deals_list_json (миграция 066) отдаёт ту же выборку
+// (deleted_at IS NULL, created_at DESC, видимость по RLS вызывающего) одним
+// JSON — на него лимит PostgREST в 1000 строк не действует.
 async function fetchAllDeals(supabase: Awaited<ReturnType<typeof createClient>>): Promise<Deal[]> {
-  const PAGE_SIZE = 1000
-  const rows: Deal[] = []
-  for (let from = 0; ; from += PAGE_SIZE) {
-    const { data, error } = await supabase
-      .from('deals')
-      .select(DEAL_BOARD_COLUMNS)
-      .is('deleted_at', null)
-      .order('created_at', { ascending: false })
-      .range(from, from + PAGE_SIZE - 1)
-    if (error) throw new Error(error.message)
-    rows.push(...((data ?? []) as Deal[]))
-    if (!data || data.length < PAGE_SIZE) break
-  }
-  return rows
+  const { data, error } = await supabase.rpc('deals_list_json', { p_compact: false })
+  if (error) throw new Error(error.message)
+  return (data ?? []) as Deal[]
 }
 
 export async function getDealsData(): Promise<DealsData> {

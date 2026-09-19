@@ -186,8 +186,17 @@ export default function CampaignsClient({ initialData }: { initialData: Campaign
     // Пока рассылка отправляется, счётчик должен двигаться на глазах —
     // 15 секунд для этого слишком долго.
     const active = initialData.campaigns.some((c) => c.status === 'running')
-    const timer = setInterval(() => router.refresh(), active ? 3_000 : 15_000)
-    return () => clearInterval(timer)
+    // Во фоновой вкладке не опрашиваем: каждый refresh — полный серверный
+    // рендер страницы (middleware с проверкой токена, layout, 4 запроса к
+    // базе), а смотреть на него некому. Вернулись на вкладку — обновляем сразу.
+    const tick = () => { if (document.visibilityState === 'visible') router.refresh() }
+    const onVisible = () => { if (document.visibilityState === 'visible') router.refresh() }
+    const timer = setInterval(tick, active ? 3_000 : 15_000)
+    document.addEventListener('visibilitychange', onVisible)
+    return () => {
+      clearInterval(timer)
+      document.removeEventListener('visibilitychange', onVisible)
+    }
   }, [router, initialData.campaigns])
 
   // Аудиторию считаем здесь, а не на сервере при рендере страницы: перебор
