@@ -355,13 +355,17 @@ export default function CampaignsClient({ initialData }: { initialData: Campaign
   }
 
   return (
-    <div className="min-h-full" style={{ background: 'var(--surface-2)' }}>
+    // На телефоне кнопки и поля всей страницы (и блоков внутри) — не ниже
+    // 36/40px, под палец.
+    <div className="min-h-full max-md:[&_[data-slot=button]]:min-h-9 max-md:[&_[data-slot=input]]:min-h-10" style={{ background: 'var(--surface-2)' }}>
       <PageHeader title="Рассылки" subtitle="Возвращайте клиентов, которые ещё не купили" />
       <main className="mx-auto max-w-6xl p-4 md:p-8">
-        <div className="grid gap-5 lg:grid-cols-[minmax(0,1.3fr)_minmax(280px,.7fr)]">
-          <section className="rounded-3xl bg-white p-5 shadow-sm ring-1 ring-black/5 md:p-7">
+        {/* Одна колонка minmax(0,1fr): иначе широкое содержимое формы
+            растягивало колонку, и страница уезжала вбок на телефоне. */}
+        <div className="grid grid-cols-[minmax(0,1fr)] gap-5 lg:grid-cols-[minmax(0,1.3fr)_minmax(280px,.7fr)]">
+          <section className="min-w-0 rounded-3xl bg-white p-4 shadow-sm ring-1 ring-black/5 sm:p-5 md:p-7">
             <div className="mb-6 flex items-start gap-3">
-              <div className="flex size-10 items-center justify-center rounded-2xl text-white" style={{ background: 'linear-gradient(145deg,#6f2bd0,#48108f)' }}>
+              <div className="flex size-10 shrink-0 items-center justify-center rounded-2xl text-white" style={{ background: 'linear-gradient(145deg,#6f2bd0,#48108f)' }}>
                 <Send className="size-5" />
               </div>
               <div>
@@ -422,7 +426,7 @@ export default function CampaignsClient({ initialData }: { initialData: Campaign
                     <button
                       type="button"
                       onClick={() => setVoiceId('')}
-                      className="text-xs font-semibold"
+                      className="py-2 text-xs font-semibold md:py-0"
                       style={{ color: 'var(--ink-3)' }}
                     >
                       Отправить без голосового
@@ -493,7 +497,7 @@ export default function CampaignsClient({ initialData }: { initialData: Campaign
                             tabIndex={0}
                             aria-label={`Снять выбор «${item.label}»`}
                             title="Снять выбор"
-                            className="ml-1.5 inline-flex size-4 items-center justify-center rounded-full transition-colors hover:bg-white/25"
+                            className="-my-1 ml-1 inline-flex size-7 items-center justify-center rounded-full transition-colors hover:bg-white/25 md:my-0 md:ml-1.5 md:size-4"
                             onClick={(event) => {
                               // Крестик внутри кнопки: без остановки всплытия
                               // сработал бы и сам пресет, и период выбрался бы
@@ -540,10 +544,10 @@ export default function CampaignsClient({ initialData }: { initialData: Campaign
                     </Button>
                   </div>
                 ) : (
-                  <div className="flex items-center gap-2">
-                    <Input type="date" value={dateFrom} onChange={(event) => { setDateFrom(event.target.value); setPreset(null); setSinceCampaign(null) }} aria-label="От даты" />
+                  <div className="flex flex-wrap items-center gap-2">
+                    <Input className="min-w-0 flex-1 basis-32" type="date" value={dateFrom} onChange={(event) => { setDateFrom(event.target.value); setPreset(null); setSinceCampaign(null) }} aria-label="От даты" />
                     <span className="text-sm" style={{ color: 'var(--ink-3)' }}>—</span>
-                    <Input type="date" value={dateTo} onChange={(event) => { setDateTo(event.target.value); setPreset(null); setSinceCampaign(null) }} aria-label="До даты" />
+                    <Input className="min-w-0 flex-1 basis-32" type="date" value={dateTo} onChange={(event) => { setDateTo(event.target.value); setPreset(null); setSinceCampaign(null) }} aria-label="До даты" />
                     {(dateFrom || dateTo) && (
                       <Button type="button" variant="ghost" size="sm" onClick={clearPeriod}>
                         Сбросить
@@ -581,7 +585,7 @@ export default function CampaignsClient({ initialData }: { initialData: Campaign
             </div>
           </section>
 
-          <aside className="overflow-hidden rounded-3xl text-white shadow-[0_18px_50px_-24px_rgba(78,20,150,.7)]" style={{ background: 'linear-gradient(155deg,#5c18b5 0%,#39106f 100%)' }}>
+          <aside className="min-w-0 overflow-hidden rounded-3xl text-white shadow-[0_18px_50px_-24px_rgba(78,20,150,.7)]" style={{ background: 'linear-gradient(155deg,#5c18b5 0%,#39106f 100%)' }}>
             <div className="p-6">
               <p className="text-xs font-semibold uppercase tracking-[.16em] text-white/60">Аудитория</p>
               <div className="mt-4 flex items-end gap-2">
@@ -608,7 +612,7 @@ export default function CampaignsClient({ initialData }: { initialData: Campaign
                     <label className="flex cursor-pointer items-start gap-2 rounded-lg bg-white/[.08] px-2.5 py-2 text-xs leading-snug">
                       <input
                         type="checkbox"
-                        className="mt-0.5 size-3.5 shrink-0"
+                        className="mt-0.5 size-4 shrink-0"
                         checked={includeManagerChats}
                         onChange={(event) => setIncludeManagerChats(event.target.checked)}
                       />
@@ -623,7 +627,7 @@ export default function CampaignsClient({ initialData }: { initialData: Campaign
                     <label className="flex cursor-pointer items-start gap-2 rounded-lg bg-white/[.08] px-2.5 py-2 text-xs leading-snug">
                       <input
                         type="checkbox"
-                        className="mt-0.5 size-3.5 shrink-0"
+                        className="mt-0.5 size-4 shrink-0"
                         checked={skipReachedToday}
                         onChange={(event) => setSkipReachedToday(event.target.checked)}
                       />
@@ -661,7 +665,7 @@ export default function CampaignsClient({ initialData }: { initialData: Campaign
         />
 
         <section className="mt-8">
-          <div className="mb-3 flex items-center justify-between">
+          <div className="mb-3 flex flex-wrap items-center justify-between gap-x-3">
             <h2 className="text-base font-bold" style={{ color: 'var(--ink)' }}>История рассылок</h2>
             <span className="text-xs" style={{ color: 'var(--ink-3)' }}>обновляется автоматически</span>
           </div>
@@ -672,7 +676,7 @@ export default function CampaignsClient({ initialData }: { initialData: Campaign
             {initialData.campaigns.map((campaign) => {
               const meta = statusMeta[campaign.status]
               return (
-                <article key={campaign.id} className="grid gap-4 rounded-2xl bg-white p-5 ring-1 ring-black/5 md:grid-cols-[minmax(0,1fr)_auto_auto] md:items-center">
+                <article key={campaign.id} className="grid grid-cols-[minmax(0,1fr)] gap-3 rounded-2xl bg-white p-4 ring-1 ring-black/5 md:grid-cols-[minmax(0,1fr)_auto_auto] md:items-center md:gap-4 md:p-5">
                   <div className="min-w-0">
                     <div className="flex flex-wrap items-center gap-2">
                       <h3 className="truncate font-semibold" style={{ color: 'var(--ink)' }}>{campaign.title}</h3>
@@ -736,7 +740,7 @@ export default function CampaignsClient({ initialData }: { initialData: Campaign
           <p className="mb-3 text-sm" style={{ color: 'var(--ink-3)' }}>
             Номера здесь никогда не попадут в аудиторию рассылки — даже если ещё не купили.
           </p>
-          <div className="rounded-2xl bg-white p-5 ring-1 ring-black/5">
+          <div className="rounded-2xl bg-white p-4 ring-1 ring-black/5 md:p-5">
             <div className="grid gap-3 sm:grid-cols-[minmax(0,1fr)_minmax(0,1.4fr)_auto]">
               <Input
                 value={optOutPhone}
@@ -752,12 +756,12 @@ export default function CampaignsClient({ initialData }: { initialData: Campaign
                 <ShieldX /> Добавить
               </Button>
             </div>
-            <label className="mt-3 flex items-center gap-2 text-sm" style={{ color: 'var(--ink-2)' }}>
+            <label className="mt-3 flex items-start gap-2 text-sm md:items-center" style={{ color: 'var(--ink-2)' }}>
               <input
                 type="checkbox"
                 checked={optOutBlockBot}
                 onChange={(event) => setOptOutBlockBot(event.target.checked)}
-                className="size-4 rounded"
+                className="mt-0.5 size-4 shrink-0 rounded md:mt-0"
               />
               Бот тоже не должен писать этому номеру (даже если он напишет первым)
             </label>
@@ -783,7 +787,7 @@ export default function CampaignsClient({ initialData }: { initialData: Campaign
                     type="button"
                     disabled={pending}
                     onClick={() => removeOptOut(row.phone)}
-                    className="flex shrink-0 items-center gap-1 rounded-lg px-2 py-1 text-xs font-semibold text-red-600 transition-colors hover:bg-red-50 disabled:opacity-50"
+                    className="flex min-h-9 shrink-0 items-center gap-1 rounded-lg px-2 py-1 text-xs font-semibold text-red-600 md:min-h-0 transition-colors hover:bg-red-50 disabled:opacity-50"
                   >
                     <Trash2 className="size-3.5" /> Убрать
                   </button>

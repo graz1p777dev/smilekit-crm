@@ -212,7 +212,7 @@ export default function RecurringCampaigns({ rules, lastCampaignAt }: { rules: R
       </p>
 
       {open && (
-        <div className="mb-4 space-y-4 rounded-2xl bg-white p-5 ring-1 ring-black/5">
+        <div className="mb-4 min-w-0 space-y-4 rounded-2xl bg-white p-4 ring-1 ring-black/5 md:p-5">
           <div className="space-y-2">
             <Label>Название</Label>
             <Input value={title} onChange={(e) => setTitle(e.target.value)} placeholder="Например: Утреннее напоминание" maxLength={160} />
@@ -246,7 +246,7 @@ export default function RecurringCampaigns({ rules, lastCampaignAt }: { rules: R
                 </label>
               ))}
               {voiceId && (
-                <button type="button" onClick={() => setVoiceId('')} className="text-xs font-semibold" style={{ color: 'var(--ink-3)' }}>
+                <button type="button" onClick={() => setVoiceId('')} className="py-2 text-xs font-semibold md:py-0" style={{ color: 'var(--ink-3)' }}>
                   Отправлять без голосового
                 </button>
               )}
@@ -350,7 +350,7 @@ export default function RecurringCampaigns({ rules, lastCampaignAt }: { rules: R
           const voice = voiceById(rule.voice_id)
           const interval = INTERVALS.find((item) => item.days === rule.interval_days)
           return (
-            <article key={rule.id} className="rounded-2xl bg-white p-5 ring-1 ring-black/5">
+            <article key={rule.id} className="min-w-0 rounded-2xl bg-white p-4 ring-1 ring-black/5 md:p-5">
               <div className="flex flex-wrap items-center gap-2">
                 <h3 className="font-semibold" style={{ color: 'var(--ink)' }}>{rule.title}</h3>
                 <span

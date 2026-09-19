@@ -71,7 +71,7 @@ export default function CampaignProgress({
         <button
           type="button"
           onClick={() => setOpen((value) => !value)}
-          className="flex shrink-0 items-center gap-1 text-xs font-semibold"
+          className="-my-2 flex min-h-10 shrink-0 items-center gap-1 text-xs font-semibold md:my-0 md:min-h-0"
           style={{ color: '#5115a4' }}
         >
           {open ? <ChevronUp className="size-3.5" /> : <ChevronDown className="size-3.5" />}
@@ -101,7 +101,7 @@ export default function CampaignProgress({
                     <p className="truncate text-xs font-medium" style={{ color: 'var(--ink)' }}>
                       {row.name || 'Без имени'}
                     </p>
-                    <p className="truncate text-[11px] tabular-nums" style={{ color: 'var(--ink-3)' }}>
+                    <p className="break-words text-[11px] tabular-nums md:truncate" style={{ color: 'var(--ink-3)' }}>
                       +{row.chat_id}
                       {row.error && ` · ${row.error}`}
                     </p>
