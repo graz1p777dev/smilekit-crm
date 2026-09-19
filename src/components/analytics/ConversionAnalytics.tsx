@@ -10,6 +10,7 @@ import { CLIENT_TYPE_LABELS, formatDuration, type ClientType } from '@/lib/analy
 import { useAnalyticsData, useReportStamp, type Stamp } from './useAnalyticsData'
 import AdSourceCard from './AdSourceCard'
 import CitiesCard from './CitiesCard'
+import ReturningCard from './ReturningCard'
 import {
   BRAND, Card, ClientCell, EmptyState, ErrorState, Expand, INK, INK_2, INK_3, Kpi, KpiGrid, LINE, Lead, Note, OTHER,
   PersonRow, SERIES, ScrollTable, SegmentBar, ShowMore, TRACK, TabBody, TabSkeleton, WaitPill, num, pct, phoneLabel, useNow,
@@ -35,7 +36,11 @@ export default function LeadsAnalyticsView({ period, onStamp }: { period: Period
   useReportStamp(data?.generatedAt, loadedAt, onStamp)
   if (error) return <ErrorState text={error} />
   if (loading || !data) return <TabSkeleton text="Считаем лиды…" blocks={['bars', 'list', 'bars', 'bars']} />
-  return <LeadsView data={data} extra={<><AdSourceCard period={period} /><CitiesCard period={period} /></>} />
+  return <LeadsView data={data} extra={<>
+    <AdSourceCard period={period} />
+    <ReturningCard period={period} />
+    <CitiesCard period={period} />
+  </>} />
 }
 
 /** Конверсия группы: крупно — доля, рядом — «купили из». */

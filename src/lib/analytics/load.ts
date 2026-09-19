@@ -489,6 +489,24 @@ export async function loadCities(range: PeriodRange): Promise<CitiesAnalytics> {
   })
 }
 
+// ─── Вернувшиеся клиенты (059) ──────────────────────────────────────────────
+
+export interface ReturningAnalytics {
+  range: PeriodRange
+  generatedAt: string
+  wrote: number
+  returned: number
+  afterCampaign: BoughtGroup
+  self: BoughtGroup
+}
+
+export async function loadReturning(range: PeriodRange): Promise<ReturningAnalytics> {
+  return cached(`returning:${range.fromIso}:${range.toIso}`, async () => {
+    const raw = await rpc<Omit<ReturningAnalytics, 'range' | 'generatedAt'>>('analytics_returning', rangeArgs(range))
+    return { ...raw, range, generatedAt: new Date().toISOString() }
+  })
+}
+
 // ─── Нагрузка по часам (055) ────────────────────────────────────────────────
 
 export interface LoadHour {
