@@ -1,6 +1,7 @@
 'use client'
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import dynamic from 'next/dynamic'
 import { Plus, Search } from 'lucide-react'
 import { toast } from 'sonner'
 import { createClient } from '@/lib/supabase/client'
@@ -11,7 +12,9 @@ import { getDealsData, moveDeal } from '@/actions/deals'
 import { DEAL_SOURCE, stageSoft } from './deal-config'
 import { DEAL_SORTS, DEAL_VIEWS, sortDeals, type DealSort, type DealView } from './deal-view'
 import DealCard from './DealCard'
-import DealModal from './DealModal'
+// Карточка сделки (700 строк с перепиской, покупками и формой) нужна только
+// по клику — грузим её код отдельным куском, а не в составе доски.
+const DealModal = dynamic(() => import('./DealModal'))
 import { BotToggle } from './BotToggle'
 
 interface Props {
