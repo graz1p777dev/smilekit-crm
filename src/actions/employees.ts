@@ -4,6 +4,7 @@ import { revalidatePath } from 'next/cache'
 import { z } from 'zod'
 import { createClient } from '@/lib/supabase/server'
 import { createAdminClient } from '@/lib/supabase/admin'
+import { operatorMessagesByAuthors } from '@/lib/operator-messages'
 import { validatePassword } from '@/lib/auth-validation'
 import { recordAudit } from '@/actions/audit'
 import type { Employee, Department } from '@/types'
@@ -376,10 +377,10 @@ export async function getEmployeeLeadReplies(): Promise<Record<string, number>> 
 
   const admin = createAdminClient()
 
-  const [{ data: emps }, { data: wazzup }, { data: amo }] = await Promise.all([
-    admin.from('employees').select('id, name'),
+  const { data: emps } = await admin.from('employees').select('id, name')
+  const [{ data: wazzup }, amo] = await Promise.all([
     admin.from('whatsapp_messages').select('phone, sent_by').not('sent_by', 'is', null),
-    admin.from('chat_messages').select('chat_id, author_name').eq('sender', 'operator'),
+    operatorMessagesByAuthors(((emps ?? []) as { name: string }[]).map((e) => e.name)),
   ])
 
   const employees = (emps ?? []) as { id: string; name: string }[]
@@ -397,7 +398,7 @@ export async function getEmployeeLeadReplies(): Promise<Record<string, number>> 
   for (const row of (wazzup ?? []) as { phone: string; sent_by: string | null }[]) {
     add(row.sent_by, row.phone.replace(/\D/g, '').slice(-9))
   }
-  for (const row of (amo ?? []) as { chat_id: string; author_name: string | null }[]) {
+  for (const row of amo) {
     add(idByName.get((row.author_name ?? '').trim().toLowerCase()), String(row.chat_id))
   }
 

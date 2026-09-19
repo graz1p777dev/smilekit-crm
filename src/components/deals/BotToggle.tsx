@@ -5,7 +5,7 @@ import { toast } from 'sonner'
 import { Power } from 'lucide-react'
 import { getBotEnabled, setBotEnabled, pauseBot } from '@/actions/bot-switch'
 
-/** Аварийный выключатель бота amoCRM — живёт в шапке доски сделок. */
+/** Аварийный выключатель бота WhatsApp — живёт в шапке доски сделок. */
 export function BotToggle() {
   const [enabled, setEnabled] = useState<boolean | null>(null)
   const [busy, startBusy] = useTransition()
@@ -39,7 +39,7 @@ export function BotToggle() {
         return
       }
       setEnabled(next)
-      toast.success(next ? 'Бот amoCRM включён — отвечает клиентам' : 'Бот amoCRM ВЫКЛЮЧЕН — молчит во всех чатах')
+      toast.success(next ? 'Бот WhatsApp включён — отвечает клиентам' : 'Бот WhatsApp ВЫКЛЮЧЕН — молчит во всех чатах')
     })
   }
 
@@ -52,7 +52,7 @@ export function BotToggle() {
       }
       if (minutes === null) setEnabled(false)
       toast.success(
-        minutes ? `Бот amoCRM на паузе ${minutes} мин. — потом включится сам` : 'Бот amoCRM ВЫКЛЮЧЕН — молчит во всех чатах'
+        minutes ? `Бот WhatsApp на паузе ${minutes} мин. — потом включится сам` : 'Бот WhatsApp ВЫКЛЮЧЕН — молчит во всех чатах'
       )
     })
   }
@@ -68,7 +68,7 @@ export function BotToggle() {
             ? { background: '#dcfce7', color: '#15803d', border: '1px solid #86efac' }
             : { background: '#fee2e2', color: '#b91c1c', border: '1px solid #fca5a5' }
         }
-        title="Мгновенно глушит ответы бота в WhatsApp-чатах amoCRM. История и этапы сделок продолжают вестись."
+        title="Мгновенно глушит ответы бота во всех WhatsApp-чатах. История и этапы сделок продолжают вестись."
       >
         <Power size={14} />
         {enabled == null ? 'Бот…' : enabled ? 'Бот: ВКЛ' : 'Бот: ВЫКЛ'}

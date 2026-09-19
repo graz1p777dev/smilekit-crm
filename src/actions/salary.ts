@@ -14,6 +14,7 @@
 import { revalidatePath } from 'next/cache'
 import { createClient } from '@/lib/supabase/server'
 import { createAdminClient } from '@/lib/supabase/admin'
+import { operatorMessagesByAuthors } from '@/lib/operator-messages'
 import {
   calculateSalaries,
   type SalaryCalculation,
@@ -104,8 +105,8 @@ export async function getSalaryCalculation(year: number, month: number): Promise
   const from = new Date(Date.UTC(year, month - 1, 1) - OFFSET_MS).toISOString()
   const to = new Date(Date.UTC(year, month, 1) - OFFSET_MS).toISOString()
 
-  const [{ data: emps }, { data: orders }, { data: wazzup }, { data: amo }] = await Promise.all([
-    admin.from('employees').select('id, name, role').is('deleted_at', null).order('name'),
+  const { data: emps } = await admin.from('employees').select('id, name, role').is('deleted_at', null).order('name')
+  const [{ data: orders }, { data: wazzup }, amo] = await Promise.all([
     admin
       .from('orders')
       .select('customer_phone, total_amount, created_at')
@@ -114,7 +115,7 @@ export async function getSalaryCalculation(year: number, month: number): Promise
       .gte('created_at', from)
       .lt('created_at', to),
     admin.from('whatsapp_messages').select('phone, sent_by, created_at').not('sent_by', 'is', null),
-    admin.from('chat_messages').select('chat_id, author_name, created_at').eq('sender', 'operator'),
+    operatorMessagesByAuthors(((emps ?? []) as { name: string }[]).map((e) => e.name)),
   ])
 
   const employees = (emps ?? []) as { id: string; name: string; role: string }[]
@@ -131,7 +132,7 @@ export async function getSalaryCalculation(year: number, month: number): Promise
   for (const row of (wazzup ?? []) as { phone: string; sent_by: string; created_at: string }[]) {
     claim(phoneKey(row.phone), row.sent_by, row.created_at)
   }
-  for (const row of (amo ?? []) as { chat_id: string; author_name: string | null; created_at: string }[]) {
+  for (const row of amo) {
     // chat_id из одних цифр — это номер (Green API). UUID-подобный chat_id —
     // чат amojo, с заказом его не сопоставить, пропускаем.
     if (!/^\d{9,}$/.test(String(row.chat_id))) continue
