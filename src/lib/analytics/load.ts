@@ -408,6 +408,23 @@ export async function loadDiscounts(range: PeriodRange): Promise<DiscountAnalyti
   })
 }
 
+// ─── Реклама или остальные (057) ────────────────────────────────────────────
+
+export interface AdSourceAnalytics {
+  range: PeriodRange
+  generatedAt: string
+  ad: BoughtGroup
+  other: BoughtGroup
+  otherTop: { text: string; clients: number }[]
+}
+
+export async function loadAdSource(range: PeriodRange): Promise<AdSourceAnalytics> {
+  return cached(`adsource:${range.fromIso}:${range.toIso}`, async () => {
+    const raw = await rpc<Omit<AdSourceAnalytics, 'range' | 'generatedAt'>>('analytics_ad_source', rangeArgs(range))
+    return { ...raw, range, generatedAt: new Date().toISOString() }
+  })
+}
+
 // ─── Нагрузка по часам (055) ────────────────────────────────────────────────
 
 export interface LoadHour {

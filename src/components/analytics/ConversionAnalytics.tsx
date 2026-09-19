@@ -8,6 +8,7 @@ import { getLeadsAnalytics, type LeadsAnalytics, type ReplyGroup } from '@/lib/a
 import type { PeriodInput } from '@/lib/analytics/period'
 import { CLIENT_TYPE_LABELS, formatDuration, type ClientType } from '@/lib/analytics/client-types'
 import { useAnalyticsData, useReportStamp, type Stamp } from './useAnalyticsData'
+import AdSourceCard from './AdSourceCard'
 import {
   BRAND, Card, ClientCell, EmptyState, ErrorState, Expand, INK, INK_2, INK_3, Kpi, KpiGrid, LINE, Lead, Note, OTHER,
   PersonRow, SERIES, ScrollTable, SegmentBar, ShowMore, TRACK, TabBody, TabSkeleton, WaitPill, num, pct, phoneLabel, useNow,
@@ -33,7 +34,7 @@ export default function LeadsAnalyticsView({ period, onStamp }: { period: Period
   useReportStamp(data?.generatedAt, loadedAt, onStamp)
   if (error) return <ErrorState text={error} />
   if (loading || !data) return <TabSkeleton text="Считаем лиды…" blocks={['bars', 'list', 'bars', 'bars']} />
-  return <LeadsView data={data} />
+  return <LeadsView data={data} extra={<AdSourceCard period={period} />} />
 }
 
 /** Конверсия группы: крупно — доля, рядом — «купили из». */
@@ -57,7 +58,8 @@ function GroupRate({ label, group, color, top }: { label: string; group: ReplyGr
   )
 }
 
-export function LeadsView({ data }: { data: LeadsAnalytics }) {
+/** `extra` — карточки со своей загрузкой (реклама, города, вернувшиеся), встают в конец вкладки. */
+export function LeadsView({ data, extra }: { data: LeadsAnalytics; extra?: React.ReactNode }) {
   const now = useNow()
   const c = data.conversion
   const typesSum = data.types.reduce((sum, t) => sum + t.count, 0)
@@ -195,6 +197,8 @@ export function LeadsView({ data }: { data: LeadsAnalytics }) {
           </Note>
         </Card>
       </div>
+
+      {extra && <div className="grid items-start gap-4 md:grid-cols-2 md:gap-5">{extra}</div>}
     </TabBody>
   )
 }

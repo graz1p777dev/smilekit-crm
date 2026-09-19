@@ -5,12 +5,12 @@
 
 import type { PeriodInput, PeriodRange } from './period'
 import type {
-  AlmostBoughtAnalytics, BotFunnelAnalytics, BotHandoffAnalytics, CampaignStat, DiscountAnalytics, FunnelAnalytics, LeadsAnalytics,
+  AdSourceAnalytics, AlmostBoughtAnalytics, BotFunnelAnalytics, BotHandoffAnalytics, CampaignStat, DiscountAnalytics, FunnelAnalytics, LeadsAnalytics,
   LoadAnalytics, PurchasesAnalytics, StaffAnalytics,
 } from './load'
 
 export type {
-  AlmostBoughtAnalytics, AlmostRow, ReadySignal, BotFunnelAnalytics, BotHandoffAnalytics, BoughtGroup, DiscountAnalytics, LoadAnalytics, LoadHour, CampaignStat, ChatRef, FunnelAnalytics, LeadsAnalytics, PurchasesAnalytics,
+  AdSourceAnalytics, AlmostBoughtAnalytics, AlmostRow, ReadySignal, BotFunnelAnalytics, BotHandoffAnalytics, BoughtGroup, DiscountAnalytics, LoadAnalytics, LoadHour, CampaignStat, ChatRef, FunnelAnalytics, LeadsAnalytics, PurchasesAnalytics,
   ReplyGroup, StaffAnalytics, StaffRow, StaffWork, TypeClientRow, WaitingRow,
 } from './load'
 
@@ -43,5 +43,6 @@ export const getCampaignAnalytics = (period: PeriodInput) =>
   fetchTab<{ range: PeriodRange; campaigns: CampaignStat[] }>('campaigns', period)
 export const getAlmostBoughtAnalytics = (period: PeriodInput) => fetchTab<AlmostBoughtAnalytics>('almost', period)
 export const getBotFunnelAnalytics = (period: PeriodInput) => fetchTab<BotFunnelAnalytics>('botfunnel', period)
-export const getDiscountAnalytics = (period: PeriodInput) => fetchTab<DiscountAnalytics>('discounts', period)
+export const getAdSourceAnalytics = (period: PeriodInput) => fetchTab<AdSourceAnalytics>('adsource', period)
+export const getDiscountAnalytics =(period: PeriodInput) => fetchTab<DiscountAnalytics>('discounts', period)
 export const getLoadAnalytics =(period: PeriodInput) => fetchTab<LoadAnalytics>('load', period)
