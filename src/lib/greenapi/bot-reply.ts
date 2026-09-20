@@ -449,6 +449,16 @@ export const AI_IMPROVISED_CHECKLIST =
 // заведомо неуместна и заменяется на обычное приветствие с ценой.
 export const AI_IMPROVISED_DISCOUNT = /скидк|1290|1190|13\s*%|20\s*%/i
 
+// Живой баг (20.09): ИИ-фолбэк сам довёл клиента до «заказа» с оплатой
+// курьеру — попросил телефон «для оформления», отчитался «заказ оформлен,
+// курьер привезёт» — но для кода заказа не существовало: ни ORDER_PLACED,
+// ни записи в orders, ни сообщения в группу доставки. Клиент ждал курьера,
+// которого никто не вызывал. Ловим переход ИИ к оформлению без чека и
+// переводим в штатный COD-сценарий (PAY_ON_DELIVERY_ACK_REPLY + якорь) —
+// следующее сообщение с адресом/телефоном заведёт заказ и уйдёт в группу.
+export const AI_IMPROVISED_COD_ORDER =
+  /(?:номер\s+телефона|телефон|адрес)[^.!?\n]{0,40}(?:для\s+)?оформ|заказ[^.!?\n]{0,40}оформлен|оформил[аи]?\s+заказ|курьер[^.!?\n]{0,30}(?:привез|свяж)|свяжется\s+курьер/i
+
 // Подводка перед фото — дословно как в Telegram (__main__.py).
 const RESULTS_INTRO = 'Вот такой эффект будет уже после первого применения 👇'
 
@@ -2111,6 +2121,10 @@ async function generateAndSendGreenApiReply(
         replies.push(T.orderChecklist)
         sendPaymentQr = true
         stageAction = 'order'
+      } else if (replies.some((part) => AI_IMPROVISED_COD_ORDER.test(part))) {
+        replies.length = 0
+        replies.push(PAY_ON_DELIVERY_ACK_REPLY)
+        needsCodAnchor = true
       } else if (
         !DISCOUNT_REQUEST.test(input.text) &&
         !historyText.includes('сом') &&

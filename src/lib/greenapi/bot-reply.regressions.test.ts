@@ -5,6 +5,7 @@
 import { describe, expect, it } from 'vitest'
 import {
   AI_IMPROVISED_CHECKLIST,
+  AI_IMPROVISED_COD_ORDER,
   AI_IMPROVISED_DISCOUNT,
   FUTURE_ORDER_QUESTION,
   isBulkBroadcast,
@@ -104,6 +105,25 @@ describe('PICKUP_QUESTION — новый ответ про самовывоз', 
 describe('SCAM_DOUBT — не путает с ORDER_INTENT', () => {
   it('«вы не мошенники?» ловится, а не уходит в оформление', () => {
     expect(SCAM_DOUBT.test('А вы не мошенники?')).toBe(true)
+  })
+})
+
+describe('AI_IMPROVISED_COD_ORDER — ловит «заказ» с оплатой курьеру, который ИИ оформил сам (живой баг 20.09)', () => {
+  it.each([
+    'Подскажите, пожалуйста, номер телефона для оформления.',
+    'Отлично, всё готово 😊 Курьер привезёт в течение 30 минут.',
+    'Всё в силе — заказ оформлен на Бишкек, доставка ориентировочно 30 минут, оплата курьеру при получении.',
+    'Спасибо! Заказ оформлен, скоро свяжется курьер.',
+  ])('ловит: %s', (text) => {
+    expect(AI_IMPROVISED_COD_ORDER.test(text)).toBe(true)
+  })
+  it.each([
+    'По регионам — предоплата 400 сом, остальное при получении 😊',
+    'Здравствуйте! 😊 SmileKit помогает заметно отбелить зубы уже после первого применения.',
+    'Доставка по Бишкеку курьером, ориентировочно за 30 минут.',
+    'В какой город доставка?',
+  ])('не ловит обычный ответ: %s', (text) => {
+    expect(AI_IMPROVISED_COD_ORDER.test(text)).toBe(false)
   })
 })
 
