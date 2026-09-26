@@ -40,6 +40,7 @@ import {
 } from '@/lib/greenapi/client'
 import { createLimiter } from '@/lib/concurrency-limit'
 import { WHATSAPP_INTEGRATION_NAMES } from '@/lib/integration-names'
+import { matchedFragment, trace } from '@/lib/greenapi/trace'
 
 export interface InboundGreenApiMessage {
   providerMessageId: string
@@ -547,11 +548,15 @@ async function buildHandoffCardText(
 async function sendHandoffCard(
   supabase: ReturnType<typeof createAdminClient>,
   chatId: string,
-  lastMessageText: string
+  lastMessageText: string,
+  opts: GreenApiTestOptions = {}
 ): Promise<void> {
   const botConfig = await getWhatsappBotConfig()
   if (!botConfig.handoffGroupId) return
   const cardText = await buildHandoffCardText(supabase, chatId, lastMessageText)
+  trace('handoff.card', chatId, { groupId: botConfig.handoffGroupId, text: cardText })
+  // Отладчик (dryRun) не должен слать карточку в реальную рабочую группу.
+  if (opts.dryRun) return
   try {
     await withRetries(() => sendGreenApiDeliveryGroup(botConfig.handoffGroupId, cardText))
   } catch (error) {
@@ -567,7 +572,8 @@ async function sendHandoffCard(
  */
 async function handOffToManager(
   supabase: ReturnType<typeof createAdminClient>,
-  input: InboundGreenApiMessage
+  input: InboundGreenApiMessage,
+  opts: GreenApiTestOptions = {}
 ): Promise<void> {
   await supabase.from('chat_messages').upsert({
     amo_message_id: `${HANDED_OFF_ANCHOR_ID_PREFIX}:${input.chatId}`,
@@ -579,7 +585,11 @@ async function handOffToManager(
   // Цепочка дожима больше не нужна — менеджер уже в курсе, дальнейшие
   // автоматические шаги (актуально?/скидки) только мешали бы.
   await supabase.from('chat_messages').delete().eq('amo_message_id', `${POST_RESULTS_STAGE_ANCHOR_ID_PREFIX}:${input.chatId}`)
-  await sendHandoffCard(supabase, input.chatId, input.text)
+  trace('db.marker', input.chatId, {
+    marker: `${HANDED_OFF_ANCHOR_ID_PREFIX}:${input.chatId}`,
+    why: 'чат помечен как переданный менеджеру — бот в нём больше не отвечает',
+  })
+  await sendHandoffCard(supabase, input.chatId, input.text, opts)
 }
 
 const HANDOFF_REMINDER_INTERVAL_MS = 24 * 60 * 60_000
@@ -594,7 +604,8 @@ const HANDOFF_REMINDER_INTERVAL_MS = 24 * 60 * 60_000
  */
 async function maybeRemindHandoff(
   supabase: ReturnType<typeof createAdminClient>,
-  input: InboundGreenApiMessage
+  input: InboundGreenApiMessage,
+  opts: GreenApiTestOptions = {}
 ): Promise<boolean> {
   const { data } = await supabase
     .from('chat_messages')
@@ -605,7 +616,8 @@ async function maybeRemindHandoff(
   const { id, created_at } = data as { id: number; created_at: string }
   if (Date.now() - new Date(created_at).getTime() >= HANDOFF_REMINDER_INTERVAL_MS) {
     await supabase.from('chat_messages').update({ created_at: new Date().toISOString() }).eq('id', id)
-    await sendHandoffCard(supabase, input.chatId, input.text)
+    trace('handoff.remind', input.chatId, { why: 'менеджер не среагировал за сутки — повторяем карточку в группу' })
+    await sendHandoffCard(supabase, input.chatId, input.text, opts)
   }
   return true
 }
@@ -1027,7 +1039,13 @@ async function claimResultsBlock(
     console.error('greenapi bot-reply: results claim failed', error.message)
     return false
   }
-  return Boolean(data?.length)
+  const claimed = Boolean(data?.length)
+  trace('db.claim', chatId, () => ({
+    marker: `ga:claim:results:${chatId}`,
+    claimed,
+    why: claimed ? 'блок «до/после» захвачен — фото уйдёт' : 'блок «до/после» уже отправляли в этом чате',
+  }))
+  return claimed
 }
 
 /**
@@ -1119,7 +1137,13 @@ async function claimOnce(
     console.error('greenapi bot-reply: claim failed', key, error.message)
     return false
   }
-  return Boolean(data?.length)
+  const claimed = Boolean(data?.length)
+  trace('db.claim', chatId, () => ({
+    marker: `ga:claim:${key}:${chatId}`,
+    claimed,
+    why: claimed ? 'метка поставлена впервые' : 'метка уже стояла — шаг пропускаем',
+  }))
+  return claimed
 }
 
 /**
@@ -1133,8 +1157,15 @@ export async function nextDiscountOffer(
   supabase: ReturnType<typeof createAdminClient>,
   chatId: string
 ): Promise<string> {
-  if (await claimOnce(supabase, chatId, 'discount13')) return DISCOUNT_OFFER_13_TEXT
-  if (await claimOnce(supabase, chatId, 'discount20')) return DISCOUNT_OFFER_20_TEXT
+  if (await claimOnce(supabase, chatId, 'discount13')) {
+    trace('discount.step', chatId, { step: '1290 сом', why: 'первая ступень лестницы скидок ещё свободна' })
+    return DISCOUNT_OFFER_13_TEXT
+  }
+  if (await claimOnce(supabase, chatId, 'discount20')) {
+    trace('discount.step', chatId, { step: '1190 сом', why: '1290 уже предлагали — вторая (последняя) ступень' })
+    return DISCOUNT_OFFER_20_TEXT
+  }
+  trace('discount.step', chatId, { step: 'отказ', why: 'обе ступени исчерпаны — ниже 1190 не торгуемся' })
   return DISCOUNT_REJECT_TEXT
 }
 
@@ -1182,7 +1213,21 @@ export async function canSendGreenApiBotReply(
   const integrationActive = opts.skipIntegrationCheck
     ? true
     : isIntegrationBotEnabled(integrationResult.data)
-  return integrationActive && !managerControls && !handedOff
+  const allowed = integrationActive && !managerControls && !handedOff
+  trace('gate.can-send', chatId, () => ({
+    allowed,
+    integrationActive,
+    managerControls,
+    handedOff,
+    why: allowed
+      ? 'бот может писать в этот чат'
+      : !integrationActive
+        ? 'выключен общий тумблер бота (integrations)'
+        : managerControls
+          ? 'чат ведёт живой менеджер'
+          : 'чат уже передан менеджеру (ga:claim:handed-off)',
+  }))
+  return allowed
 }
 
 function enqueueInboundGreenApiMessage(
@@ -1285,7 +1330,8 @@ async function recordReceiptFromManagedChat(
 async function handleGreenApiReceipt(
   supabase: ReturnType<typeof createAdminClient>,
   input: InboundGreenApiMessage,
-  externalKey: string
+  externalKey: string,
+  opts: GreenApiTestOptions = {}
 ): Promise<void> {
   let check: ReceiptCheck | null = null
   try {
@@ -1307,8 +1353,22 @@ async function handleGreenApiReceipt(
   // проверку», а вообще другая картинка. Заказ на такое заводить не нужно.
   const notAReceipt = check?.is_real_receipt_screenshot === false && checkUnavailable
   const reply = verified ? RECEIPT_ACCEPTED : notAReceipt ? RECEIPT_NOT_A_RECEIPT : RECEIPT_REJECTED
+  trace('receipt.checked', input.chatId, () => ({
+    check,
+    verified,
+    checkUnavailable,
+    notAReceipt,
+    why: verified
+      ? 'чек прошёл все четыре проверки — заказ оформляем'
+      : notAReceipt
+        ? 'автопроверка уверена, что это не скриншот оплаты — заказ не заводим'
+        : checkUnavailable
+          ? 'автопроверка недоступна — чек уходит менеджеру на ручную проверку'
+          : 'чек не прошёл проверку — заказ заводим с пометкой для менеджера',
+    reply,
+  }))
 
-  if (!(await canSendGreenApiBotReply(supabase, input.chatId))) return
+  if (!(await canSendGreenApiBotReply(supabase, input.chatId, opts))) return
   const botMessageId = `ga:bot:${input.providerMessageId}:receipt`
   await supabase.from('chat_messages').upsert({
     amo_message_id: botMessageId,
@@ -1317,11 +1377,24 @@ async function handleGreenApiReceipt(
     sender: 'bot',
     text: reply,
   }, { onConflict: 'amo_message_id', ignoreDuplicates: true })
-  try {
-    await sendGreenApiMessage(`${input.chatId}@c.us`, reply)
-  } catch (error) {
-    await supabase.from('chat_messages').delete().eq('amo_message_id', botMessageId)
-    console.error('greenapi bot-reply: receipt reply failed', error)
+  if (!opts.dryRun) {
+    try {
+      await sendGreenApiMessage(`${input.chatId}@c.us`, reply)
+    } catch (error) {
+      await supabase.from('chat_messages').delete().eq('amo_message_id', botMessageId)
+      console.error('greenapi bot-reply: receipt reply failed', error)
+      return
+    }
+  }
+
+  // Отладчик (dryRun) на этом и останавливается: ниже идут реальные
+  // последствия заказа — строка в orders, списание остатка, пуш в группу
+  // доставки и внешние вебхуки. Тестовому чату они не нужны и не должны
+  // попадать в боевые данные.
+  if (opts.dryRun) {
+    trace('receipt.side-effects-skipped', input.chatId, {
+      why: 'отладчик: заказ, списание остатка, группа доставки и вебхуки пропущены',
+    })
     return
   }
 
@@ -1478,6 +1551,12 @@ async function resolveGreenApiExternalKey(
   phone: string
 ): Promise<string> {
   const greenApiKey = `greenapi:${phone}`
+  // Настоящий chat_id Green API — всегда только цифры (phoneFromGreenApiChatId).
+  // Служебный чат отладчика (lab-cli-<метка времени>) телефоном не является, а
+  // поиск по последним 9 цифрам ниже мог бы случайно «попасть» в сделку
+  // реального клиента с таким же хвостом номера — и отладка начала бы двигать
+  // его этапы. Для нетелефонного чата — только собственный ключ.
+  if (!/^\d+$/.test(phone)) return greenApiKey
   const { data: own } = await supabase.from('deals').select('id').eq('external_key', greenApiKey).maybeSingle()
   if (own) return greenApiKey // обычный случай — разговор уже был через Green API
 
@@ -1531,12 +1610,24 @@ async function handleCodAddressSubmission(
     .eq('amo_message_id', `${COD_WAIT_ANCHOR_ID_PREFIX}:${input.chatId}`)
     .maybeSingle()
   if (!anchorRow) return false
+  trace('branch', input.chatId, {
+    branch: 'адрес для оплаты при получении',
+    why: `стоит якорь ${COD_WAIT_ANCHOR_ID_PREFIX} — ждём адрес и телефон следующим сообщением`,
+  })
   // Тот же блок-лист общих реплик (спасибо/хорошо/подумаю/потом и т.п.),
   // что и NOT_A_LOCATION_REPLY — если клиент явно не назвал ничего
   // конкретного, продолжаем ждать реальный адрес, а не выдумываем заказ
   // из вежливой отговорки. Якорь остаётся как есть — он больше не
   // привязан к позиции в истории, следующее сообщение найдёт его снова.
-  if (NOT_A_LOCATION_REPLY.test(input.text.trim().toLowerCase().replace(/\s+/g, ' '))) return false
+  if (NOT_A_LOCATION_REPLY.test(input.text.trim().toLowerCase().replace(/\s+/g, ' '))) {
+    trace('rule.matched', input.chatId, () => ({
+      rule: 'NOT_A_LOCATION_REPLY',
+      matched: matchedFragment(NOT_A_LOCATION_REPLY, input.text.trim().toLowerCase().replace(/\s+/g, ' ')),
+      why: 'это вежливая отговорка, а не адрес — заказ не заводим, продолжаем ждать адрес',
+      reply: null,
+    }))
+    return false
+  }
   if (!(await canSendGreenApiBotReply(supabase, input.chatId, opts))) return false
 
   const botMessageId = `ga:bot:${input.providerMessageId}:cod-confirm`
@@ -1548,6 +1639,11 @@ async function handleCodAddressSubmission(
     text: COD_ORDER_CONFIRM_REPLY,
   }, { onConflict: 'amo_message_id', ignoreDuplicates: true }).select('id')
   if (!reserved?.length) return true // дубль вебхука — уже обработано
+  trace('reply.chosen', input.chatId, {
+    rule: 'COD_WAIT_ANCHOR + адрес от клиента',
+    why: 'клиент прислал адрес после просьбы об оплате при получении — заказ оформлен без чека и QR',
+    reply: COD_ORDER_CONFIRM_REPLY,
+  })
   // Закрываем ожидание — иначе следующее сообщение клиента (уже после
   // оформления) снова нашло бы этот якорь и было бы принято за ещё один
   // адрес.
@@ -1630,6 +1726,13 @@ async function processInboundGreenApiMessageNow(
   opts: GreenApiTestOptions = {}
 ): Promise<void> {
   const supabase = createAdminClient()
+  trace('inbound', input.chatId, () => ({
+    text: input.text,
+    messageType: input.messageType ?? 'text',
+    mediaUrl: input.mediaUrl ?? null,
+    authorName: input.authorName,
+    dryRun: Boolean(opts.dryRun),
+  }))
 
   // Расшифровка голосового — УЛУЧШЕНИЕ ответа, а не условие приёма лида.
   //
@@ -1652,6 +1755,9 @@ async function processInboundGreenApiMessageNow(
   if (VOICE_TYPES.has(input.messageType ?? '') && !transcript) {
     console.error('greenapi bot-reply: voice transcription failed', input.providerMessageId)
     voiceUnreadable = true
+  }
+  if (transcript && transcript !== input.text) {
+    trace('voice.transcribed', input.chatId, { transcript, why: 'голосовое расшифровано, дальше бот работает с этим текстом' })
   }
   if (transcript) input = { ...input, text: transcript }
   if (voiceUnreadable) {
@@ -1684,7 +1790,10 @@ async function processInboundGreenApiMessageNow(
     await createLeadFromInbound(input, opts)
     return
   }
-  if (!inserted?.length) return // дубль вебхука — уже обработано
+  if (!inserted?.length) {
+    trace('stop', input.chatId, { why: 'дубль вебхука — это сообщение уже обработано' })
+    return
+  }
 
   // Клиент сам назвал срок («завтра», «через час») — не дёргаем его
   // дожимом раньше. Ключ фиксированный (без providerMessageId) — строка
@@ -1693,6 +1802,10 @@ async function processInboundGreenApiMessageNow(
   const promisedHours = promisedDelayHours(input.text)
   if (promisedHours !== null) {
     const promisedUntilMs = Date.now() + promisedHours * 3600_000
+    trace('db.marker', input.chatId, {
+      marker: `${PROMISED_ANCHOR_ID_PREFIX}:${input.chatId}`,
+      why: `клиент сам назвал срок — не дёргаем дожимом ещё ${promisedHours} ч`,
+    })
     await supabase.from('chat_messages').upsert({
       amo_message_id: `${PROMISED_ANCHOR_ID_PREFIX}:${input.chatId}`,
       chat_id: input.chatId,
@@ -1711,6 +1824,11 @@ async function processInboundGreenApiMessageNow(
   const botEnabled = opts.skipIntegrationCheck
     ? true
     : isIntegrationBotEnabled(integration)
+  trace('context', input.chatId, {
+    externalKey,
+    botEnabled,
+    why: botEnabled ? 'бот включён' : 'бот выключен общим тумблером — ответов не будет',
+  })
 
   // dryRun (Лаборатория) не должен плодить настоящие сделки в воронке —
   // тестовый chat_id не должен быть виден менеджерам как реальный лид.
@@ -1728,18 +1846,26 @@ async function processInboundGreenApiMessageNow(
   // бы невпопад), передаём человеку. Это тот самый случай «бот не уверен»,
   // для которого и предусмотрена передача менеджеру.
   if (voiceUnreadable) {
+    trace('handoff', input.chatId, { why: 'голосовое не расшифровалось — бот не знает текста, отдаём менеджеру' })
     if (!opts.dryRun) await handOffToManager(supabase, input)
     return
   }
 
   if (await isManagerControllingChat(supabase, input.chatId)) {
+    trace('stop', input.chatId, { why: 'чат ведёт живой менеджер — бот молчит (chat_control / сообщение оператора)' })
     if (!opts.dryRun && IMAGE_TYPES.has(input.messageType ?? '') && input.mediaUrl) {
       await recordReceiptFromManagedChat(supabase, input, externalKey)
     }
     return
   }
-  if (await isPhoneBlockedForBot(supabase, input.chatId)) return
-  if (await maybeRemindHandoff(supabase, input)) return
+  if (await isPhoneBlockedForBot(supabase, input.chatId)) {
+    trace('stop', input.chatId, { why: 'номер в стоп-листе (campaign_opt_outs.block_bot_replies)' })
+    return
+  }
+  if (await maybeRemindHandoff(supabase, input, opts)) {
+    trace('stop', input.chatId, { why: 'чат уже передан менеджеру — бот не отвечает, только напоминает в группу раз в сутки' })
+    return
+  }
 
   // Живой баг-правка: раньше после блока результата (фото до/после +
   // голосовое) шла автоматическая цепочка дожима (CTA → «актуально?» →
@@ -1751,7 +1877,10 @@ async function processInboundGreenApiMessageNow(
   // после блока результата (см. ниже) и снимается либо тут (первым же
   // ответом клиента), либо handOffToManager-ом.
   if (await isAwaitingPostResultsReply(supabase, input.chatId)) {
-    await handOffToManager(supabase, input)
+    trace('handoff', input.chatId, {
+      why: 'стоит якорь ga:claim:post-results-stage — первый ответ клиента после блока результата уходит менеджеру',
+    })
+    await handOffToManager(supabase, input, opts)
     return
   }
 
@@ -1759,7 +1888,8 @@ async function processInboundGreenApiMessageNow(
   // картинку не видит и, не зная об оплате, предлагал предоплату уже
   // оплатившему клиенту.
   if (botEnabled && IMAGE_TYPES.has(input.messageType ?? '') && input.mediaUrl) {
-    await handleGreenApiReceipt(supabase, input, externalKey)
+    trace('branch', input.chatId, { branch: 'чек (картинка)', why: 'клиент прислал изображение — по скрипту это чек об оплате' })
+    await handleGreenApiReceipt(supabase, input, externalKey, opts)
     return
   }
 
@@ -1773,6 +1903,12 @@ async function processInboundGreenApiMessageNow(
   // полностью, дальше диалог ведёт менеджер. Ранний выход до генерации
   // ответа: скрипт и ИИ сюда не доходят вовсе.
   if (SUSPICIOUS_QUESTION.test(input.text)) {
+    trace('rule.matched', input.chatId, () => ({
+      rule: 'SUSPICIOUS_QUESTION',
+      matched: matchedFragment(SUSPICIOUS_QUESTION, input.text),
+      why: 'вопрос про документы/лицензию/регистрацию — бот молчит полностью, сделка на «нестандартный запрос»',
+      reply: null,
+    }))
     if (!opts.dryRun) {
       const advanced = await advanceDealFromBotAction(externalKey, 'non_standard_request')
       if (!advanced.ok && advanced.error) {
@@ -1787,12 +1923,24 @@ async function processInboundGreenApiMessageNow(
   // и оставляем ответ человеку. Остальные вопросы бот продолжает вести как
   // обычно (см. ORDER_PLACED_ANCHOR_ID_PREFIX выше).
   if (POST_ORDER_DELIVERY_QUESTION.test(input.text) && (await hasPlacedOrder(supabase, input.chatId))) {
+    trace('stop', input.chatId, () => ({
+      rule: 'POST_ORDER_DELIVERY_QUESTION',
+      matched: matchedFragment(POST_ORDER_DELIVERY_QUESTION, input.text),
+      why: 'заказ уже оформлен, а это вопрос про доставку/курьера — реальный статус знает только человек',
+    }))
     return
   }
 
   const inboundAction = COMPLAINT.test(input.text) || COOPERATION.test(input.text)
     ? 'non_standard_request'
     : stageActionForInbound(input.text)
+  if (inboundAction) {
+    trace('deal.stage', input.chatId, {
+      action: inboundAction,
+      applied: !opts.dryRun,
+      why: 'этап сделки по содержанию сообщения клиента (stageActionForInbound)',
+    })
+  }
   if (inboundAction && !opts.dryRun) {
     const advanced = await advanceDealFromBotAction(externalKey, inboundAction)
     if (!advanced.ok && advanced.error) {
@@ -1800,11 +1948,17 @@ async function processInboundGreenApiMessageNow(
     }
   }
 
-  if (!botEnabled) return
+  if (!botEnabled) {
+    trace('stop', input.chatId, { why: 'бот выключен общим тумблером (integrations) — ответ не генерируем' })
+    return
+  }
   // Ранний выход до генерации ответа: иначе на каждое сообщение постороннего
   // клиента впустую тратился бы вызов ИИ, а отправку всё равно отсечёт
   // canSendGreenApiBotReply.
-  if (!isPhoneAllowedForBot(input.chatId)) return
+  if (!isPhoneAllowedForBot(input.chatId)) {
+    trace('stop', input.chatId, { why: 'номера нет в GREENAPI_ALLOWED_PHONES — бот отвечает только списку' })
+    return
+  }
 
   await scheduleGreenApiReply(input, opts)
 }
@@ -1916,6 +2070,16 @@ async function generateAndSendGreenApiReply(
   const wantsResultsBlock = looksLikeLocationAnswer || Boolean(deliveryTemplate && priceKnown)
 
   const lastBotMessage = [...history].reverse().find((item) => item.role === 'assistant')?.content ?? ''
+  trace('context.reply', input.chatId, () => ({
+    historySize: history.length,
+    priceKnown,
+    isKyrgyz,
+    looksLikeLocationAnswer,
+    deliveryTemplate,
+    wantsResultsBlock,
+    lastBotMessage,
+    batchSize,
+  }))
 
   // Тексты, редактируемые из CRM («Настройки бота» → «Шаблоны») — пустая
   // строка в настройках означает «не переопределено», используем дефолт.
@@ -1944,6 +2108,15 @@ async function generateAndSendGreenApiReply(
     lastBotMessage === RESULTS_BLOCK_SAFETY_TEXT
   const acceptedOrderCta =
     afterOrderPrompt && (AFFIRMATIVE_ONLY.test(input.text) || isLooseAffirmative(input.text))
+  trace('context.cta', input.chatId, () => ({
+    afterOrderPrompt,
+    acceptedOrderCta,
+    why: acceptedOrderCta
+      ? 'прошлое сообщение бота было предложением оформить, и клиент согласился'
+      : afterOrderPrompt
+        ? 'предложение оформить было, но согласия в тексте нет'
+        : 'прошлое сообщение бота не было предложением оформить — «да» само по себе ничего не значит',
+  }))
 
   // Свои правила из настроек CRM — проверяются раньше встроенного скрипта:
   // владелец может перекрыть штатное поведение своим условием, не трогая код.
@@ -1963,36 +2136,55 @@ async function generateAndSendGreenApiReply(
   }
 
   if (customRuleReply) {
+    trace('rule.matched', input.chatId, { rule: 'своё правило из настроек CRM', why: 'сработало пользовательское правило из «Настройки бота» — оно проверяется раньше встроенного скрипта' })
     replies.push(customRuleReply)
   } else if (history.length > 0 && GREETING_ONLY.test(input.text)) {
+    trace('rule.matched', input.chatId, () => ({ rule: 'GREETING_ONLY (повторное)', matched: matchedFragment(GREETING_ONLY, input.text), why: 'голое приветствие, но переписка уже была — короткий ответ вместо повторной презентации товара' }))
     replies.push(
       isKyrgyz
         ? RETURNING_KYRGYZ_GREETING_REPLIES[Math.floor(Math.random() * RETURNING_KYRGYZ_GREETING_REPLIES.length)]
         : RETURNING_GREETING_REPLIES[Math.floor(Math.random() * RETURNING_GREETING_REPLIES.length)]
     )
   } else if (LINK_IN_MESSAGE.test(input.text) || GREETING_ONLY.test(input.text)) {
+    trace('rule.matched', input.chatId, { rule: 'GREETING_ONLY / LINK_IN_MESSAGE', why: 'первое приветствие или переход по ссылке рекламы — презентация товара с ценой и вопрос про город' })
     replies.push(T.productInfo, CITY_QUESTION)
     needsCityAnchor = true
   } else if (isKyrgyz && KYRGYZ_PRICE_INTENT.test(input.text)) {
+    trace('rule.matched', input.chatId, () => ({ rule: 'KYRGYZ_PRICE_INTENT', matched: matchedFragment(KYRGYZ_PRICE_INTENT, input.text), why: 'вопрос про цену на кыргызском — отвечаем готовым кыргызским текстом, а не ИИ' }))
+
     replies.push(KYRGYZ_PRODUCT_INFO)
   } else if (SCAM_DOUBT.test(input.text)) {
+    trace('rule.matched', input.chatId, () => ({ rule: 'SCAM_DOUBT', matched: matchedFragment(SCAM_DOUBT, input.text), why: 'клиент сомневается, не мошенники ли мы — утверждённый ответ, уходит голосовым' }))
+
     replies.push(T.doubtResult)
     voiceReplies.add(T.doubtResult)
   } else if (SAFETY_COMPOSITION_DOUBT.test(input.text)) {
+    trace('rule.matched', input.chatId, () => ({ rule: 'SAFETY_COMPOSITION_DOUBT', matched: matchedFragment(SAFETY_COMPOSITION_DOUBT, input.text), why: 'вопрос про состав/вред для эмали — «вредно?» уходит голосом, «безопасно?» текстом' }))
+
     const variant = pickVariant(SAFETY_COMPOSITION_VARIANTS)
     replies.push(variant)
     if (SAFETY_COMPOSITION_HARM_DOUBT.test(input.text)) voiceReplies.add(variant)
   } else if (EFFECT_DURATION_QUESTION.test(input.text)) {
+    trace('rule.matched', input.chatId, () => ({ rule: 'EFFECT_DURATION_QUESTION', matched: matchedFragment(EFFECT_DURATION_QUESTION, input.text), why: '«на сколько хватает» — отвечаем только стойкостью результата, без пересказа цены и состава' }))
+
     replies.push(pickVariant(EFFECT_DURATION_VARIANTS))
   } else if (UNSUPPORTED_COUNTRY.test(input.text)) {
+    trace('rule.matched', input.chatId, () => ({ rule: 'UNSUPPORTED_COUNTRY', matched: matchedFragment(UNSUPPORTED_COUNTRY, input.text), why: 'спрашивают про страну, куда доставки нет — честный отказ вместо выдумок ИИ' }))
     replies.push(UNSUPPORTED_COUNTRY_REPLY)
   } else if (DELIVERY_FREE_QUESTION.test(input.text)) {
+    trace('rule.matched', input.chatId, () => ({ rule: 'DELIVERY_FREE_QUESTION', matched: matchedFragment(DELIVERY_FREE_QUESTION, input.text), why: 'спрашивают про бесплатную доставку — отказ плюс готовое предложение 1290 сом' }))
+
     replies.push(DELIVERY_FREE_DISCOUNT_REPLY)
   } else if (PICKUP_QUESTION.test(input.text)) {
+    trace('rule.matched', input.chatId, () => ({ rule: 'PICKUP_QUESTION', matched: matchedFragment(PICKUP_QUESTION, input.text), why: 'спрашивают про самовывоз — точки выдачи нет, предлагаем оплату при получении' }))
+
     replies.push(PICKUP_REPLY)
   } else if (ADDRESS_QUESTION.test(input.text)) {
+    trace('rule.matched', input.chatId, () => ({ rule: 'ADDRESS_QUESTION', matched: matchedFragment(ADDRESS_QUESTION, input.text), why: 'голый вопрос «а какой адрес?» — отвечаем конкретной инструкцией, что прислать' }))
+
     replies.push(ADDRESS_QUESTION_REPLY)
   } else if (DELIVERY_COST_QUESTION.test(input.text)) {
+    trace('rule.matched', input.chatId, () => ({ rule: 'DELIVERY_COST_QUESTION', matched: matchedFragment(DELIVERY_COST_QUESTION, input.text), why: 'вопрос про стоимость/оплату доставки — детерминированная ветка, деньги не отдаём на усмотрение ИИ' }))
     const cityTemplate = deliveryTemplateForCity(input.text) ?? deliveryTemplateForCity(historyText)
     if (cityTemplate) {
       const isBishkekOrTokmok = /бишке|токмо/.test(input.text.replace(/щ/g, 'ш')) || /бишке|токмо/.test(historyText)
@@ -2003,19 +2195,27 @@ async function generateAndSendGreenApiReply(
       needsCityAnchor = true
     }
   } else if (COMPLAINT.test(input.text)) {
+    trace('rule.matched', input.chatId, () => ({ rule: 'COMPLAINT', matched: matchedFragment(COMPLAINT, input.text), why: 'жалоба/претензия — просим рассказать подробнее, сделка уходит на «нестандартный запрос»' }))
     replies.push(T.complaintPrompt)
   } else if (COOPERATION.test(input.text)) {
+    trace('rule.matched', input.chatId, () => ({ rule: 'COOPERATION', matched: matchedFragment(COOPERATION, input.text), why: 'опт/сотрудничество — это к менеджеру, бот сам условия не обсуждает' }))
     replies.push(T.cooperationReply)
   } else if (DISCOUNT_REQUEST.test(input.text)) {
+    trace('rule.matched', input.chatId, () => ({ rule: 'DISCOUNT_REQUEST', matched: matchedFragment(DISCOUNT_REQUEST, input.text), why: 'просьба о скидке или «дорого» — сразу лестница 1290 → 1190 → отказ' }))
+
     // Прямая просьба о скидке — сразу лестница 13%→20%, а не пересказ цены
     // или доставки не по теме (живой баг: спросили скидку, бот втирал про
     // доставку).
     replies.push(await nextDiscountOffer(supabase, input.chatId))
   } else if (NEGATIVE_ONLY.test(input.text) && ORDER_CTA_VARIANTS.includes(lastBotMessage)) {
+    trace('rule.matched', input.chatId, () => ({ rule: 'NEGATIVE_ONLY после CTA', matched: matchedFragment(NEGATIVE_ONLY, input.text), why: 'клиент отказался на «вам оформить доставку?» — та же лестница скидок' }))
+
     // Клиент отказался оформлять на CTA «вам оформить доставку?» — та же
     // лестница скидок, что и на прямую просьбу выше, общее состояние.
     replies.push(await nextDiscountOffer(supabase, input.chatId))
   } else if (PAY_ON_DELIVERY_REQUEST.test(input.text)) {
+    trace('rule.matched', input.chatId, () => ({ rule: 'PAY_ON_DELIVERY_REQUEST', matched: matchedFragment(PAY_ON_DELIVERY_REQUEST, input.text), why: 'клиент прямо просит оплату при получении — чек-лист с QR был бы вопреки просьбе' }))
+
     // Клиент прямо попросил оплату при получении — ORDER_INTENT ниже тоже
     // совпал бы (в тексте есть «оплатить»), но чек-лист с QR требовал бы
     // предоплату вопреки прямой просьбе клиента. Адрес+телефон вместо чека —
@@ -2023,6 +2223,11 @@ async function generateAndSendGreenApiReply(
     replies.push(PAY_ON_DELIVERY_ACK_REPLY)
     needsCodAnchor = true
   } else if (!FUTURE_ORDER_QUESTION.test(input.text) && (ORDER_INTENT.test(input.text) || acceptedOrderCta)) {
+    trace('rule.matched', input.chatId, () => ({
+      rule: acceptedOrderCta ? 'согласие на CTA' : 'ORDER_INTENT',
+      matched: matchedFragment(ORDER_INTENT, input.text),
+      why: 'клиент готов оформлять — утверждённый чек-лист и QR оплаты, сделка на этап «заказ»',
+    }))
     // QR отправляется сразу вместе с чек-листом (ниже, sendPaymentQr) — раньше
     // WhatsApp не умел слать картинки, поэтому клиента отправляли к менеджеру
     // за реквизитами. Green API картинки шлёт, так что ждать «подтверждения»
@@ -2035,6 +2240,8 @@ async function generateAndSendGreenApiReply(
     sendPaymentQr = true
     stageAction = 'order'
   } else if (history.length === 0) {
+    trace('rule.matched', input.chatId, { rule: 'первое сообщение в чате', why: 'ни одно конкретное намерение не совпало, а переписки ещё не было — общая презентация и вопрос про город' })
+
     // Живой баг: раньше эта ветка стояла ПЕРЕД всеми проверками конкретного
     // намерения (жалоба/состав/скидка/сотрудничество/мошенники и т.д.) —
     // первое сообщение клиента получало этот шаблон, даже если в нём был
@@ -2043,6 +2250,11 @@ async function generateAndSendGreenApiReply(
     replies.push(T.productInfo, CITY_QUESTION)
     needsCityAnchor = true
   } else if (deliveryTemplate && priceKnown && wantsResultsBlock) {
+    trace('rule.matched', input.chatId, () => ({
+      rule: 'город назван (deliveryTemplate + priceKnown)',
+      matched: input.text,
+      why: 'клиент назвал город и цена уже звучала — блок результата: доставка, фото до/после, голосовое',
+    }))
     // Доставка -> фото (в цикле отправки ниже) -> голосовое. Живой баг: оба
     // захвата (claimOnce/claimResultsBlock) раньше выполнялись безусловно
     // ДО выбора ветки — короткое «давайте оформим» без города ложно
@@ -2069,6 +2281,10 @@ async function generateAndSendGreenApiReply(
           sender: 'bot',
           text: '[ожидание ответа после результата]',
         }, { onConflict: 'amo_message_id' })
+        trace('db.marker', input.chatId, {
+          marker: `${POST_RESULTS_STAGE_ANCHOR_ID_PREFIX}:${input.chatId}`,
+          why: 'после блока результата бот больше не пишет сам — первый ответ клиента уйдёт менеджеру',
+        })
       }
     }
   }
@@ -2082,6 +2298,12 @@ async function generateAndSendGreenApiReply(
     // ждал ответа 6 часов, пока не написал то же самое ещё раз. Один повтор
     // при сбое плюс честный текстовый фолбэк вместо полной тишины, если и
     // повтор не помог — клиент видит хоть что-то, а не подвисший чат.
+    trace('ai.request', input.chatId, () => ({
+      endpoint: '/internal/lab',
+      message: labMessage,
+      history,
+      why: 'ни одно правило скрипта не совпало — отвечает ИИ Telegram-бота (промпт живёт на его стороне, prompts.py)',
+    }))
     let lab = await smilekitBotFetch<{ reply: string }>('/internal/lab', {
       method: 'POST',
       body: { message: labMessage, history },
@@ -2092,6 +2314,7 @@ async function generateAndSendGreenApiReply(
     // генерацию поверх — вдвое больше нагрузки на ту же медленную нейросеть.
     if (!lab.ok && lab.status !== 504) {
       console.error('greenapi bot-reply: lab failed, retrying once', lab.error)
+      trace('ai.retry', input.chatId, { error: lab.error, status: lab.status, why: 'бот недоступен — один повтор' })
       lab = await smilekitBotFetch<{ reply: string }>('/internal/lab', {
         method: 'POST',
         body: { message: labMessage, history },
@@ -2100,10 +2323,15 @@ async function generateAndSendGreenApiReply(
     }
     if (!lab.ok) {
       console.error('greenapi bot-reply: lab failed after retry', lab.error)
+      trace('ai.failed', input.chatId, { error: lab.error, status: lab.status, why: 'ИИ не ответил — честная заглушка вместо тишины', reply: FALLBACK_AI_FAILURE_REPLY })
       replies.push(FALLBACK_AI_FAILURE_REPLY)
     }
     const reply = lab.ok ? lab.data.reply?.trim() : undefined
-    if (lab.ok && !reply) return
+    if (lab.ok) trace('ai.response', input.chatId, { reply: reply ?? '' })
+    if (lab.ok && !reply) {
+      trace('stop', input.chatId, { why: 'ИИ вернул пустой ответ — клиенту не пишем' })
+      return
+    }
     if (reply) {
       replies.push(
         ...reply
@@ -2117,11 +2345,19 @@ async function generateAndSendGreenApiReply(
       // утверждённый шаблон. Если модель явно перешла к оформлению — шлём
       // шаблон и QR вместо её текста.
       if (replies.some((part) => AI_IMPROVISED_CHECKLIST.test(part))) {
+        trace('ai.overridden', input.chatId, {
+          rule: 'AI_IMPROVISED_CHECKLIST',
+          why: 'ИИ сам начал оформлять заказ — его текст заменён утверждённым чек-листом и QR',
+        })
         replies.length = 0
         replies.push(T.orderChecklist)
         sendPaymentQr = true
         stageAction = 'order'
       } else if (replies.some((part) => AI_IMPROVISED_COD_ORDER.test(part))) {
+        trace('ai.overridden', input.chatId, {
+          rule: 'AI_IMPROVISED_COD_ORDER',
+          why: 'ИИ «оформил» заказ с оплатой курьеру, которого в системе нет — переводим в штатный COD-сценарий',
+        })
         replies.length = 0
         replies.push(PAY_ON_DELIVERY_ACK_REPLY)
         needsCodAnchor = true
@@ -2130,6 +2366,10 @@ async function generateAndSendGreenApiReply(
         !historyText.includes('сом') &&
         replies.some((part) => AI_IMPROVISED_DISCOUNT.test(part))
       ) {
+        trace('ai.overridden', input.chatId, {
+          rule: 'AI_IMPROVISED_DISCOUNT',
+          why: 'ИИ предложил скидку, которую никто не просил и до того, как звучала цена — заменено презентацией',
+        })
         replies.length = 0
         replies.push(T.productInfo, CITY_QUESTION)
         needsCityAnchor = true
@@ -2139,6 +2379,15 @@ async function generateAndSendGreenApiReply(
 
   const chatId = `${input.chatId}@c.us`
   const mediaBaseUrl = process.env.SMILEKIT_BOT_API_URL?.replace(/\/$/, '')
+  trace('reply.chosen', input.chatId, () => ({
+    replies,
+    voiceReplies: [...voiceReplies],
+    sendPaymentQr,
+    sendResultsPhotoThisTurn,
+    needsCityAnchor,
+    needsCodAnchor,
+    stageAction,
+  }))
 
   // Живой баг: самое первое «Здравствуйте» уходило мгновенно — читалось как
   // автоответчик, а не как человек. 10 секунд — та же пауза, что делает
@@ -2174,6 +2423,11 @@ async function generateAndSendGreenApiReply(
         : text === DELIVERY_PAYMENT_BISHKEK ? 'delivery_price_bishkek.ogg'
         : SAFETY_COMPOSITION_VARIANTS.includes(text) ? 'not_harmful.ogg'
         : 'not_scam.ogg'
+      trace('outbound', input.chatId, {
+        text,
+        as: voiceReplies.has(text) && mediaBaseUrl ? `голосовое ${voiceName}` : 'текст',
+        sent: !opts.dryRun,
+      })
       if (opts.dryRun) {
         // Тестовый chat_id не существует в WhatsApp — реальный вызов Green
         // API только тратил бы время и падал. Запись в chat_messages выше
@@ -2205,6 +2459,7 @@ async function generateAndSendGreenApiReply(
         sender: 'bot',
         text: '[QR оплаты]',
       }, { onConflict: 'amo_message_id', ignoreDuplicates: true })
+      trace('outbound', input.chatId, { text: '[QR оплаты]', as: 'картинка qrcode.jpeg', sent: !opts.dryRun })
       if (!qrReserveError && !opts.dryRun) {
         try {
           await sendGreenApiFileByUrl({
@@ -2226,6 +2481,7 @@ async function generateAndSendGreenApiReply(
         sender: 'bot',
         text: '[голосовое: пояснение по оплате]',
       }, { onConflict: 'amo_message_id', ignoreDuplicates: true })
+      trace('outbound', input.chatId, { text: '[голосовое: пояснение по оплате]', as: 'голосовое qr_payment_note.ogg', sent: !opts.dryRun })
       if (!qrVoiceReserveError && !opts.dryRun) {
         try {
           await sendGreenApiVoice(chatId, `${mediaBaseUrl}/media/voice/qr_payment_note.ogg`, 'qr_payment_note.ogg')
@@ -2252,6 +2508,7 @@ async function generateAndSendGreenApiReply(
         sender: 'bot',
         text: RESULTS_INTRO,
       }, { onConflict: 'amo_message_id', ignoreDuplicates: true })
+      trace('outbound', input.chatId, { text: RESULTS_INTRO, as: 'текст', sent: !opts.dryRun })
       if (!opts.dryRun) {
         await sendGreenApiMessage(chatId, RESULTS_INTRO).catch((error) =>
           console.error('greenapi bot-reply: results intro failed', error)
@@ -2267,6 +2524,7 @@ async function generateAndSendGreenApiReply(
           sender: 'bot',
           text: caption || '[фото результата]',
         }, { onConflict: 'amo_message_id', ignoreDuplicates: true })
+        trace('outbound', input.chatId, { text: caption || '[фото результата]', as: `картинка ${name}`, sent: !opts.dryRun })
         if (photoReserveError) {
           console.error('greenapi bot-reply: result photo reserve failed', photoReserveError.message)
           continue
@@ -2303,6 +2561,10 @@ async function generateAndSendGreenApiReply(
       text: CITY_WAIT_ANCHOR_TEXT,
     }, { onConflict: 'amo_message_id', ignoreDuplicates: true })
     if (cityAnchorError) console.error('greenapi bot-reply: city anchor failed', cityAnchorError.message)
+    else trace('db.marker', input.chatId, {
+      marker: `${CITY_WAIT_ANCHOR_ID_PREFIX}:${input.providerMessageId}`,
+      why: 'ждём город: если клиент промолчит 5 минут, планировщик сам пришлёт фото до/после',
+    })
   }
 
   if (needsCodAnchor) {
@@ -2320,8 +2582,15 @@ async function generateAndSendGreenApiReply(
       text: COD_WAIT_ANCHOR_TEXT,
     }, { onConflict: 'amo_message_id' })
     if (codAnchorError) console.error('greenapi bot-reply: cod anchor failed', codAnchorError.message)
+    else trace('db.marker', input.chatId, {
+      marker: `${COD_WAIT_ANCHOR_ID_PREFIX}:${input.chatId}`,
+      why: 'ждём адрес и телефон — следующее содержательное сообщение заведёт заказ с оплатой при получении',
+    })
   }
 
+  if (stageAction) {
+    trace('deal.stage', input.chatId, { action: stageAction, applied: !opts.dryRun, why: 'этап сделки по ответу бота' })
+  }
   if (stageAction && !opts.dryRun) {
     const result = await advanceDealFromBotAction(externalKey, stageAction)
     if (!result.ok && result.error) {
