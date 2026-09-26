@@ -51,3 +51,4 @@ supabase/.temp/
 # Отладчик бота: локальное окружение Python и файл текущего сеанса
 tools/bot-cli/.venv/
 tools/bot-cli/.session.json
+tools/bot-cli/__pycache__/

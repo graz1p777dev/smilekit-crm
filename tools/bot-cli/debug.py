@@ -126,8 +126,12 @@ def show(event: dict[str, Any]) -> None:
     title, style = STEPS.get(step, (step, "white"))
     details = dict(payload.get("details") or {})
     if step in QUIET:
-        why = details.get("why") or ""
-        console.print(Text(f"  [{clock(event['ts'])}] {title}: {why}", style="dim"))
+        # У фоновых шагов «почему» есть не всегда — тогда коротко показываем сами
+        # значения, иначе строка получилась бы пустой.
+        summary = details.get("why") or ", ".join(
+            f"{key}={value}" for key, value in details.items() if value not in (None, "", [], {})
+        )
+        console.print(Text(f"  [{clock(event['ts'])}] {title}: {summary}", style="dim"))
         return
     console.print(
         Panel(
