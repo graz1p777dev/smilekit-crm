@@ -37,10 +37,15 @@ Facebook Page**. Проверено по официальной документ
 |---|---|---|---|
 | `instagram_business_basic` | Да | Базовый доступ к профилю (id, username) — без него не работает ни один вызов Graph API | `fetchAccountInfo`, обязателен для refresh токена |
 | `instagram_business_manage_messages` | Да | Чтение/отправка Direct-сообщений — это и есть вся суть интеграции | webhook `messages`, `sendInstagramMessage` |
+| `instagram_business_manage_comments` | Да | Ответы на комментарии под постами и приватный ответ автору комментария в директ | webhook `comments`, `replyToInstagramComment`, `sendInstagramPrivateReply` |
 
-Больше ничего не запрашивать — `instagram_business_content_publish` и
-`instagram_business_manage_comments` этому продукту не нужны, лишние
-permissions только усложняют App Review.
+Больше ничего не запрашивать — `instagram_business_content_publish` этому
+продукту не нужен, лишние permissions только усложняют App Review.
+
+> Разрешение на комментарии добавлено позже остальных. Аккаунт, подключённый
+> до этого, его НЕ имеет: владельцу нужно ещё раз пройти
+> Настройки → Instagram → «Подключить Instagram», иначе Graph API будет
+> отвечать на ответы под постами ошибкой прав (INSTAGRAM_PERMISSION_DENIED).
 
 ## 5. Настроить Webhooks
 
@@ -48,11 +53,11 @@ permissions только усложняют App Review.
 2. Callback URL — значение из п. 13 (`.../api/webhooks/instagram`).
 3. Verify Token — придумать случайную строку, вписать её же в
    `META_WEBHOOK_VERIFY_TOKEN`.
-4. Subscribe to field: **messages**.
+4. Subscribe to fields: **messages** и **comments**.
 
 Одной этой настройки недостаточно — после того как пользователь подключит
 свой Instagram через кнопку в CRM, наш backend сам вызовет
-`{ig-user-id}/subscribed_apps?subscribed_fields=messages` с его токеном
+`{ig-user-id}/subscribed_apps?subscribed_fields=messages,comments` с его токеном
 (это уже сделано в коде, `subscribeWebhook` в `src/lib/instagram/oauth.ts`)
 — без этого шага события по конкретному аккаунту не пойдут, даже если
 Webhook в App Dashboard настроен верно.
@@ -157,13 +162,17 @@ HTTPS. Поднять туннель любым способом (ngrok, Cloudfl
 ## 15. Production checklist
 
 - [ ] App переведён в Live, Business Verification пройдена
-- [ ] `instagram_business_basic` и `instagram_business_manage_messages`
-      одобрены через App Review
+- [ ] `instagram_business_basic`, `instagram_business_manage_messages` и
+      `instagram_business_manage_comments` одобрены через App Review
 - [ ] Все 5 ENV заданы в Railway
-- [ ] Миграция `20260831144639_instagram_messages.sql` применена к
+- [ ] Миграции `20260831144639_instagram_messages.sql` и
+      `20260926120000_instagram_bot.sql` применены к
       Supabase (файл лежит в `supabase/migrations/`, применяется вручную —
       через `supabase db push` или SQL Editor в дашборде Supabase)
 - [ ] Webhook в App Dashboard указывает на прод-URL и подписан на `messages`
+      и `comments`
+- [ ] В Настройки → Instagram включены нужные переключатели автоответа
+      (по умолчанию оба выключены — после подключения бот молчит)
 - [ ] Redirect URI в App Dashboard совпадает с `META_REDIRECT_URI` дословно
 - [ ] Privacy Policy / Terms / Data Deletion URL заполнены и реально
       открываются

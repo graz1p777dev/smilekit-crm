@@ -13,7 +13,14 @@ const AUTHORIZE_URL = 'https://www.instagram.com/oauth/authorize'
 const TOKEN_EXCHANGE_URL = 'https://api.instagram.com/oauth/access_token'
 const GRAPH_HOST = 'https://graph.instagram.com'
 
-export const INSTAGRAM_SCOPES = ['instagram_business_basic', 'instagram_business_manage_messages'] as const
+// instagram_business_manage_comments добавлен вместе с автоответом на
+// комментарии: аккаунт, подключённый раньше, этих прав НЕ имеет — владельцу
+// нужно ещё раз нажать «Подключить» в Настройки → Instagram.
+export const INSTAGRAM_SCOPES = [
+  'instagram_business_basic',
+  'instagram_business_manage_messages',
+  'instagram_business_manage_comments',
+] as const
 
 function requireEnv(name: string): string {
   const value = process.env[name]
@@ -111,9 +118,12 @@ export async function fetchAccountInfo(accessToken: string): Promise<AccountInfo
   return { userId: data.user_id, username: data.username }
 }
 
+/** Поля вебхука: messages — личные сообщения, comments — комментарии под постами. Те же поля должны быть включены и в App Dashboard. */
+export const INSTAGRAM_WEBHOOK_FIELDS = ['messages', 'comments'] as const
+
 /** Подписка аккаунта на получение вебхуков — отдельный шаг ПОСЛЕ OAuth, без него события не придут даже при верно настроенном App Dashboard. */
 export async function subscribeWebhook(igUserId: string, accessToken: string): Promise<void> {
-  const params = new URLSearchParams({ subscribed_fields: 'messages', access_token: accessToken })
+  const params = new URLSearchParams({ subscribed_fields: INSTAGRAM_WEBHOOK_FIELDS.join(','), access_token: accessToken })
   const response = await fetch(`${GRAPH_HOST}/${GRAPH_API_VERSION}/${igUserId}/subscribed_apps?${params.toString()}`, {
     method: 'POST',
     signal: AbortSignal.timeout(20_000),

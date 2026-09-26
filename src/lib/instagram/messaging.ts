@@ -65,3 +65,84 @@ export async function sendInstagramMessage(input: SendInstagramMessageInput): Pr
   }
   return { recipientId: body.recipient_id, messageId: body.message_id }
 }
+
+/**
+ * Публичный ответ на комментарий под постом — POST /{ig-comment-id}/replies.
+ * Требует разрешения instagram_business_manage_comments: если владелец
+ * подключил аккаунт до того, как оно появилось в INSTAGRAM_SCOPES, Graph API
+ * ответит кодом 10/200 → INSTAGRAM_PERMISSION_DENIED, и нужно переподключение.
+ */
+export async function replyToInstagramComment(commentId: string, text: string): Promise<string> {
+  const account = await getInstagramAccessToken()
+  if (!account) throw new InstagramApiError('INSTAGRAM_NOT_CONNECTED', 'Instagram не подключён')
+
+  const response = await fetch(`${GRAPH_HOST}/${GRAPH_API_VERSION}/${commentId}/replies`, {
+    method: 'POST',
+    headers: { authorization: `Bearer ${account.token}`, 'content-type': 'application/json' },
+    body: JSON.stringify({ message: text }),
+    signal: AbortSignal.timeout(20_000),
+  })
+  const body = (await response.json().catch(() => ({}))) as GraphErrorBody & { id?: string }
+  if (!response.ok) {
+    const code = classifyGraphError(response.status, body)
+    console.error('instagram comments: reply failed', code, body.error?.message ?? `HTTP ${response.status}`)
+    throw new InstagramApiError(code, body.error?.message ?? `Instagram comment reply failed: HTTP ${response.status}`)
+  }
+  if (!body.id) throw new InstagramApiError('INSTAGRAM_API_ERROR', 'Instagram comment reply: unexpected response shape')
+  return body.id
+}
+
+/**
+ * «Private reply» — сообщение в директ автору комментария. Отличается от
+ * обычного сообщения только адресатом: recipient.comment_id вместо
+ * recipient.id (igsid автора комментария нам в вебхуке не обещан). Meta
+ * разрешает такой ответ ровно один раз на комментарий — повтор вернёт
+ * ошибку, поэтому вызывающий код помечает факт отправки в БД.
+ */
+export async function sendInstagramPrivateReply(commentId: string, text: string): Promise<string> {
+  const account = await getInstagramAccessToken()
+  if (!account) throw new InstagramApiError('INSTAGRAM_NOT_CONNECTED', 'Instagram не подключён')
+
+  const response = await fetch(`${GRAPH_HOST}/${GRAPH_API_VERSION}/${account.instagramAccountId}/messages`, {
+    method: 'POST',
+    headers: { authorization: `Bearer ${account.token}`, 'content-type': 'application/json' },
+    body: JSON.stringify({ recipient: { comment_id: commentId }, message: { text } }),
+    signal: AbortSignal.timeout(20_000),
+  })
+  const body = (await response.json().catch(() => ({}))) as GraphErrorBody & { message_id?: string }
+  if (!response.ok) {
+    const code = classifyGraphError(response.status, body)
+    console.error('instagram comments: private reply failed', code, body.error?.message ?? `HTTP ${response.status}`)
+    throw new InstagramApiError(code, body.error?.message ?? `Instagram private reply failed: HTTP ${response.status}`)
+  }
+  if (!body.message_id) throw new InstagramApiError('INSTAGRAM_API_ERROR', 'Instagram private reply: unexpected response shape')
+  return body.message_id
+}
+
+export interface InstagramUserProfile {
+  name: string | null
+  username: string | null
+}
+
+/**
+ * Имя/ник клиента по его igsid — нужно, чтобы в списке сделок был человек, а
+ * не 17-значный id. Best-effort: Graph API отдаёт профиль не всегда (клиент
+ * мог запретить), и без него всё остальное должно работать — поэтому здесь
+ * null вместо исключения.
+ */
+export async function fetchInstagramUserProfile(igsid: string): Promise<InstagramUserProfile | null> {
+  const account = await getInstagramAccessToken()
+  if (!account) return null
+  try {
+    const params = new URLSearchParams({ fields: 'name,username', access_token: account.token })
+    const response = await fetch(`${GRAPH_HOST}/${GRAPH_API_VERSION}/${igsid}?${params.toString()}`, {
+      signal: AbortSignal.timeout(20_000),
+    })
+    if (!response.ok) return null
+    const body = (await response.json()) as { name?: string; username?: string }
+    return { name: body.name ?? null, username: body.username ?? null }
+  } catch (error) {
+    console.error('instagram: fetch user profile failed', error)
+    return null
+  }
+}
