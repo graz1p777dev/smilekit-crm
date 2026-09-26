@@ -32,13 +32,35 @@ import {
   PROMISED_ANCHOR_ID_PREFIX,
   sendResultsPhotoOnly,
 } from '@/lib/greenapi/bot-reply'
+import { trace } from '@/lib/greenapi/trace'
+
+/**
+ * Настройки одного прогона проверки дожимов. Нужны только отладчику
+ * (scripts/bot-cli-server.mts): боевой планировщик зовёт runOnce() без
+ * аргументов и работает ровно как раньше.
+ *
+ * onlyChatId — смотреть только этот чат (служебный чат отладчика, у него
+ * нетелефонный id, и боевой фильтр isRealPhoneChatId его отбрасывает).
+ * dryRun — ничего не отправлять в Green API, только показать, что ушло бы.
+ */
+export interface FollowupRunOptions {
+  onlyChatId?: string
+  dryRun?: boolean
+  /**
+   * Прогнать и те этапы, что в проде выключены флагом (сейчас — дожим при
+   * молчании). Только для наблюдения в отладчике: «а что было бы, если бы
+   * дожим включили». Боевой планировщик это не использует.
+   */
+  includeDisabledStages?: boolean
+}
 
 // Живой баг: «Лаборатория» (dryRun) пишет тестовые сообщения в ту же
 // chat_messages, что и реальные чаты (chat_id вида `lab-...`), и
 // планировщик пытался слать им реальные дожимы через Green API — падало на
 // каждом тике с HTTP 400 (chatId не в формате телефона). Настоящий chat_id
 // Green API — всегда только цифры (см. phoneFromGreenApiChatId).
-const isRealPhoneChatId = (chatId: string): boolean => /^\d+$/.test(chatId)
+const isRealPhoneChatId = (chatId: string, opts: FollowupRunOptions = {}): boolean =>
+  opts.onlyChatId ? chatId === opts.onlyChatId : /^\d+$/.test(chatId)
 
 const TICK_INTERVAL_MS = 60_000
 const NUDGE_SILENCE_MS = 30 * 60_000
@@ -76,9 +98,10 @@ async function sendStageReply(
   chatId: string,
   lastId: number,
   replyText: string,
-  messageIdPrefix: string
+  messageIdPrefix: string,
+  opts: FollowupRunOptions = {}
 ): Promise<void> {
-  if (!(await canSendGreenApiBotReply(supabase, chatId))) return
+  if (!(await canSendGreenApiBotReply(supabase, chatId, { dryRun: opts.dryRun }))) return
 
   const botMessageId = `${messageIdPrefix}:${lastId}`
   // Живой баг: upsert с ignoreDuplicates молча не вставляет строку при
@@ -99,6 +122,8 @@ async function sendStageReply(
     return
   }
   if (!reserved?.length) return // уже отправлено другим тиком
+  trace('followup.send', chatId, { text: replyText, messageId: botMessageId, sent: !opts.dryRun })
+  if (opts.dryRun) return
   try {
     await sendGreenApiMessage(`${chatId}@c.us`, replyText)
   } catch (error) {
@@ -136,7 +161,10 @@ async function isPromisedLaterStillPending(
  * от того, было ли последнее сообщение уже дожимом (24 часа) или обычным
  * ответом (30 минут).
  */
-async function processIdleNudgeStage(supabase: ReturnType<typeof createAdminClient>): Promise<void> {
+async function processIdleNudgeStage(
+  supabase: ReturnType<typeof createAdminClient>,
+  opts: FollowupRunOptions = {}
+): Promise<void> {
   const cutoff = new Date(Date.now() - NUDGE_SILENCE_MS).toISOString()
   // Живой баг: без верхней границы и с ascending этот запрос по мере роста
   // истории всё чаще упирается в лимит 200 записями из давно завершённых
@@ -144,18 +172,22 @@ async function processIdleNudgeStage(supabase: ReturnType<typeof createAdminClie
   // пропускаются циклом ниже), и до чатов, которые стали неактивны только
   // что, тик может вообще не доходить. descending отдаёт приоритет самым
   // свежим кандидатам — тем, кому дожим нужнее всего прямо сейчас.
-  const { data: candidates } = await supabase
+  // Отладчик смотрит один служебный чат — сужаем выборку прямо в запросе,
+  // иначе его чат может просто не попасть в лимит 200 боевых кандидатов.
+  let candidatesQuery = supabase
     .from('chat_messages')
     .select('chat_id')
     .eq('sender', 'bot')
     .not('amo_message_id', 'like', 'ga:claim:%')
     .lte('created_at', cutoff)
+  if (opts.onlyChatId) candidatesQuery = candidatesQuery.eq('chat_id', opts.onlyChatId)
+  const { data: candidates } = await candidatesQuery
     .order('created_at', { ascending: false })
     .limit(200)
   if (!candidates?.length) return
 
   const chatIds = [...new Set((candidates as { chat_id: string }[]).map((row) => row.chat_id))]
-    .filter(isRealPhoneChatId)
+    .filter((chatId) => isRealPhoneChatId(chatId, opts))
   for (const chatId of chatIds) {
     const { data: last } = await supabase
       .from('chat_messages')
@@ -169,6 +201,7 @@ async function processIdleNudgeStage(supabase: ReturnType<typeof createAdminClie
       | null
     if (!lastRow || lastRow.sender !== 'bot') continue // клиент уже ответил
     if (lastRow.amo_message_id.startsWith('ga:claim:')) continue // технический маркер, не реальный ответ
+    trace('followup.candidate', chatId, { stage: 'дожим при молчании', lastBotText: lastRow.text, lastBotAt: lastRow.created_at })
 
     // Чат ждёт первого ответа клиента после блока результата (бот сам
     // больше ничего не пишет, см. bot-reply.ts isAwaitingPostResultsReply) —
@@ -179,16 +212,30 @@ async function processIdleNudgeStage(supabase: ReturnType<typeof createAdminClie
       .select('id')
       .eq('amo_message_id', `${POST_RESULTS_STAGE_ANCHOR_ID_PREFIX}:${chatId}`)
       .maybeSingle()
-    if (postResultsAnchor) continue
+    if (postResultsAnchor) {
+      trace('followup.skip', chatId, { why: 'чат ждёт первого ответа после блока результата — бот писать первым не должен' })
+      continue
+    }
 
     const alreadyNudged = lastRow.amo_message_id.startsWith(IDLE_NUDGE_ID_PREFIX)
     const requiredSilenceMs = alreadyNudged ? SECOND_WAVE_SILENCE_MS : NUDGE_SILENCE_MS
-    if (new Date(lastRow.created_at).getTime() > Date.now() - requiredSilenceMs) continue // порог ещё не прошёл
-    if (await isPromisedLaterStillPending(supabase, chatId)) continue // клиент сам сказал, когда вернётся
+    if (new Date(lastRow.created_at).getTime() > Date.now() - requiredSilenceMs) {
+      trace('followup.skip', chatId, {
+        why: `молчание короче порога (${Math.round(requiredSilenceMs / 60_000)} мин) — дожим ещё рано`,
+      })
+      continue
+    }
+    if (await isPromisedLaterStillPending(supabase, chatId)) {
+      trace('followup.skip', chatId, { why: 'клиент сам обещал вернуться позже — не дёргаем' })
+      continue
+    }
 
     const replyText = await nextIdleNudgeReply(supabase, chatId, lastRow.text, lastRow.amo_message_id)
-    if (!replyText) continue // больше предложить нечего — не пишем
-    await sendStageReply(supabase, chatId, lastRow.id, replyText, IDLE_NUDGE_ID_PREFIX)
+    if (!replyText) {
+      trace('followup.skip', chatId, { why: 'предложить больше нечего — молчим' })
+      continue
+    }
+    await sendStageReply(supabase, chatId, lastRow.id, replyText, IDLE_NUDGE_ID_PREFIX, opts)
   }
 }
 
@@ -200,20 +247,27 @@ async function processIdleNudgeStage(supabase: ReturnType<typeof createAdminClie
  * же назовёт город, обычный путь в bot-reply.ts дошлёт доставку и
  * голосовое отдельно (см. deliveryVoiceAllowed).
  */
-async function processCityWaitStage(supabase: ReturnType<typeof createAdminClient>): Promise<void> {
+async function processCityWaitStage(
+  supabase: ReturnType<typeof createAdminClient>,
+  opts: FollowupRunOptions = {}
+): Promise<void> {
   const now = Date.now()
-  const { data: anchors } = await supabase
+  let anchorsQuery = supabase
     .from('chat_messages')
     .select('id, chat_id')
     .like('amo_message_id', `${CITY_WAIT_ANCHOR_ID_PREFIX}:%`)
     .gte('created_at', new Date(now - CITY_WAIT_MAX_AGE_MS).toISOString())
     .lte('created_at', new Date(now - CITY_WAIT_SILENCE_MS).toISOString())
+  // См. выше: отладчику нужен именно его чат, а не первые 200 боевых.
+  if (opts.onlyChatId) anchorsQuery = anchorsQuery.eq('chat_id', opts.onlyChatId)
+  const { data: anchors } = await anchorsQuery
     .order('created_at', { ascending: true })
     .limit(200)
   if (!anchors?.length) return
 
   for (const anchor of anchors as { id: number; chat_id: string }[]) {
-    if (!isRealPhoneChatId(anchor.chat_id)) continue
+    if (!isRealPhoneChatId(anchor.chat_id, opts)) continue
+    trace('followup.candidate', anchor.chat_id, { stage: 'клиент не назвал город', anchorId: anchor.id })
     const { data: last } = await supabase
       .from('chat_messages')
       .select('id')
@@ -222,9 +276,13 @@ async function processCityWaitStage(supabase: ReturnType<typeof createAdminClien
       .order('id', { ascending: false })
       .limit(1)
       .maybeSingle()
-    if ((last as { id: number } | null)?.id !== anchor.id) continue // клиент ответил или бот уже писал
-    if (!(await canSendGreenApiBotReply(supabase, anchor.chat_id))) continue
-    await sendResultsPhotoOnly(supabase, anchor.chat_id)
+    if ((last as { id: number } | null)?.id !== anchor.id) {
+      trace('followup.skip', anchor.chat_id, { why: 'клиент уже ответил или бот писал после якоря' })
+      continue
+    }
+    if (!(await canSendGreenApiBotReply(supabase, anchor.chat_id, { dryRun: opts.dryRun }))) continue
+    trace('followup.send', anchor.chat_id, { text: '[блок до/после без доставки и голосового]', sent: !opts.dryRun })
+    await sendResultsPhotoOnly(supabase, anchor.chat_id, { dryRun: opts.dryRun })
   }
 }
 
@@ -235,8 +293,24 @@ async function processCityWaitStage(supabase: ReturnType<typeof createAdminClien
 // Флаг, а не удаление кода: чтобы откат был в одну строку.
 const IDLE_NUDGES_ENABLED = false
 
-async function runOnce(): Promise<void> {
+async function runOnce(opts: FollowupRunOptions = {}): Promise<void> {
   const supabase = createAdminClient()
-  await processCityWaitStage(supabase)
-  if (IDLE_NUDGES_ENABLED) await processIdleNudgeStage(supabase)
+  await processCityWaitStage(supabase, opts)
+  if (IDLE_NUDGES_ENABLED) await processIdleNudgeStage(supabase, opts)
+  else if (opts.includeDisabledStages) {
+    trace('followup.disabled', opts.onlyChatId ?? null, {
+      why: 'в проде дожим при молчании выключен (IDLE_NUDGES_ENABLED = false) — ниже только показ, что было бы',
+    })
+    await processIdleNudgeStage(supabase, opts)
+  } else {
+    trace('followup.skip', opts.onlyChatId ?? null, { why: 'дожим при молчании выключен флагом IDLE_NUDGES_ENABLED' })
+  }
+}
+
+/**
+ * Один прогон проверки дожимов «руками» — для отладчика, который вызывает
+ * нужные функции напрямую и фоновый планировщик не поднимает.
+ */
+export function runFollowupOnce(opts: FollowupRunOptions = {}): Promise<void> {
+  return runOnce(opts)
 }

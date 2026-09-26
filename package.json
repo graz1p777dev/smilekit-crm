@@ -8,7 +8,9 @@
     "start": "next start",
     "lint": "eslint",
     "test": "vitest run",
-    "seed:owner": "node scripts/seed-owner.mjs"
+    "seed:owner": "node scripts/seed-owner.mjs",
+    "bot:cli": "bash tools/bot-cli/setup.sh && railway run --service smilekit-crm npx tsx scripts/bot-cli-server.mts",
+    "bot:debug": "bash tools/bot-cli/setup.sh && tools/bot-cli/.venv/bin/python tools/bot-cli/debug.py"
   },
   "dependencies": {
     "@base-ui/react": "^1.6.0",

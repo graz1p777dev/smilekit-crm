@@ -47,3 +47,8 @@ supabase/.temp/
 
 # Рабочие копии агентов Claude Code — не код приложения, в деплой не идут
 .claude/worktrees/
+
+# Отладчик бота: локальное окружение Python и файл текущего сеанса
+tools/bot-cli/.venv/
+tools/bot-cli/.session.json
+tools/bot-cli/__pycache__/
