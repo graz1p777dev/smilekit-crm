@@ -46,6 +46,12 @@ import { trace } from '@/lib/greenapi/trace'
 export interface FollowupRunOptions {
   onlyChatId?: string
   dryRun?: boolean
+  /**
+   * Прогнать и те этапы, что в проде выключены флагом (сейчас — дожим при
+   * молчании). Только для наблюдения в отладчике: «а что было бы, если бы
+   * дожим включили». Боевой планировщик это не использует.
+   */
+  includeDisabledStages?: boolean
 }
 
 // Живой баг: «Лаборатория» (dryRun) пишет тестовые сообщения в ту же
@@ -166,12 +172,16 @@ async function processIdleNudgeStage(
   // пропускаются циклом ниже), и до чатов, которые стали неактивны только
   // что, тик может вообще не доходить. descending отдаёт приоритет самым
   // свежим кандидатам — тем, кому дожим нужнее всего прямо сейчас.
-  const { data: candidates } = await supabase
+  // Отладчик смотрит один служебный чат — сужаем выборку прямо в запросе,
+  // иначе его чат может просто не попасть в лимит 200 боевых кандидатов.
+  let candidatesQuery = supabase
     .from('chat_messages')
     .select('chat_id')
     .eq('sender', 'bot')
     .not('amo_message_id', 'like', 'ga:claim:%')
     .lte('created_at', cutoff)
+  if (opts.onlyChatId) candidatesQuery = candidatesQuery.eq('chat_id', opts.onlyChatId)
+  const { data: candidates } = await candidatesQuery
     .order('created_at', { ascending: false })
     .limit(200)
   if (!candidates?.length) return
@@ -242,12 +252,15 @@ async function processCityWaitStage(
   opts: FollowupRunOptions = {}
 ): Promise<void> {
   const now = Date.now()
-  const { data: anchors } = await supabase
+  let anchorsQuery = supabase
     .from('chat_messages')
     .select('id, chat_id')
     .like('amo_message_id', `${CITY_WAIT_ANCHOR_ID_PREFIX}:%`)
     .gte('created_at', new Date(now - CITY_WAIT_MAX_AGE_MS).toISOString())
     .lte('created_at', new Date(now - CITY_WAIT_SILENCE_MS).toISOString())
+  // См. выше: отладчику нужен именно его чат, а не первые 200 боевых.
+  if (opts.onlyChatId) anchorsQuery = anchorsQuery.eq('chat_id', opts.onlyChatId)
+  const { data: anchors } = await anchorsQuery
     .order('created_at', { ascending: true })
     .limit(200)
   if (!anchors?.length) return
@@ -284,7 +297,14 @@ async function runOnce(opts: FollowupRunOptions = {}): Promise<void> {
   const supabase = createAdminClient()
   await processCityWaitStage(supabase, opts)
   if (IDLE_NUDGES_ENABLED) await processIdleNudgeStage(supabase, opts)
-  else trace('followup.skip', opts.onlyChatId ?? null, { why: 'дожим при молчании выключен флагом IDLE_NUDGES_ENABLED' })
+  else if (opts.includeDisabledStages) {
+    trace('followup.disabled', opts.onlyChatId ?? null, {
+      why: 'в проде дожим при молчании выключен (IDLE_NUDGES_ENABLED = false) — ниже только показ, что было бы',
+    })
+    await processIdleNudgeStage(supabase, opts)
+  } else {
+    trace('followup.skip', opts.onlyChatId ?? null, { why: 'дожим при молчании выключен флагом IDLE_NUDGES_ENABLED' })
+  }
 }
 
 /**
