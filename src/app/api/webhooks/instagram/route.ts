@@ -1,5 +1,7 @@
 import { after, NextRequest, NextResponse } from 'next/server'
-import { verifySignature, parseIncomingEvents, storeInboundMessage } from '@/lib/instagram/webhook'
+import { verifySignature, parseIncomingEvents, parseIncomingComments } from '@/lib/instagram/webhook'
+import { handleInstagramInboundMessage } from '@/lib/instagram/dm-bot'
+import { handleInstagramComment } from '@/lib/instagram/comments'
 import { matchesRotatableSecret } from '@/lib/webhook-auth'
 
 // GET — верификационный хендшейк Meta при настройке Webhooks в App Dashboard
@@ -41,11 +43,24 @@ export async function POST(request: NextRequest) {
   }
 
   const events = parseIncomingEvents(payload as Parameters<typeof parseIncomingEvents>[0])
+  const comments = parseIncomingComments(payload as Parameters<typeof parseIncomingComments>[0])
   after(async () => {
+    // Дублирующийся вебхук (Meta ретраит, если не получил 200 вовремя)
+    // отсекается внутри обработчиков — по mid сообщения и по id комментария.
+    // Одна упавшая обработка не должна съесть остальные события пачки.
     for (const event of events) {
-      // Дублирующийся вебхук (Meta ретраит, если не получил 200 вовремя) —
-      // storeInboundMessage возвращает false на дубль по mid, дальше не идём.
-      await storeInboundMessage(event)
+      try {
+        await handleInstagramInboundMessage(event)
+      } catch (error) {
+        console.error('instagram webhook: message handling failed', error)
+      }
+    }
+    for (const comment of comments) {
+      try {
+        await handleInstagramComment(comment)
+      } catch (error) {
+        console.error('instagram webhook: comment handling failed', error)
+      }
     }
   })
 
