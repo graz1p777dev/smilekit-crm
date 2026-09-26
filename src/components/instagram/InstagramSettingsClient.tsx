@@ -4,8 +4,13 @@ import { useEffect, useState, useTransition } from 'react'
 import { useRouter, useSearchParams } from 'next/navigation'
 import { toast } from 'sonner'
 import { MessageCircle, CheckCircle2, AlertTriangle, XCircle } from 'lucide-react'
-import { disconnectInstagramAction } from '@/actions/instagram-settings'
-import type { InstagramIntegration } from '@/lib/instagram/config'
+import {
+  disconnectInstagramAction,
+  listInstagramComments,
+  setInstagramBotSettingsAction,
+  type InstagramCommentRow,
+} from '@/actions/instagram-settings'
+import { DEFAULT_INSTAGRAM_BOT_SETTINGS, type InstagramIntegration } from '@/lib/instagram/config'
 import { humanInstagramError, type InstagramErrorCode } from '@/lib/instagram/errors'
 
 interface Props {
@@ -15,9 +20,15 @@ interface Props {
 /** Настройки → Интеграции → Instagram. Клиент никогда не вводит App ID/Secret/токен — только OAuth через кнопку. */
 export default function InstagramSettingsClient({ initialIntegration }: Props) {
   const [integration, setIntegration] = useState(initialIntegration)
+  const [comments, setComments] = useState<InstagramCommentRow[]>([])
   const [busy, startBusy] = useTransition()
   const router = useRouter()
   const searchParams = useSearchParams()
+
+  useEffect(() => {
+    if (integration.status !== 'connected') return
+    listInstagramComments().then(setComments).catch(() => setComments([]))
+  }, [integration.status])
 
   useEffect(() => {
     const connected = searchParams.get('connected')
@@ -42,8 +53,30 @@ export default function InstagramSettingsClient({ initialIntegration }: Props) {
         toast.error(result.error)
         return
       }
-      setIntegration({ status: 'not_connected', instagramAccountId: null, username: null, scopes: [], connectedAt: null, lastError: null })
+      setIntegration({
+        status: 'not_connected',
+        instagramAccountId: null,
+        username: null,
+        scopes: [],
+        connectedAt: null,
+        lastError: null,
+        bot: DEFAULT_INSTAGRAM_BOT_SETTINGS,
+      })
       toast.success('Instagram отключён')
+    })
+  }
+
+  function handleToggle(key: 'dmEnabled' | 'commentsEnabled', value: boolean) {
+    const previous = integration.bot
+    setIntegration((current) => ({ ...current, bot: { ...current.bot, [key]: value } }))
+    startBusy(async () => {
+      const result = await setInstagramBotSettingsAction({ [key]: value })
+      if (!result.success) {
+        setIntegration((current) => ({ ...current, bot: previous }))
+        toast.error(result.error)
+        return
+      }
+      toast.success(value ? 'Бот включён' : 'Бот выключен')
     })
   }
 
@@ -112,6 +145,37 @@ export default function InstagramSettingsClient({ initialIntegration }: Props) {
         )}
 
         {integration.status === 'connected' && (
+          <div className="mb-5 space-y-3 rounded-xl p-4" style={{ background: '#f5f6f8' }}>
+            <div className="text-sm font-semibold" style={{ color: '#17102a' }}>Автоответы бота</div>
+            <label className="flex cursor-pointer items-start gap-2 text-sm" style={{ color: '#4e4560' }}>
+              <input
+                type="checkbox"
+                className="mt-0.5 size-4"
+                checked={integration.bot.dmEnabled}
+                disabled={busy}
+                onChange={(e) => handleToggle('dmEnabled', e.target.checked)}
+              />
+              <span>Отвечать в личных сообщениях</span>
+            </label>
+            <label className="flex cursor-pointer items-start gap-2 text-sm" style={{ color: '#4e4560' }}>
+              <input
+                type="checkbox"
+                className="mt-0.5 size-4"
+                checked={integration.bot.commentsEnabled}
+                disabled={busy}
+                onChange={(e) => handleToggle('commentsEnabled', e.target.checked)}
+              />
+              <span>Отвечать на комментарии под постами</span>
+            </label>
+            <p className="text-xs" style={{ color: '#766d88' }}>
+              Пока выключено, сообщения и комментарии только сохраняются в CRM — клиентам бот не пишет.
+              Ответы на комментарии требуют разрешения на управление комментариями: если аккаунт
+              подключён раньше, нажмите «Подключить Instagram» ещё раз.
+            </p>
+          </div>
+        )}
+
+        {integration.status === 'connected' && (
           <button
             onClick={handleDisconnect}
             disabled={busy}
@@ -122,6 +186,41 @@ export default function InstagramSettingsClient({ initialIntegration }: Props) {
           </button>
         )}
       </div>
+
+      {integration.status === 'connected' && comments.length > 0 && (
+        <div className="mt-6 rounded-2xl border p-6" style={{ borderColor: '#e5e7eb', background: '#ffffff' }}>
+          <h2 className="mb-4 text-sm font-semibold" style={{ color: '#17102a' }}>
+            Комментарии под постами
+          </h2>
+          <ul className="space-y-3">
+            {comments.map((comment) => (
+              <li key={comment.id} className="rounded-xl p-3 text-sm" style={{ background: '#f5f6f8' }}>
+                <div className="flex flex-wrap items-baseline gap-2">
+                  <span className="font-semibold" style={{ color: '#17102a' }}>
+                    {comment.author_username ? `@${comment.author_username}` : 'Без ника'}
+                  </span>
+                  {comment.commented_at && (
+                    <span className="text-xs" style={{ color: '#766d88' }}>
+                      {new Date(comment.commented_at).toLocaleString('ru-RU')}
+                    </span>
+                  )}
+                </div>
+                <p className="mt-1" style={{ color: '#4e4560' }}>{comment.text}</p>
+                {comment.reply_text ? (
+                  <p className="mt-2" style={{ color: '#5115a4' }}>
+                    Ответ бота: {comment.reply_text}
+                    {comment.private_reply_sent ? ' · написали в директ' : ''}
+                  </p>
+                ) : (
+                  <p className="mt-2 text-xs" style={{ color: '#766d88' }}>
+                    {comment.status === 'failed' ? 'Ответить не удалось' : 'Без ответа бота'}
+                  </p>
+                )}
+              </li>
+            ))}
+          </ul>
+        </div>
+      )}
     </div>
   )
 }

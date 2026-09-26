@@ -16,7 +16,20 @@ export interface InstagramIntegration {
   scopes: string[]
   connectedAt: string | null
   lastError: string | null
+  bot: InstagramBotSettings
 }
+
+/**
+ * Переключатели автоответа. Оба по умолчанию выключены: сразу после
+ * подключения аккаунта ни одно сообщение не должно уйти клиенту без ведома
+ * владельца — он включает канал сам в Настройки → Instagram.
+ */
+export interface InstagramBotSettings {
+  dmEnabled: boolean
+  commentsEnabled: boolean
+}
+
+export const DEFAULT_INSTAGRAM_BOT_SETTINGS: InstagramBotSettings = { dmEnabled: false, commentsEnabled: false }
 
 interface StoredConfig {
   accessTokenEncrypted?: string
@@ -27,6 +40,15 @@ interface StoredConfig {
   connectedAt?: string
   status?: InstagramConnectionStatus
   lastError?: string | null
+  botDmEnabled?: boolean
+  botCommentsEnabled?: boolean
+}
+
+function botSettingsOf(config: StoredConfig | null | undefined): InstagramBotSettings {
+  return {
+    dmEnabled: config?.botDmEnabled === true,
+    commentsEnabled: config?.botCommentsEnabled === true,
+  }
 }
 
 const INTEGRATION_NAME = 'Instagram'
@@ -52,7 +74,29 @@ export async function getInstagramIntegration(): Promise<InstagramIntegration> {
     scopes: config.scopes ?? [],
     connectedAt: config.connectedAt ?? null,
     lastError: row?.last_sync_error ?? null,
+    bot: botSettingsOf(config),
   }
+}
+
+/**
+ * Только переключатели — без остального профиля, чтобы обработчик вебхука не
+ * тянул расшифровку токена ради одной проверки. Аккаунт не подключён →
+ * выключено: бот в любом случае ничего отправить не сможет.
+ */
+export async function getInstagramBotSettings(): Promise<InstagramBotSettings> {
+  const row = await loadRow()
+  if (!row?.is_active) return DEFAULT_INSTAGRAM_BOT_SETTINGS
+  return botSettingsOf(row.config)
+}
+
+export async function setInstagramBotSettings(settings: Partial<InstagramBotSettings>): Promise<void> {
+  const row = await loadRow()
+  if (!row) return
+  const config: StoredConfig = { ...(row.config ?? {}) }
+  if (settings.dmEnabled !== undefined) config.botDmEnabled = settings.dmEnabled
+  if (settings.commentsEnabled !== undefined) config.botCommentsEnabled = settings.commentsEnabled
+  const admin = createAdminClient()
+  await admin.from('integrations').update({ config }).eq('id', row.id)
 }
 
 /** Расшифрованный токен + expiry — только для server-side вызовов Graph API, никогда не отдавать во фронт. */
@@ -75,7 +119,13 @@ export async function saveInstagramIntegration(input: {
   scopes: string[]
 }): Promise<void> {
   const admin = createAdminClient()
+  // Переключатели автоответа переживают переподключение: владелец проходит
+  // «Подключить» заново ради новых разрешений (например comments), и молча
+  // выключать уже работающего бота при этом неправильно.
+  const previous = await loadRow()
   const config: StoredConfig = {
+    botDmEnabled: previous?.config?.botDmEnabled === true,
+    botCommentsEnabled: previous?.config?.botCommentsEnabled === true,
     accessTokenEncrypted: encryptToken(input.accessToken),
     tokenExpiresAt: input.tokenExpiresAt,
     instagramAccountId: input.instagramAccountId,
