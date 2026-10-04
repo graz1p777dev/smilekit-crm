@@ -2361,9 +2361,18 @@ async function generateAndSendGreenApiReply(
         replies.length = 0
         replies.push(PAY_ON_DELIVERY_ACK_REPLY)
         needsCodAnchor = true
-      } else if (
+      }
+      // Живой баг (03.10): проверка раньше была `!historyText.includes('сом')`
+      // — а обычная цена 1490 сом в начале разговора ТОЖЕ содержит «сом»,
+      // так что уже после первого прайса защита от самовольной скидки
+      // отключалась навсегда. Клиенту без единого слова о скидке ИИ сам
+      // предложил «13%, 1290 сом» на третьем сообщении. Теперь смотрим на
+      // реальные суммы ступеней скидки (1290/1190) — их в истории не может
+      // быть без того, чтобы скидку уже кто-то легитимно выдал.
+      else if (
         !DISCOUNT_REQUEST.test(input.text) &&
-        !historyText.includes('сом') &&
+        !historyText.includes('1290') &&
+        !historyText.includes('1190') &&
         replies.some((part) => AI_IMPROVISED_DISCOUNT.test(part))
       ) {
         trace('ai.overridden', input.chatId, {
