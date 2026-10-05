@@ -1108,6 +1108,31 @@ export async function sendResultsPhotoOnly(
     }
     await new Promise((resolve) => setTimeout(resolve, 700))
   }
+
+  // Живой баг (05.10): этот путь (город молчит 5 минут) слал только фото
+  // с подписью текстом — голосовое «Гарантированно увидите эффект...»
+  // уходит лишь в обычном пути (после того, как клиент назвал город, см.
+  // voiceReplies.add(T.firstUseEffect) выше по файлу). Голосовое не зависит
+  // от города (в отличие от доставки) — отправляем тот же файл и здесь,
+  // чтобы клиент получал его независимо от того, назвал он город или нет.
+  const effectVoiceMessageId = `ga:bot:city-timeout:${chatId}:first-use-effect`
+  const { error: effectVoiceReserveError } = await supabase.from('chat_messages').upsert({
+    amo_message_id: effectVoiceMessageId,
+    chat_id: chatId,
+    direction: 'out',
+    sender: 'bot',
+    text: FIRST_USE_EFFECT,
+  }, { onConflict: 'amo_message_id', ignoreDuplicates: true })
+  if (effectVoiceReserveError) {
+    console.error('greenapi bot-reply: city-timeout effect voice reserve failed', effectVoiceReserveError.message)
+  } else if (!opts.dryRun) {
+    try {
+      await sendGreenApiVoice(waChatId, `${mediaBaseUrl}/media/voice/first_use_effect.ogg`, 'first_use_effect.ogg')
+    } catch (error) {
+      await supabase.from('chat_messages').delete().eq('amo_message_id', effectVoiceMessageId)
+      console.error('greenapi bot-reply: city-timeout effect voice send failed', error)
+    }
+  }
 }
 
 /**
