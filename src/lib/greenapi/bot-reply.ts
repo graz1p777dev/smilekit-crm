@@ -1209,6 +1209,22 @@ function isPhoneAllowedForBot(chatId: string): boolean {
 }
 
 /**
+ * Тестовые номера (GREENAPI_AI_FIRST_PHONES, через запятую, только цифры) —
+ * весь встроенный скрипт (шаблоны/регулярки) пропускается, отвечает сразу
+ * ИИ Telegram-бота (/internal/lab), как в его тестовом канале. Только для
+ * обкатки: здесь нет нашей защиты от случайной самовольной скидки/заказа
+ * до того, как replies.length === 0 сработает естественным путём — guard'ы
+ * AI_IMPROVISED_* ниже по файлу работают как обычно поверх ответа ИИ.
+ */
+function isAiFirstPhone(chatId: string): boolean {
+  const list = (process.env.GREENAPI_AI_FIRST_PHONES ?? '')
+    .split(',')
+    .map((value) => value.replace(/\D/g, ''))
+    .filter(Boolean)
+  return list.includes(chatId.replace(/\D/g, ''))
+}
+
+/**
  * skipIntegrationCheck — только для локальной «Лаборатории» (см.
  * src/app/api/greenapi-lab/route.ts): даёт погонять ровно ту же логику
  * бота на тестовом chat_id, не включая реальный аварийный выключатель
@@ -2160,7 +2176,9 @@ async function generateAndSendGreenApiReply(
     }
   }
 
-  if (customRuleReply) {
+  if (isAiFirstPhone(input.chatId)) {
+    trace('rule.matched', input.chatId, { rule: 'AI_FIRST_TEST_PHONE', why: 'тестовый номер из GREENAPI_AI_FIRST_PHONES — встроенный скрипт пропущен, отвечает сразу ИИ' })
+  } else if (customRuleReply) {
     trace('rule.matched', input.chatId, { rule: 'своё правило из настроек CRM', why: 'сработало пользовательское правило из «Настройки бота» — оно проверяется раньше встроенного скрипта' })
     replies.push(customRuleReply)
   } else if (history.length > 0 && GREETING_ONLY.test(input.text)) {
