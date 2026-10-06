@@ -460,9 +460,6 @@ export const AI_IMPROVISED_DISCOUNT = /скидк|1290|1190|13\s*%|20\s*%/i
 export const AI_IMPROVISED_COD_ORDER =
   /(?:номер\s+телефона|телефон|адрес)[^.!?\n]{0,40}(?:для\s+)?оформ|заказ[^.!?\n]{0,40}оформлен|оформил[аи]?\s+заказ|курьер[^.!?\n]{0,30}(?:привез|свяж)|свяжется\s+курьер/i
 
-// Подводка перед фото — дословно как в Telegram (__main__.py).
-const RESULTS_INTRO = 'Вот такой эффект будет уже после первого применения 👇'
-
 // ИИ-фолбэк отвалился дважды подряд — честный текст вместо полной тишины
 // (см. живой баг в generateAndSendGreenApiReply: клиент спросил «А какой
 // адрес?», ответа не было 6 часов, пока не написал то же самое повторно).
@@ -1067,19 +1064,9 @@ export async function sendResultsPhotoOnly(
   if (!mediaBaseUrl) return
   const waChatId = `${chatId}@c.us`
 
-  await supabase.from('chat_messages').upsert({
-    amo_message_id: `ga:bot:city-timeout:${chatId}:results-intro`,
-    chat_id: chatId,
-    direction: 'out',
-    sender: 'bot',
-    text: RESULTS_INTRO,
-  }, { onConflict: 'amo_message_id', ignoreDuplicates: true })
-  if (!opts.dryRun) {
-    await sendGreenApiMessage(waChatId, RESULTS_INTRO).catch((error) =>
-      console.error('greenapi bot-reply: city-timeout results intro failed', error)
-    )
-  }
-
+  // Живой баг (06.10): подпись «Вот такой эффект будет уже после первого
+  // применения» текстом перед фото — владелец попросил убрать, фото
+  // говорит само за себя, лишний текст перед ним не нужен.
   for (const [name, caption] of RESULT_PHOTOS) {
     const photoMessageId = `ga:bot:city-timeout:${chatId}:result:${name}`
     const { error: photoReserveError } = await supabase.from('chat_messages').upsert({
@@ -2553,19 +2540,9 @@ async function generateAndSendGreenApiReply(
       // вебхука Green API ищет свежую строку sender='bot' с тем же текстом,
       // и без неё подводка опозналась бы как сообщение менеджера — бот
       // замолкал в чате прямо посреди отправки фото.
-      await supabase.from('chat_messages').upsert({
-        amo_message_id: `ga:bot:${input.providerMessageId}:results-intro`,
-        chat_id: input.chatId,
-        direction: 'out',
-        sender: 'bot',
-        text: RESULTS_INTRO,
-      }, { onConflict: 'amo_message_id', ignoreDuplicates: true })
-      trace('outbound', input.chatId, { text: RESULTS_INTRO, as: 'текст', sent: !opts.dryRun })
-      if (!opts.dryRun) {
-        await sendGreenApiMessage(chatId, RESULTS_INTRO).catch((error) =>
-          console.error('greenapi bot-reply: results intro failed', error)
-        )
-      }
+      // Живой баг (06.10): подпись «Вот такой эффект будет уже после
+      // первого применения» текстом перед фото — владелец попросил убрать,
+      // фото говорит само за себя, лишний текст перед ним не нужен.
       for (const [name, caption] of RESULT_PHOTOS) {
         if (!(await canSendGreenApiBotReply(supabase, input.chatId, opts))) return
         const photoMessageId = `bot:${input.providerMessageId}:result:${name}`
