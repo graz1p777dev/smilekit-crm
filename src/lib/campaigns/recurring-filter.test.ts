@@ -34,8 +34,13 @@ describe('recurringAudienceFilter', () => {
   })
   it('галочки передаются', () => {
     const f = recurringAudienceFilter(rule({ include_manager_chats: true, skip_reached_today: false }), NOW, null)
-    expect(f).toMatchObject({ includeManagerChats: true, skipReachedSince: undefined })
-    expect(recurringAudienceFilter(rule({}), NOW, null)?.skipReachedSince).toBe('2026-09-18T18:00:00.000Z')
+    expect(f).toMatchObject({ includeManagerChats: true })
+  })
+  it('правило трёх суток применяется всегда, даже при snяtой галочке', () => {
+    // 19.09 14:00 UTC минус трое суток
+    expect(recurringAudienceFilter(rule({ skip_reached_today: false }), NOW, null)?.skipReachedSince)
+      .toBe('2026-09-16T14:00:00.000Z')
+    expect(recurringAudienceFilter(rule({}), NOW, null)?.skipReachedSince).toBe('2026-09-16T14:00:00.000Z')
   })
 })
 

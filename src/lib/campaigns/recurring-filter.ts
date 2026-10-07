@@ -3,6 +3,7 @@
 // (реальная отправка) — иначе число в форме разошлось бы с отправкой.
 
 import type { AudienceFilter, CampaignAudience } from '@/actions/campaigns'
+import { repeatCooldownSinceIso } from './repeat-cooldown'
 
 export type RecurringPeriodMode = 'days' | 'hours24' | 'since_last' | 'from_date'
 
@@ -42,7 +43,11 @@ export function recurringAudienceFilter(
   const base: AudienceFilter = {
     audience: rule.audience,
     includeManagerChats: rule.include_manager_chats,
-    skipReachedSince: rule.skip_reached_today ? bishkekDayStartIso(now) : undefined,
+    // Правило трёх суток: кто получил рассылку за последние
+    // REPEAT_COOLDOWN_DAYS суток, в аудиторию не попадает. Окно скользящее
+    // (72 часа от момента отправки), а не календарное — иначе получивший
+    // вчера в 20:00 снова попал бы в список уже через полтора суток.
+    skipReachedSince: repeatCooldownSinceIso(now),
   }
   switch (rule.period_mode) {
     case 'hours24':

@@ -1,6 +1,7 @@
 'use client'
 
 import { useEffect, useMemo, useRef, useState, useTransition } from 'react'
+import { REPEAT_COOLDOWN_DAYS, repeatCooldownSinceIso } from '@/lib/campaigns/repeat-cooldown'
 import { useRouter } from 'next/navigation'
 import { Bot, CalendarClock, CheckCircle2, Clock3, Mic, Send, ShieldCheck, ShieldX, Trash2, UsersRound, X, XCircle } from 'lucide-react'
 import { toast } from 'sonner'
@@ -59,12 +60,6 @@ function daysBack(days: number) {
 }
 
 type PresetKey = 'today' | 'd2' | 'd3' | 'd5' | 'week' | 'h24' | 'since_last'
-
-/** Начало сегодняшних суток по Бишкеку, ISO. */
-function bishkekTodayStartIso() {
-  const day = new Date(Date.now() + 6 * 3600_000).toISOString().slice(0, 10)
-  return new Date(`${day}T00:00:00+06:00`).toISOString()
-}
 
 /** Момент N часов назад. Вынесено из компонента: Date.now() внутри тела
  *  компонента линтер React считает нечистым вызовом при рендере. */
@@ -173,9 +168,9 @@ export default function CampaignsClient({ initialData }: { initialData: Campaign
   // По умолчанию нет — чтобы не влезать в живой разговор. Чаты, где менеджер
   // молчит дольше, получают рассылку и без галочки.
   const [includeManagerChats, setIncludeManagerChats] = useState(false)
-  // Не слать повторно тем, кто уже получил рассылку сегодня. По умолчанию да:
-  // 17.09 чуть не ушла вторая рассылка тем же 187 людям через 50 минут.
-  const [skipReachedToday, setSkipReachedToday] = useState(true)
+  // Повторно рассылка не уходит тем, кто получал её за последние
+  // REPEAT_COOLDOWN_DAYS суток. Правило владельца, отключить нельзя — то же
+  // значение сервер применяет к реальной отправке.
   const requestSeq = useRef(0)
   const [countLoading, setCountLoading] = useState(false)
   const [optOutPhone, setOptOutPhone] = useState('')
@@ -217,7 +212,7 @@ export default function CampaignsClient({ initialData }: { initialData: Campaign
         dateTo: dateTo || undefined,
         audience,
         includeManagerChats,
-        skipReachedSince: skipReachedToday ? bishkekTodayStartIso() : undefined,
+        skipReachedSince: repeatCooldownSinceIso(),
       })
         .then((preview) => {
           if (seq !== requestSeq.current) return
@@ -227,7 +222,7 @@ export default function CampaignsClient({ initialData }: { initialData: Campaign
         .finally(() => { if (seq === requestSeq.current) setCountLoading(false) })
     }, 400)
     return () => clearTimeout(timer)
-  }, [dateFrom, dateTo, audience, includeManagerChats, skipReachedToday])
+  }, [dateFrom, dateTo, audience, includeManagerChats])
 
   const scheduleLabel = useMemo(() => {
     const date = new Date(scheduledAt)
@@ -247,7 +242,7 @@ export default function CampaignsClient({ initialData }: { initialData: Campaign
         // Те же правила, что у предпросмотра, — иначе число на панели и
         // реальные получатели разошлись бы.
         includeManagerChats,
-        skipReachedSince: skipReachedToday ? bishkekTodayStartIso() : undefined,
+        skipReachedSince: repeatCooldownSinceIso(),
         // «С прошлой рассылки» — до времени отправки: сервер сохранит фильтр
         // и подберёт получателей заново, когда рассылка стартует.
         refreshAtSend: preset === 'since_last',
@@ -623,20 +618,13 @@ export default function CampaignsClient({ initialData }: { initialData: Campaign
                       </span>
                     </label>
                   )}
-                  {(exclusions.alreadyReached > 0 || !skipReachedToday) && (
-                    <label className="flex cursor-pointer items-start gap-2 rounded-lg bg-white/[.08] px-2.5 py-2 text-xs leading-snug">
-                      <input
-                        type="checkbox"
-                        className="mt-0.5 size-4 shrink-0"
-                        checked={skipReachedToday}
-                        onChange={(event) => setSkipReachedToday(event.target.checked)}
-                      />
+                  {exclusions.alreadyReached > 0 && (
+                    <div className="flex items-start gap-2 rounded-lg bg-white/[.08] px-2.5 py-2 text-xs leading-snug">
                       <span>
-                        {skipReachedToday
-                          ? <><strong>{exclusions.alreadyReached}</strong> уже получили рассылку сегодня — не повторяем</>
-                          : 'Отправлять и тем, кто уже получил рассылку сегодня'}
+                        <strong>{exclusions.alreadyReached}</strong> получили рассылку за последние{' '}
+                        {REPEAT_COOLDOWN_DAYS} дня — не повторяем
                       </span>
-                    </label>
+                    </div>
                   )}
                 </div>
               )}
@@ -662,9 +650,7 @@ export default function CampaignsClient({ initialData }: { initialData: Campaign
                   : 'Чаты, где менеджер писал последние 30 минут, не затрагиваются'}
               </span></div>
               <div className="flex gap-3"><CheckCircle2 className="size-4 shrink-0 text-emerald-300" /><span>
-                {skipReachedToday
-                  ? 'Кто уже получил рассылку сегодня, второй раз не получит'
-                  : 'Повтор не блокируется: получившие сегодня получат ещё раз'}
+                {`Кто получил рассылку за последние ${REPEAT_COOLDOWN_DAYS} дня, второй раз не получит — после этого снова попадёт в аудиторию`}
               </span></div>
               <div className="flex gap-3"><ShieldCheck className="size-4 shrink-0 text-emerald-300" /><span>Номера из стоп-списка исключены всегда</span></div>
             </div>

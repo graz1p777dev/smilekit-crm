@@ -25,6 +25,7 @@ import { VOICE_MESSAGES, voiceById, voiceSrc } from '@/config/voice-messages'
 import {
   recurringAudienceFilter, recurringPeriodLabel, type RecurringAudienceOptions, type RecurringPeriodMode,
 } from '@/lib/campaigns/recurring-filter'
+import { REPEAT_COOLDOWN_DAYS } from '@/lib/campaigns/repeat-cooldown'
 
 const AUDIENCE_LABELS: Record<CampaignAudience, string> = {
   not_purchased: 'кто не купил',
@@ -345,10 +346,10 @@ export default function RecurringCampaigns({ rules, lastCampaignAt }: { rules: R
           </div>
 
           <div className="space-y-2">
-            <label className="flex cursor-pointer items-start gap-2 text-sm" style={{ color: 'var(--ink)' }}>
-              <input type="checkbox" className="mt-0.5 size-4" checked={skipReachedToday} onChange={(e) => setSkipReachedToday(e.target.checked)} />
-              <span>Не слать тем, кто уже получил рассылку сегодня</span>
-            </label>
+            <p className="text-sm" style={{ color: 'var(--ink-2)' }}>
+              Тем, кто получил рассылку за последние {REPEAT_COOLDOWN_DAYS} дня, она не уйдёт — после этого
+              человек снова попадает в аудиторию.
+            </p>
             <label className="flex cursor-pointer items-start gap-2 text-sm" style={{ color: 'var(--ink)' }}>
               <input type="checkbox" className="mt-0.5 size-4" checked={includeManagerChats} onChange={(e) => setIncludeManagerChats(e.target.checked)} />
               <span>Слать и тем, с кем менеджер переписывается прямо сейчас (писал за последние 30 минут)</span>
@@ -399,7 +400,7 @@ export default function RecurringCampaigns({ rules, lastCampaignAt }: { rules: R
               <p className="mt-2 text-xs" style={{ color: 'var(--ink-3)' }}>
                 {interval?.label ?? `раз в ${rule.interval_days} дн.`} в {rule.send_at_time.slice(0, 5)} ·{' '}
                 {AUDIENCE_LABELS[rule.audience]} · {recurringPeriodLabel(rule)}
-                {rule.skip_reached_today ? ' · без повтора за день' : ''}
+                {` · без повтора ${REPEAT_COOLDOWN_DAYS} дня`}
                 {rule.include_manager_chats ? ' · и в чаты с менеджером' : ''}
                 {rule.last_run_at && ` · последний запуск ${new Date(rule.last_run_at).toLocaleString('ru-RU', { day: '2-digit', month: 'short', hour: '2-digit', minute: '2-digit' })}`}
               </p>

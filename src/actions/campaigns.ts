@@ -7,6 +7,7 @@ import { createAdminClient } from '@/lib/supabase/admin'
 import { voiceById } from '@/config/voice-messages'
 import { BULK_BROADCAST_AUTHOR_MARKER } from '@/lib/greenapi/bot-reply'
 import { isManagerActiveInChat, MANAGER_ACTIVE_WINDOW_MS } from '@/lib/campaigns/manager-activity'
+import { effectiveSkipReachedSince } from '@/lib/campaigns/repeat-cooldown'
 
 export interface CampaignRow {
   id: string
@@ -228,7 +229,9 @@ async function selectRecipients(
     p_audience: audience,
     p_from: fromDate ? fromDate.toISOString() : null,
     p_to: toDate ? toDate.toISOString() : null,
-    p_skip_reached_since: filter?.skipReachedSince || null,
+    // Правило трёх суток (repeat-cooldown) применяется всегда, даже если
+    // форма его не прислала: один человек не получает рассылку чаще.
+    p_skip_reached_since: effectiveSkipReachedSince(filter?.skipReachedSince),
     p_manager_chat_ids: managerChats,
     p_include_manager_chats: Boolean(filter?.includeManagerChats),
     p_whatsapp_ready: greenApiReady,
