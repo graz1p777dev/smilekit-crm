@@ -814,6 +814,16 @@ const DELIVERY_FREE_DISCOUNT_REPLY =
 // как альтернатива самовывозу — та же гарантия «не платить вперёд», просто
 // без визита клиента к нам.
 export const PICKUP_QUESTION = /самовывоз|сам\w*\s*забра\w*|забра\w*\s*сам\w*/i
+
+// Живой баг (08.10, +996 990 124 949): «Можно купить половину» совпадало с
+// ORDER_INTENT (там есть «можно купить») и сразу улетал чек-лист с QR, хотя
+// клиент не соглашался оформлять заказ, а спрашивал про половину коробки —
+// то есть реально хотел купить МЕНЬШЕ, а не подтверждал покупку целиком.
+// Коробка делится только целиком (14 полосок за раз, см. CLAUDE.md) —
+// честный отказ, а не чек-лист оплаты за полный набор по этому вопросу.
+const HALF_PACK_QUESTION =
+  /половин[а-яё]*\s*(?:коробк|пачк|набор)?|(?:коробк|пачк|набор)\w*\s*половин|пол[\s-]*(?:коробк|пачк|набор)\w*/i
+const HALF_PACK_REPLY = 'К сожалению, продаём только целой коробкой — 14 полосок, делить набор нельзя 😊 Этого хватает на 7 применений.'
 const PICKUP_REPLY =
   'Самовывоза нет, мы онлайн-магазин без точки выдачи 😊 Но можем сделать оплату при получении — курьер привезёт, оплатите на месте.'
 
@@ -2209,6 +2219,10 @@ async function generateAndSendGreenApiReply(
     trace('rule.matched', input.chatId, () => ({ rule: 'PICKUP_QUESTION', matched: matchedFragment(PICKUP_QUESTION, input.text), why: 'спрашивают про самовывоз — точки выдачи нет, предлагаем оплату при получении' }))
 
     replies.push(PICKUP_REPLY)
+  } else if (HALF_PACK_QUESTION.test(input.text)) {
+    trace('rule.matched', input.chatId, () => ({ rule: 'HALF_PACK_QUESTION', matched: matchedFragment(HALF_PACK_QUESTION, input.text), why: 'спрашивают про половину коробки — честный отказ вместо чек-листа на полную цену' }))
+
+    replies.push(HALF_PACK_REPLY)
   } else if (ADDRESS_QUESTION.test(input.text)) {
     trace('rule.matched', input.chatId, () => ({ rule: 'ADDRESS_QUESTION', matched: matchedFragment(ADDRESS_QUESTION, input.text), why: 'голый вопрос «а какой адрес?» — отвечаем конкретной инструкцией, что прислать' }))
 
