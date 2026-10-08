@@ -53,7 +53,8 @@ function kpiBg(pct: number) {
 
 // ─── Сервер-компонент ─────────────────────────────────────────────────────────
 
-export default async function EmployeeCardPage({ params }: { params: { id: string } }) {
+export default async function EmployeeCardPage({ params }: { params: Promise<{ id: string }> }) {
+  const { id } = await params
   const admin = createAdminClient()
   const now   = new Date()
   const year  = now.getFullYear()
@@ -63,19 +64,19 @@ export default async function EmployeeCardPage({ params }: { params: { id: strin
     admin
       .from('employees')
       .select('id,name,email,phone,role,status,hire_date,birth_date,base_salary,kpi_coefficient,schedule_type,work_start_time,work_end_time,notes,deleted_at,departments(name)')
-      .eq('id', params.id)
+      .eq('id', id)
       .single(),
     admin
       .from('sales_plan_weekly')
       .select('total_fv_plan,total_fv_fact,total_sales_plan,total_sales_fact,total_revenue_plan,total_revenue_fact,kpi_pct')
-      .eq('employee_id', params.id)
+      .eq('employee_id', id)
       .eq('period_year', year)
       .eq('period_month', month)
       .maybeSingle(),
     admin
       .from('employee_kpi')
       .select('plan_fv,plan_sales,plan_revenue,plan_work_days')
-      .eq('employee_id', params.id)
+      .eq('employee_id', id)
       .eq('period_year', year)
       .eq('period_month', month)
       .maybeSingle(),
