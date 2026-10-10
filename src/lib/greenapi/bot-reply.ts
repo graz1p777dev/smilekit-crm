@@ -2384,26 +2384,43 @@ async function generateAndSendGreenApiReply(
           .filter(Boolean)
       )
       if (replies.length === 0) return
+      // Тестовые номера (GREENAPI_AI_FIRST_PHONES): владелец явно попросил
+      // доверять формулировке ИИ целиком — замена текста на шаблон как раз
+      // и была тем «тупит», о котором шла речь (ложные срабатывания на
+      // валидный ответ, см. живые баги 03.10/08.10 ниже). Поэтому здесь
+      // текст ИИ не трогаем вообще, НО техническое действие (прикрепить QR,
+      // подвинуть этап сделки, поставить якорь ожидания адреса для COD)
+      // всё равно нужно — это не может сделать сам текстовый ответ ИИ, QR
+      // физически кладёт код через sendGreenApiFileByUrl ниже по файлу.
+      const aiFirst = isAiFirstPhone(input.chatId)
       // Живой баг: ИИ сам «оформлял заказ» — сочинял свой чек-лист (просил
       // адрес/чек/реквизиты в произвольной форме) без QR, хотя на это есть
       // утверждённый шаблон. Если модель явно перешла к оформлению — шлём
-      // шаблон и QR вместо её текста.
+      // шаблон и QR вместо её текста (кроме тестовых номеров — там только QR).
       if (replies.some((part) => AI_IMPROVISED_CHECKLIST.test(part))) {
         trace('ai.overridden', input.chatId, {
           rule: 'AI_IMPROVISED_CHECKLIST',
-          why: 'ИИ сам начал оформлять заказ — его текст заменён утверждённым чек-листом и QR',
+          why: aiFirst
+            ? 'ИИ начал оформлять заказ — текст ИИ оставлен как есть, довешен только QR'
+            : 'ИИ сам начал оформлять заказ — его текст заменён утверждённым чек-листом и QR',
         })
-        replies.length = 0
-        replies.push(T.orderChecklist)
+        if (!aiFirst) {
+          replies.length = 0
+          replies.push(T.orderChecklist)
+        }
         sendPaymentQr = true
         stageAction = 'order'
       } else if (replies.some((part) => AI_IMPROVISED_COD_ORDER.test(part))) {
         trace('ai.overridden', input.chatId, {
           rule: 'AI_IMPROVISED_COD_ORDER',
-          why: 'ИИ «оформил» заказ с оплатой курьеру, которого в системе нет — переводим в штатный COD-сценарий',
+          why: aiFirst
+            ? 'ИИ «оформил» COD-заказ — текст ИИ оставлен как есть, якорь ожидания адреса всё равно ставим'
+            : 'ИИ «оформил» заказ с оплатой курьеру, которого в системе нет — переводим в штатный COD-сценарий',
         })
-        replies.length = 0
-        replies.push(PAY_ON_DELIVERY_ACK_REPLY)
+        if (!aiFirst) {
+          replies.length = 0
+          replies.push(PAY_ON_DELIVERY_ACK_REPLY)
+        }
         needsCodAnchor = true
       }
       // Живой баг (03.10): проверка раньше была `!historyText.includes('сом')`
@@ -2413,7 +2430,11 @@ async function generateAndSendGreenApiReply(
       // предложил «13%, 1290 сом» на третьем сообщении. Теперь смотрим на
       // реальные суммы ступеней скидки (1290/1190) — их в истории не может
       // быть без того, чтобы скидку уже кто-то легитимно выдал.
+      // На тестовых номерах (aiFirst) эта подмена текста не делается вообще —
+      // скидка не прикладывает никакого бинарного файла, подменять нечего
+      // защищать технически, только доверие к промпту.
       else if (
+        !aiFirst &&
         !DISCOUNT_REQUEST.test(input.text) &&
         !historyText.includes('1290') &&
         !historyText.includes('1190') &&
