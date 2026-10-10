@@ -42,6 +42,10 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ ok: true })
   }
 
+  // ВРЕМЕННО (10.10, снять после диагностики): тишина без единой ошибки —
+  // нужно увидеть реальную форму payload от Meta.
+  console.log('instagram webhook raw payload', rawBody.slice(0, 4000))
+
   const events = parseIncomingEvents(payload as Parameters<typeof parseIncomingEvents>[0])
   const comments = parseIncomingComments(payload as Parameters<typeof parseIncomingComments>[0])
   after(async () => {
