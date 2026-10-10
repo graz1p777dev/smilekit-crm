@@ -17,7 +17,14 @@ import { replyToInstagramComment, sendInstagramPrivateReply } from '@/lib/instag
 import { claimComment, markCommentReplied, type ParsedIncomingComment } from '@/lib/instagram/webhook'
 import { InstagramApiError } from '@/lib/instagram/errors'
 import { handleInstagramComment } from '@/lib/instagram/comments'
-import { commentReplyFor, COMMENT_REPLY_PRICE, COMMENT_REPLY_DELIVERY, COMMENT_REPLY_DEFAULT } from '@/lib/instagram/texts'
+import {
+  commentReplyFor,
+  COMMENT_REPLY_PRICE,
+  COMMENT_REPLY_DELIVERY,
+  COMMENT_REPLY_DEFAULT,
+  INSTAGRAM_GREETING,
+  SENT_TO_DM_REPLY,
+} from '@/lib/instagram/texts'
 
 const comment: ParsedIncomingComment = {
   commentId: 'c1',
@@ -52,10 +59,10 @@ describe('commentReplyFor — короткий ответ по теме', () => 
 })
 
 describe('handleInstagramComment', () => {
-  it('отвечает публично и пишет в директ', async () => {
+  it('отвечает публично «отправили в директ» и реально пишет туда приветствие', async () => {
     await handleInstagramComment(comment)
-    expect(replyToInstagramComment).toHaveBeenCalledWith('c1', COMMENT_REPLY_PRICE)
-    expect(sendInstagramPrivateReply).toHaveBeenCalledWith('c1', expect.stringContaining('продолжим здесь'))
+    expect(sendInstagramPrivateReply).toHaveBeenCalledWith('c1', INSTAGRAM_GREETING)
+    expect(replyToInstagramComment).toHaveBeenCalledWith('c1', SENT_TO_DM_REPLY)
     expect(markCommentReplied).toHaveBeenCalledWith('c1', expect.objectContaining({ status: 'replied', privateReplySent: true }))
   })
 
@@ -73,21 +80,22 @@ describe('handleInstagramComment', () => {
     expect(replyToInstagramComment).not.toHaveBeenCalled()
   })
 
-  it('Meta не дала написать в директ — публичный ответ всё равно засчитан', async () => {
+  it('Meta не дала написать в директ — публичный ответ остаётся по теме комментария', async () => {
     vi.mocked(sendInstagramPrivateReply).mockRejectedValue(
       new InstagramApiError('INSTAGRAM_PERMISSION_DENIED', 'нет прав')
     )
     await handleInstagramComment(comment)
+    expect(replyToInstagramComment).toHaveBeenCalledWith('c1', COMMENT_REPLY_PRICE)
     expect(markCommentReplied).toHaveBeenCalledWith('c1', expect.objectContaining({ status: 'replied', privateReplySent: false }))
   })
 
-  it('Instagram не подключён — не падаем, помечаем неудачу', async () => {
+  it('Instagram не подключён (публичный ответ упал) — не падаем, помечаем неудачу', async () => {
     vi.mocked(replyToInstagramComment).mockRejectedValue(
       new InstagramApiError('INSTAGRAM_NOT_CONNECTED', 'Instagram не подключён')
     )
     await expect(handleInstagramComment(comment)).resolves.toBeUndefined()
-    expect(markCommentReplied).toHaveBeenCalledWith('c1', expect.objectContaining({ status: 'failed' }))
-    expect(sendInstagramPrivateReply).not.toHaveBeenCalled()
+    expect(sendInstagramPrivateReply).toHaveBeenCalledWith('c1', INSTAGRAM_GREETING)
+    expect(markCommentReplied).toHaveBeenCalledWith('c1', expect.objectContaining({ status: 'failed', privateReplySent: true }))
   })
 
   it('пустой комментарий (только фото/эмодзи-реакция без текста) — не отвечаем', async () => {

@@ -17,12 +17,19 @@
 import { getInstagramBotSettings } from '@/lib/instagram/config'
 import { InstagramApiError } from '@/lib/instagram/errors'
 import { replyToInstagramComment, sendInstagramPrivateReply } from '@/lib/instagram/messaging'
-import { commentReplyFor, COMMENT_PRIVATE_REPLY } from '@/lib/instagram/texts'
+import { commentReplyFor, INSTAGRAM_GREETING, SENT_TO_DM_REPLY } from '@/lib/instagram/texts'
 import { claimComment, markCommentReplied, type ParsedIncomingComment } from '@/lib/instagram/webhook'
 
 /**
  * Обработка одного комментария. Ничего не бросает наружу — вебхук обязан
  * ответить Meta 200 в любом случае.
+ *
+ * Порядок перевёрнут относительно обычной логики (14.09): сначала пробуем
+ * приватный ответ (директ, тот же первый текст, что в dm-bot.ts) — только
+ * если он реально ушёл, под комментарием пишем «Отправили вам в директ 😊»
+ * (так просил владелец, 10.10). Если Meta не разрешила private reply (нет
+ * прав / комментарий устарел) — публичный ответ остаётся по теме комментария
+ * (commentReplyFor), чтобы вопрос под постом не завис без ответа вообще.
  */
 export async function handleInstagramComment(comment: ParsedIncomingComment): Promise<void> {
   // Дедуп по id комментария: повторная доставка вебхука не должна давать
@@ -36,23 +43,22 @@ export async function handleInstagramComment(comment: ParsedIncomingComment): Pr
   if (!settings.commentsEnabled) return
   if (!comment.text.trim()) return
 
-  const replyText = commentReplyFor(comment.text)
+  let privateReplySent = false
+  try {
+    await sendInstagramPrivateReply(comment.commentId, INSTAGRAM_GREETING)
+    privateReplySent = true
+  } catch (error) {
+    // Не фатально: публичный ответ ниже всё равно уйдёт по теме комментария.
+    console.error('instagram comments: private reply skipped', error)
+  }
+
+  const replyText = privateReplySent ? SENT_TO_DM_REPLY : commentReplyFor(comment.text)
   try {
     await replyToInstagramComment(comment.commentId, replyText)
   } catch (error) {
     const message = error instanceof InstagramApiError ? error.message : String(error)
-    await markCommentReplied(comment.commentId, { status: 'failed', error: message })
+    await markCommentReplied(comment.commentId, { status: 'failed', error: message, privateReplySent })
     return
-  }
-
-  let privateReplySent = false
-  try {
-    await sendInstagramPrivateReply(comment.commentId, COMMENT_PRIVATE_REPLY)
-    privateReplySent = true
-  } catch (error) {
-    // Не ошибка обработки: публичный ответ уже ушёл. Просто фиксируем, что
-    // в директ написать не дали (нет прав / комментарий слишком старый).
-    console.error('instagram comments: private reply skipped', error)
   }
 
   await markCommentReplied(comment.commentId, { replyText, privateReplySent, status: 'replied' })

@@ -21,7 +21,7 @@ import { AI_IMPROVISED_DISCOUNT } from '@/lib/greenapi/bot-reply'
 import { DEFAULT_PRODUCT_INFO } from '@/lib/greenapi/default-templates'
 import { getInstagramBotSettings } from '@/lib/instagram/config'
 import { sendInstagramMessage, fetchInstagramUserProfile } from '@/lib/instagram/messaging'
-import { DM_AI_FAILURE_REPLY } from '@/lib/instagram/texts'
+import { DM_AI_FAILURE_REPLY, INSTAGRAM_GREETING } from '@/lib/instagram/texts'
 import {
   storeInboundMessage,
   storeOutboundMessage,
@@ -180,7 +180,10 @@ export async function handleInstagramInboundMessage(message: ParsedIncomingMessa
   if (!message.text.trim()) return
 
   const history = await loadHistory(admin, message.senderIgsid, message.mid)
-  const replies = await generateReply(message.text, history)
+  // Первый этап — свой фиксированный текст (владелец решил специально 10.10,
+  // отдельно от WhatsApp), а не импровизация ИИ. Дальше (history.length > 0)
+  // всё остаётся как было — отвечает ИИ.
+  const replies = history.length === 0 ? [INSTAGRAM_GREETING] : await generateReply(message.text, history)
   if (replies.length === 0) return
 
   for (let index = 0; index < replies.length; index++) {

@@ -30,6 +30,7 @@ import {
   instagramExternalKey,
   MESSAGING_WINDOW_MS,
 } from '@/lib/instagram/dm-bot'
+import { INSTAGRAM_GREETING } from '@/lib/instagram/texts'
 
 // --- поддельный Supabase -----------------------------------------------
 // Цепочка .from().select().eq().order().limit() / .maybeSingle() разрешается
@@ -75,7 +76,15 @@ const message: ParsedIncomingMessage = {
 
 beforeEach(() => {
   vi.clearAllMocks()
-  fixtures = { optOut: null, chatControl: null, operatorMessages: [], history: [] }
+  // Непустая история по умолчанию: первое сообщение (history=[]) теперь
+  // отвечает фиксированным приветствием, а не ИИ — см. отдельный тест ниже.
+  // Остальные тесты этого файла проверяют именно путь через ИИ (generateReply).
+  fixtures = {
+    optOut: null,
+    chatControl: null,
+    operatorMessages: [],
+    history: [{ mid: 'm0', text: 'Привет', direction: 'in' }],
+  }
   vi.mocked(storeInboundMessage).mockResolvedValue(true)
   vi.mocked(fetchInstagramUserProfile).mockResolvedValue(null)
   vi.mocked(getInstagramBotSettings).mockResolvedValue({ dmEnabled: true, commentsEnabled: false })
@@ -96,6 +105,13 @@ describe('окно 24 часа', () => {
 })
 
 describe('handleInstagramInboundMessage', () => {
+  it('первое сообщение в чате — фиксированное приветствие, ИИ не зовём', async () => {
+    fixtures.history = []
+    await handleInstagramInboundMessage(message)
+    expect(smilekitBotFetch).not.toHaveBeenCalled()
+    expect(sendInstagramMessage).toHaveBeenCalledWith({ recipientId: 'u1', text: INSTAGRAM_GREETING })
+  })
+
   it('отвечает клиенту и сохраняет исходящее', async () => {
     await handleInstagramInboundMessage(message)
     expect(sendInstagramMessage).toHaveBeenCalledWith({ recipientId: 'u1', text: 'Одна коробка — 1490 сом' })
