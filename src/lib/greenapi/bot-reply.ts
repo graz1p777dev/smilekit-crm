@@ -2266,7 +2266,11 @@ async function generateAndSendGreenApiReply(
     // ждём следующим сообщением (см. COD_WAIT_ANCHOR_ID_PREFIX ниже).
     replies.push(PAY_ON_DELIVERY_ACK_REPLY)
     needsCodAnchor = true
-  } else if (!FUTURE_ORDER_QUESTION.test(input.text) && (ORDER_INTENT.test(input.text) || acceptedOrderCta)) {
+  } else if (
+    history.length > 0 &&
+    !FUTURE_ORDER_QUESTION.test(input.text) &&
+    (ORDER_INTENT.test(input.text) || acceptedOrderCta)
+  ) {
     trace('rule.matched', input.chatId, () => ({
       rule: acceptedOrderCta ? 'согласие на CTA' : 'ORDER_INTENT',
       matched: matchedFragment(ORDER_INTENT, input.text),
@@ -2291,6 +2295,11 @@ async function generateAndSendGreenApiReply(
     // первое сообщение клиента получало этот шаблон, даже если в нём был
     // прямой вопрос или жалоба. Теперь это последний общий вариант — только
     // если ни одно специфичное намерение выше не совпало.
+    //
+    // Живой баг №2 (11.10): ORDER_INTENT выше не требовал history.length>0,
+    // и первое же сообщение «Улыбка Где заказать» уходило прямо в чек-лист с
+    // QR — клиент ни разу не видел цену и состав, получал требование оплаты
+    // «в никуда». Теперь ORDER_INTENT пропускает первое сообщение сюда.
     replies.push(T.productInfo, CITY_QUESTION)
     needsCityAnchor = true
   } else if (deliveryTemplate && priceKnown && wantsResultsBlock) {
