@@ -1242,6 +1242,9 @@ export async function waEngineGate(
   return isIntegrationBotEnabled(integrationResult.data) && !managerControls && !handedOff && !blocked
 }
 
+/** Сколько времени клиент прежнего бота считается «уже видевшим презентацию». */
+const WA_SEED_HISTORY_WINDOW_MS = 72 * 3600_000
+
 const WA_PAYMENT_LABEL: Record<string, string> = {
   full: 'полная оплата по QR',
   cod: 'при получении 💵',
@@ -2063,6 +2066,9 @@ async function processInboundGreenApiMessageNow(
         .eq('sender', 'bot')
         .not('amo_message_id', 'like', 'ga:wa:%')
         .not('amo_message_id', 'like', 'ga:claim:%')
+        // Только недавняя переписка: кто писал неделю назад и снова пришёл по
+        // рекламе, тот новый контакт и получает презентацию заново.
+        .gte('created_at', new Date(Date.now() - WA_SEED_HISTORY_WINDOW_MS).toISOString())
         .limit(1),
       hasPlacedOrder(supabase, input.chatId),
     ])
