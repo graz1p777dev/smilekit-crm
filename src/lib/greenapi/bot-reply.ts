@@ -41,6 +41,7 @@ import {
 import { createLimiter } from '@/lib/concurrency-limit'
 import { WHATSAPP_INTEGRATION_NAMES } from '@/lib/integration-names'
 import { matchedFragment, trace } from '@/lib/greenapi/trace'
+import { isWaEnginePhone, runWaEngineForInbound, type WaCard } from '@/lib/greenapi/wa-engine'
 
 export interface InboundGreenApiMessage {
   providerMessageId: string
@@ -1222,6 +1223,164 @@ function isAiFirstPhone(chatId: string): boolean {
 }
 
 /**
+ * Можно ли боту писать в чат, который ведёт новая логика (wa-engine.ts):
+ * общий выключатель, контроль менеджера, метка «передано менеджеру»,
+ * стоп-лист, список разрешённых номеров — те же условия, что у прежнего бота.
+ */
+export async function waEngineGate(
+  supabase: ReturnType<typeof createAdminClient>,
+  chatId: string
+): Promise<boolean> {
+  if (!isPhoneAllowedForBot(chatId)) return false
+  const [integrationResult, managerControls, handedOff, blocked] = await Promise.all([
+    supabase.from('integrations').select('*').in('name', [...WHATSAPP_INTEGRATION_NAMES]).maybeSingle(),
+    isManagerControllingChat(supabase, chatId),
+    isHandedOffToManager(supabase, chatId),
+    isPhoneBlockedForBot(supabase, chatId),
+  ])
+  if (integrationResult.error) return false
+  return isIntegrationBotEnabled(integrationResult.data) && !managerControls && !handedOff && !blocked
+}
+
+const WA_PAYMENT_LABEL: Record<string, string> = {
+  full: 'полная оплата по QR',
+  cod: 'при получении 💵',
+  prepay: 'предоплата 400 сом, остальное при получении',
+}
+
+function cardText(card: WaCard, key: string): string {
+  const value = card[key]
+  return typeof value === 'string' ? value : typeof value === 'number' ? String(value) : ''
+}
+
+/** Ссылка на файл чека из истории: вложение хранится маркером [media] в тексте сообщения. */
+async function waReceiptUrl(
+  supabase: ReturnType<typeof createAdminClient>,
+  messageId: string
+): Promise<string | null> {
+  if (!messageId) return null
+  const { data } = await supabase.from('chat_messages').select('text').eq('amo_message_id', `ga:${messageId}`).maybeSingle()
+  const match = ((data as { text?: string } | null)?.text ?? '').match(/\[media\](\S+)/)
+  return match ? match[1] : null
+}
+
+/**
+ * Исполняет карточку движка новой логики. Заказ: запись в учёте, метка
+ * «заказ оформлен», этап сделки, группа доставки, остаток. Передача: метка
+ * «передано менеджеру» и карточка в группу «Передача от бота». Возвращает
+ * false, если сообщение в группу не ушло, — движок повторит карточку по
+ * таймеру; уже сделанное (заказ, метка) повторно не создаётся.
+ */
+export async function deliverWaEngineCard(
+  supabase: ReturnType<typeof createAdminClient>,
+  card: WaCard,
+  authorName: string | null = null
+): Promise<boolean> {
+  const chatId = cardText(card, 'chat_id')
+  if (!chatId) return true
+  const botConfig = await getWhatsappBotConfig()
+
+  if (card.type === 'handoff') {
+    await supabase.from('chat_messages').upsert({
+      amo_message_id: `${HANDED_OFF_ANCHOR_ID_PREFIX}:${chatId}`,
+      chat_id: chatId,
+      direction: 'out',
+      sender: 'bot',
+      text: '[передано менеджеру]',
+    }, { onConflict: 'amo_message_id' })
+    if (!botConfig.handoffGroupId) return true
+    const text =
+      'Новый клиент для менеджера\n' +
+      `Номер: +${chatId}\n` +
+      `Город: ${cardText(card, 'place') || 'не указан'}\n` +
+      `Причина: ${cardText(card, 'reason')}`
+    try {
+      await withRetries(() => sendGreenApiDeliveryGroup(botConfig.handoffGroupId, text))
+      return true
+    } catch (error) {
+      console.error('wa-engine: handoff card send failed after retries', error)
+      return false
+    }
+  }
+
+  if (card.type !== 'order') return true
+  const orderId = cardText(card, 'order_id')
+  const sentClaim = `ga:claim:wa-order-sent:${chatId}:${orderId}`
+  const { data: alreadySent } = await supabase.from('chat_messages').select('id').eq('amo_message_id', sentClaim).maybeSingle()
+  if (alreadySent) return true
+
+  const externalKey = await resolveGreenApiExternalKey(supabase, chatId)
+  const orderKey = `${externalKey}:order:wa-${orderId}`
+  const payment = cardText(card, 'payment')
+  const receipt = cardText(card, 'receipt')
+  const receiptUrl = await waReceiptUrl(supabase, cardText(card, 'receipt_message_id'))
+  const quantity = typeof card.quantity === 'number' ? card.quantity : 1
+  const total = typeof card.total === 'number' ? card.total : null
+  const paymentLine =
+    payment === 'cod'
+      ? 'Оплата: при получении 💵'
+      : receipt === 'check_ok'
+        ? `Оплата: ${WA_PAYMENT_LABEL[payment] ?? payment} — чек проверен автоматически ✅`
+        : `Оплата: ${WA_PAYMENT_LABEL[payment] ?? payment} — чек НУЖНО ПРОВЕРИТЬ ⚠️ (${cardText(card, 'receipt_note') || 'автопроверка не прошла'})`
+  const details =
+    `Телефон в WhatsApp: +${chatId}\n` +
+    `Контактный телефон: ${cardText(card, 'phone') || '—'}\n` +
+    (cardText(card, 'recipient_name') ? `Получатель: ${cardText(card, 'recipient_name')}\n` : '') +
+    `Город: ${cardText(card, 'place') || '—'}\n` +
+    `Адрес: ${cardText(card, 'address') || '—'}\n` +
+    `Количество: ${quantity}${card.quantity_assumed ? ' (клиент не называл)' : ''}\n` +
+    `Сумма: ${total ?? '—'} ${cardText(card, 'currency')}\n` +
+    paymentLine
+
+  const ingested = await ingestOrder({
+    externalKey: orderKey,
+    source: 'manual',
+    customerName: cardText(card, 'recipient_name') || authorName,
+    customerPhone: chatId,
+    quantity,
+    totalAmount: payment === 'full' ? total : null,
+    currency: 'KGS',
+    city: cardText(card, 'place') || null,
+    summary: `Заказ из WhatsApp (бот)\n${details}` + (receiptUrl ? `\n[media]${receiptUrl}` : ''),
+  })
+  if (ingested.error) console.error('wa-engine: order ingest failed', ingested.error)
+  await markOrderPlaced(supabase, chatId)
+  if (ingested.id) {
+    const { data: dealRow } = await supabase.from('deals').select('id').eq('external_key', externalKey).maybeSingle()
+    const dealId = (dealRow as { id?: string } | null)?.id
+    if (dealId) await supabase.from('orders').update({ deal_id: dealId }).eq('id', ingested.id)
+  }
+  if (ingested.created) {
+    const advanced = await advanceDealFromBotAction(externalKey, 'order')
+    if (!advanced.ok && advanced.error) console.error('wa-engine: stage advance failed', advanced.error)
+    if (receipt === 'check_ok') await decrementStock(quantity)
+  }
+
+  if (!botConfig.deliveryGroupId) return true
+  const groupText = `Новый заказ (WhatsApp)\n${details}`
+  try {
+    await withRetries(async () => {
+      if (receiptUrl) {
+        await sendGreenApiDeliveryGroupFile(botConfig.deliveryGroupId, { urlFile: receiptUrl, fileName: 'receipt.jpg', caption: groupText })
+      } else {
+        await sendGreenApiDeliveryGroup(botConfig.deliveryGroupId, groupText)
+      }
+    })
+  } catch (error) {
+    console.error('wa-engine: delivery group push failed after retries', error)
+    return false
+  }
+  await supabase.from('chat_messages').upsert({
+    amo_message_id: sentClaim,
+    chat_id: chatId,
+    direction: 'out',
+    sender: 'bot',
+    text: '[заказ отправлен в группу доставки]',
+  }, { onConflict: 'amo_message_id', ignoreDuplicates: true })
+  return true
+}
+
+/**
  * skipIntegrationCheck — только для локальной «Лаборатории» (см.
  * src/app/api/greenapi-lab/route.ts): даёт погонять ровно ту же логику
  * бота на тестовом chat_id, не включая реальный аварийный выключатель
@@ -1877,6 +2036,52 @@ async function processInboundGreenApiMessageNow(
       customerName: input.authorName,
       customerPhone: input.chatId,
     })
+  }
+
+  // Новая логика (GREENAPI_WA_ENGINE_PHONES — номера или «*»): весь сценарий
+  // ниже для этих чатов не работает, отвечает движок в smilekit-bot, см.
+  // wa-engine.ts. Сообщение и сделка уже сохранены выше. Отладчик (dryRun)
+  // сюда не заходит: он проверяет прежний сценарий.
+  if (!opts.dryRun && isWaEnginePhone(input.chatId)) {
+    if (!(await waEngineGate(supabase, input.chatId))) {
+      trace('stop', input.chatId, { why: 'новая логика: бот выключен, чат ведёт или уже получил менеджер, либо номер в стоп-листе' })
+      // Как и в прежнем сценарии: чек из чата менеджера всё равно попадает в учёт.
+      if (IMAGE_TYPES.has(input.messageType ?? '') && input.mediaUrl && (await isManagerControllingChat(supabase, input.chatId))) {
+        await recordReceiptFromManagedChat(supabase, input, externalKey)
+      }
+      await maybeRemindHandoff(supabase, input, opts)
+      return
+    }
+    trace('branch', input.chatId, { branch: 'новая логика', why: 'номер включён в GREENAPI_WA_ENGINE_PHONES' })
+    // Чат мог начаться ещё при прежнем боте — тогда презентацию и материалы
+    // клиент уже видел. Свои сообщения движка (ga:wa:*) сюда не считаем.
+    const [{ data: oldBotRows }, orderPlaced] = await Promise.all([
+      supabase
+        .from('chat_messages')
+        .select('id')
+        .eq('chat_id', input.chatId)
+        .eq('sender', 'bot')
+        .not('amo_message_id', 'like', 'ga:wa:%')
+        .not('amo_message_id', 'like', 'ga:claim:%')
+        .limit(1),
+      hasPlacedOrder(supabase, input.chatId),
+    ])
+    await runWaEngineForInbound(
+      supabase,
+      input.chatId,
+      {
+        id: input.providerMessageId,
+        kind: voiceUnreadable ? 'voice' : IMAGE_TYPES.has(input.messageType ?? '') && input.mediaUrl ? 'image' : 'text',
+        text: voiceUnreadable ? '' : input.text,
+        mediaUrl: input.mediaUrl ?? null,
+      },
+      { hasHistory: Boolean(oldBotRows?.length), orderPlaced },
+      {
+        gate: (chatId) => waEngineGate(supabase, chatId),
+        deliverCard: (card) => deliverWaEngineCard(supabase, card, input.authorName),
+      }
+    )
+    return
   }
 
   // Голосовое не расшифровалось: лид и сообщение уже сохранены выше, но

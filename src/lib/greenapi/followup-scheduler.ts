@@ -23,14 +23,17 @@
 
 import { createAdminClient } from '@/lib/supabase/admin'
 import { sendGreenApiMessage } from '@/lib/greenapi/client'
+import { runWaEngineTick } from '@/lib/greenapi/wa-engine'
 import {
   canSendGreenApiBotReply,
   CITY_WAIT_ANCHOR_ID_PREFIX,
+  deliverWaEngineCard,
   IDLE_NUDGE_ID_PREFIX,
   nextIdleNudgeReply,
   POST_RESULTS_STAGE_ANCHOR_ID_PREFIX,
   PROMISED_ANCHOR_ID_PREFIX,
   sendResultsPhotoOnly,
+  waEngineGate,
 } from '@/lib/greenapi/bot-reply'
 import { trace } from '@/lib/greenapi/trace'
 
@@ -295,6 +298,14 @@ const IDLE_NUDGES_ENABLED = false
 
 async function runOnce(opts: FollowupRunOptions = {}): Promise<void> {
   const supabase = createAdminClient()
+  // Новая логика (wa-engine.ts): напоминания считает движок, здесь только отправка.
+  // Отладчик (dryRun/onlyChatId) проверяет прежний сценарий и сюда не заходит.
+  if (!opts.dryRun && !opts.onlyChatId) {
+    await runWaEngineTick(supabase, {
+      gate: (chatId) => waEngineGate(supabase, chatId),
+      deliverCard: (card) => deliverWaEngineCard(supabase, card),
+    }).catch((error) => console.error('wa-engine tick failed', error))
+  }
   await processCityWaitStage(supabase, opts)
   if (IDLE_NUDGES_ENABLED) await processIdleNudgeStage(supabase, opts)
   else if (opts.includeDisabledStages) {
