@@ -17,6 +17,7 @@ import type { createAdminClient } from '@/lib/supabase/admin'
 import { smilekitBotFetch } from '@/lib/smilekit-bot-api'
 import { sendGreenApiFileByUrl, sendGreenApiMessage, sendGreenApiVoice } from '@/lib/greenapi/client'
 import { trace } from '@/lib/greenapi/trace'
+import { recordEvent } from '@/lib/control-center'
 
 type Supabase = ReturnType<typeof createAdminClient>
 
@@ -224,14 +225,43 @@ export async function sendWaOutgoing(
   return { serviceError }
 }
 
-/** Входящая реплика клиента. seed — что известно о чате из прежнего бота. */
-export async function runWaEngineForInbound(
+/** Сколько раз подряд движок не ответил — для сигнала в Control Center. */
+const ALERT_AFTER_FAILURES = 3
+const ALERT_REPEAT_MS = 10 * 60_000
+let consecutiveFailures = 0
+let lastAlertAt = 0
+
+function noteEngineResult(ok: boolean, error?: string): void {
+  if (ok) {
+    consecutiveFailures = 0
+    return
+  }
+  consecutiveFailures += 1
+  if (consecutiveFailures >= ALERT_AFTER_FAILURES && Date.now() - lastAlertAt > ALERT_REPEAT_MS) {
+    lastAlertAt = Date.now()
+    recordEvent({
+      type: 'error',
+      level: 'error',
+      title: 'WhatsApp: движок бота не отвечает',
+      payload: { failuresInRow: consecutiveFailures, error: error ?? null },
+    })
+  }
+}
+
+const RETRY_BACKOFF_MS = [60_000, 3 * 60_000, 10 * 60_000, 30 * 60_000, 60 * 60_000]
+/** Старше этого возраста отвечать уже поздно — оставляем менеджеру. */
+const RETRY_MAX_AGE_MS = 6 * 60 * 60_000
+
+type WaSeed = { hasHistory: boolean; orderPlaced: boolean }
+
+/** Один вызов движка. false — движок не ответил, сообщение нужно повторить. */
+async function handleInbound(
   supabase: Supabase,
   chatId: string,
   message: WaInboundMessage,
-  seed: { hasHistory: boolean; orderPlaced: boolean },
+  seed: WaSeed,
   deps: WaEngineDeps
-): Promise<void> {
+): Promise<{ ok: boolean; error?: string }> {
   const image = message.kind === 'image' && message.mediaUrl ? await downloadImage(message.mediaUrl) : null
   const result = await smilekitBotFetch<WaResponse>('/internal/wa/handle', {
     method: 'POST',
@@ -243,11 +273,12 @@ export async function runWaEngineForInbound(
     },
   })
   if (!result.ok) {
-    // Сообщение и сделка уже сохранены вызывающим кодом — обращение не теряется.
     console.error('wa-engine: handle failed', result.status, result.error)
     trace('wa-engine.error', chatId, { why: `движок не ответил: ${result.error}` })
-    return
+    noteEngineResult(false, `${result.status} ${result.error}`)
+    return { ok: false, error: `${result.status} ${result.error}` }
   }
+  noteEngineResult(true)
   trace('wa-engine.reply', chatId, () => ({
     outgoing: result.data.outgoing.map((out) => waHistoryText(out)),
     cards: result.data.cards.length,
@@ -256,6 +287,113 @@ export async function runWaEngineForInbound(
   // метку «бот молчит», и после неё прощальное сообщение уже не ушло бы.
   await sendWaOutgoing(supabase, result.data.outgoing, deps.gate)
   await deliverCards(result.data.cards, deps)
+  return { ok: true }
+}
+
+/** Входящая реплика клиента. seed — что известно о чате из прежнего бота. */
+export async function runWaEngineForInbound(
+  supabase: Supabase,
+  chatId: string,
+  message: WaInboundMessage,
+  seed: WaSeed,
+  deps: WaEngineDeps
+): Promise<void> {
+  const result = await handleInbound(supabase, chatId, message, seed, deps)
+  if (result.ok) return
+  // Сообщение и сделка уже сохранены вызывающим кодом; чтобы клиент не остался
+  // без ответа, ставим повтор — его сделает runWaEngineRetries, как только
+  // движок снова начнёт отвечать.
+  const { error } = await supabase.from('wa_engine_retries').upsert(
+    {
+      message_id: message.id,
+      chat_id: chatId,
+      kind: message.kind,
+      text: message.text,
+      media_url: message.mediaUrl ?? null,
+      seed,
+      attempts: 1,
+      last_error: result.error ?? null,
+      next_try_at: new Date(Date.now() + RETRY_BACKOFF_MS[0]).toISOString(),
+    },
+    { onConflict: 'message_id', ignoreDuplicates: true }
+  )
+  if (error) console.error('wa-engine: retry enqueue failed', error.message)
+}
+
+interface RetryRow {
+  message_id: string
+  chat_id: string
+  kind: WaInboundMessage['kind']
+  text: string
+  media_url: string | null
+  seed: WaSeed
+  attempts: number
+  created_at: string
+}
+
+/** Повторяет сообщения, оставшиеся без ответа из-за сбоя движка. */
+export async function runWaEngineRetries(supabase: Supabase, deps: WaEngineDeps): Promise<void> {
+  const { data, error } = await supabase
+    .from('wa_engine_retries')
+    .select('message_id, chat_id, kind, text, media_url, seed, attempts, created_at')
+    .is('done_at', null)
+    .lte('next_try_at', new Date().toISOString())
+    .order('created_at', { ascending: true })
+    .limit(10)
+  if (error) {
+    console.error('wa-engine: retry select failed', error.message)
+    return
+  }
+  const markDone = (id: string, note?: string) =>
+    supabase.from('wa_engine_retries').update({ done_at: new Date().toISOString(), ...(note ? { last_error: note } : {}) }).eq('message_id', id)
+
+  for (const row of (data ?? []) as RetryRow[]) {
+    if (Date.now() - new Date(row.created_at).getTime() > RETRY_MAX_AGE_MS) {
+      await markDone(row.message_id, 'слишком поздно — оставлено менеджеру')
+      continue
+    }
+    // Мог ответить менеджер или сам бот на следующее сообщение — тогда повтор лишний.
+    const { data: later } = await supabase
+      .from('chat_messages')
+      .select('id')
+      .eq('chat_id', row.chat_id)
+      .eq('direction', 'out')
+      .gt('created_at', row.created_at)
+      .limit(1)
+    if (later?.length) {
+      await markDone(row.message_id, 'уже есть ответ в чате')
+      continue
+    }
+    if (!(await deps.gate(row.chat_id))) {
+      await markDone(row.message_id, 'бот в этом чате выключен или чат у менеджера')
+      continue
+    }
+    const result = await handleInbound(
+      supabase,
+      row.chat_id,
+      { id: row.message_id, kind: row.kind, text: row.text, mediaUrl: row.media_url },
+      row.seed,
+      deps
+    )
+    if (result.ok) {
+      await markDone(row.message_id)
+      continue
+    }
+    const attempts = row.attempts + 1
+    if (attempts > RETRY_BACKOFF_MS.length) {
+      await markDone(row.message_id, `сдались после ${attempts - 1} повторов: ${result.error}`)
+      recordEvent({ type: 'error', level: 'error', title: 'WhatsApp: клиент остался без ответа после повторов', payload: { messageId: row.message_id } })
+      continue
+    }
+    await supabase
+      .from('wa_engine_retries')
+      .update({
+        attempts,
+        last_error: result.error ?? null,
+        next_try_at: new Date(Date.now() + RETRY_BACKOFF_MS[Math.min(attempts - 1, RETRY_BACKOFF_MS.length - 1)]).toISOString(),
+      })
+      .eq('message_id', row.message_id)
+  }
 }
 
 /** После ошибки сервиса отправки напоминания не трогаем столько времени. */
@@ -269,8 +407,10 @@ export async function runWaEngineTick(supabase: Supabase, deps: WaEngineDeps): P
   const result = await smilekitBotFetch<WaResponse>('/internal/wa/tick', { method: 'POST', body: {}, timeoutMs: 30_000 })
   if (!result.ok) {
     console.error('wa-engine: tick failed', result.status, result.error)
+    noteEngineResult(false, `tick ${result.status} ${result.error}`)
     return
   }
+  noteEngineResult(true)
   // Движок помнит все чаты, которые когда-либо вёл; работаем только с включёнными.
   const mine = (chatId: unknown) => typeof chatId === 'string' && isWaEnginePhone(chatId)
   const { serviceError } = await sendWaOutgoing(
@@ -284,4 +424,6 @@ export async function runWaEngineTick(supabase: Supabase, deps: WaEngineDeps): P
     console.error('wa-engine: сервис отправки отвечает ошибкой — напоминания приостановлены на 10 минут')
   }
   await deliverCards(result.data.cards.filter((card) => mine(card.chat_id)), deps)
+  // Движок жив (tick ответил) — самое время дослать то, что не обработалось в сбой.
+  await runWaEngineRetries(supabase, deps)
 }
