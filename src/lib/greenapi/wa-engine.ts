@@ -19,6 +19,7 @@ import { sendGreenApiFileByUrl, sendGreenApiMessage, sendGreenApiVoice } from '@
 import { trace } from '@/lib/greenapi/trace'
 import { recordEvent } from '@/lib/control-center'
 import { logBotEvent } from '@/lib/bot-log'
+import { sendCriticalAlert } from '@/lib/alerts'
 
 type Supabase = ReturnType<typeof createAdminClient>
 
@@ -253,6 +254,10 @@ function noteEngineResult(ok: boolean, error?: string): void {
       title: 'WhatsApp: движок бота не отвечает',
       payload: { failuresInRow: consecutiveFailures, error: error ?? null },
     })
+    sendCriticalAlert('engine-down', 'WhatsApp-бот не отвечает клиентам', [
+      `Движок бота не ответил ${consecutiveFailures} раз подряд (${error ?? 'без подробностей'}).`,
+      'Сообщения клиентов сохраняются и будут повторены автоматически; после починки можно нажать «Восстановить после сбоя» в CRM → Настройки → WhatsApp.',
+    ])
   }
 }
 
@@ -396,6 +401,7 @@ export async function runWaEngineRetries(supabase: Supabase, deps: WaEngineDeps)
     if (attempts > RETRY_BACKOFF_MS.length) {
       await markDone(row.message_id, `сдались после ${attempts - 1} повторов: ${result.error}`)
       logBotEvent({ chatId: row.chat_id, event: 'retry_gave_up', level: 'error', details: { messageId: row.message_id, error: result.error } })
+      sendCriticalAlert('retry-gave-up', 'Клиент остался без ответа после всех повторов', [`Чат: ${row.chat_id}`, 'Нужен ответ менеджера.'])
       recordEvent({ type: 'error', level: 'error', title: 'WhatsApp: клиент остался без ответа после повторов', payload: { messageId: row.message_id } })
       continue
     }

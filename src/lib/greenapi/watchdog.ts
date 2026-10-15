@@ -7,6 +7,8 @@
 import { createAdminClient } from '@/lib/supabase/admin'
 import { recordEvent } from '@/lib/control-center'
 import { logBotEvent, purgeOldBotEvents } from '@/lib/bot-log'
+import { sendCriticalAlert } from '@/lib/alerts'
+import { getGreenApiState } from '@/lib/greenapi/client'
 import { findUnansweredChats } from '@/lib/greenapi/recovery'
 
 const UNANSWERED_ALERT_MIN = 10
@@ -21,6 +23,7 @@ let lastUnansweredAlert = 0
 let lastMemoryAlert = 0
 let lastPurge = 0
 let lastUnansweredCheck = 0
+let lastGreenApiCheck = 0
 
 export function memorySnapshot(): { rssMb: number; heapMb: number } {
   const usage = process.memoryUsage()
@@ -35,11 +38,21 @@ export async function runBotWatchdog(): Promise<void> {
     lastMemoryAlert = now
     logBotEvent({ channel: 'system', event: 'memory_high', level: 'warn', details: memory })
     recordEvent({ type: 'error', level: 'warning', title: 'CRM: высокое потребление памяти', payload: memory })
+    sendCriticalAlert('memory-high', 'CRM съела много памяти', [`Занято ${memory.rssMb} МБ (порог ${MEMORY_ALERT_MB}). Возможен перезапуск сервиса.`])
   }
 
   if (now - lastPurge > PURGE_EVERY_MS) {
     lastPurge = now
     await purgeOldBotEvents()
+  }
+
+  if (now - lastGreenApiCheck > UNANSWERED_CHECK_EVERY_MS) {
+    lastGreenApiCheck = now
+    const state = await getGreenApiState().catch(() => 'недоступен')
+    if (state !== 'authorized') {
+      logBotEvent({ channel: 'system', event: 'green_api_state', level: 'error', details: { state } })
+      sendCriticalAlert('green-api', 'Green API: WhatsApp не авторизован', [`Состояние инстанса: ${state}. Бот не сможет писать клиентам.`])
+    }
   }
 
   if (now - lastUnansweredCheck > UNANSWERED_CHECK_EVERY_MS) {
@@ -48,6 +61,10 @@ export async function runBotWatchdog(): Promise<void> {
     if (waiting.length >= UNANSWERED_ALERT_COUNT && now - lastUnansweredAlert > ALERT_COOLDOWN_MS) {
       lastUnansweredAlert = now
       logBotEvent({ channel: 'system', event: 'watchdog_unanswered', level: 'error', details: { chats: waiting.length, oldestMin: waiting[0]?.ageMin } })
+      sendCriticalAlert('unanswered', `Клиенты ждут ответа дольше ${UNANSWERED_ALERT_MIN} минут`, [
+        `Без ответа: ${waiting.length} чатов, самый старый ждёт ${waiting[0]?.ageMin} мин.`,
+        'CRM → Настройки → WhatsApp → «Здоровье бота» → «Восстановить после сбоя».',
+      ])
       recordEvent({
         type: 'error',
         level: 'error',
