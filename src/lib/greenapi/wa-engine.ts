@@ -18,12 +18,13 @@ import { smilekitBotFetch } from '@/lib/smilekit-bot-api'
 import { sendGreenApiFileByUrl, sendGreenApiMessage, sendGreenApiVoice } from '@/lib/greenapi/client'
 import { trace } from '@/lib/greenapi/trace'
 import { recordEvent } from '@/lib/control-center'
+import { logBotEvent } from '@/lib/bot-log'
 
 type Supabase = ReturnType<typeof createAdminClient>
 
 /** Движок ходит в модель дважды за реплику (понимание + ответ). */
 const HANDLE_TIMEOUT_MS = 90_000
-const MAX_IMAGE_BYTES = 20 * 1024 * 1024
+const MAX_IMAGE_BYTES = 8 * 1024 * 1024
 
 export interface WaOutgoing {
   id: string
@@ -170,6 +171,7 @@ export async function sendWaOutgoing(
       : null
     if (!allowed?.ok || !allowed.data.ok) {
       trace('wa-engine.skip', out.chatId, { id: out.id, why: 'отправка отменена: устарело или бот в этом чате сейчас молчит' })
+      logBotEvent({ chatId: out.chatId, event: 'send_skipped', details: { id: out.id, kind: out.kind, reason: allowed ? 'устарело или бот молчит' : 'бот выключен или чат у менеджера' } })
       failed.add(out.id)
       await confirm(out, false)
       continue
@@ -217,6 +219,12 @@ export async function sendWaOutgoing(
       }
     }
     trace('wa-engine.outbound', out.chatId, { id: out.id, kind: out.kind, text: waHistoryText(out), sent: ok, uncertain })
+    logBotEvent({
+      chatId: out.chatId,
+      event: ok ? (uncertain ? 'send_uncertain' : 'sent') : 'send_failed',
+      level: ok && !uncertain ? 'info' : 'error',
+      details: { id: out.id, kind: out.kind, text: waHistoryText(out) },
+    })
     await confirm(out, ok, uncertain)
     if (index < outgoing.length - 1) {
       await new Promise((resolve) => setTimeout(resolve, 900 + Math.random() * 500))
@@ -262,6 +270,7 @@ async function handleInbound(
   seed: WaSeed,
   deps: WaEngineDeps
 ): Promise<{ ok: boolean; error?: string }> {
+  const startedAt = Date.now()
   const image = message.kind === 'image' && message.mediaUrl ? await downloadImage(message.mediaUrl) : null
   const result = await smilekitBotFetch<WaResponse>('/internal/wa/handle', {
     method: 'POST',
@@ -276,9 +285,11 @@ async function handleInbound(
     console.error('wa-engine: handle failed', result.status, result.error)
     trace('wa-engine.error', chatId, { why: `движок не ответил: ${result.error}` })
     noteEngineResult(false, `${result.status} ${result.error}`)
+    logBotEvent({ chatId, event: 'engine_failed', level: 'error', details: { messageId: message.id, status: result.status, error: result.error, ms: Date.now() - startedAt } })
     return { ok: false, error: `${result.status} ${result.error}` }
   }
   noteEngineResult(true)
+  logBotEvent({ chatId, event: 'engine_ok', details: { messageId: message.id, ms: Date.now() - startedAt, replies: result.data.outgoing.length, cards: result.data.cards.length } })
   trace('wa-engine.reply', chatId, () => ({
     outgoing: result.data.outgoing.map((out) => waHistoryText(out)),
     cards: result.data.cards.length,
@@ -318,6 +329,7 @@ export async function runWaEngineForInbound(
     { onConflict: 'message_id', ignoreDuplicates: true }
   )
   if (error) console.error('wa-engine: retry enqueue failed', error.message)
+  logBotEvent({ chatId, event: 'retry_queued', level: 'warn', details: { messageId: message.id, error: result.error ?? null, queued: !error } })
 }
 
 interface RetryRow {
@@ -377,11 +389,13 @@ export async function runWaEngineRetries(supabase: Supabase, deps: WaEngineDeps)
     )
     if (result.ok) {
       await markDone(row.message_id)
+      logBotEvent({ chatId: row.chat_id, event: 'retry_done', details: { messageId: row.message_id, attempts: row.attempts } })
       continue
     }
     const attempts = row.attempts + 1
     if (attempts > RETRY_BACKOFF_MS.length) {
       await markDone(row.message_id, `сдались после ${attempts - 1} повторов: ${result.error}`)
+      logBotEvent({ chatId: row.chat_id, event: 'retry_gave_up', level: 'error', details: { messageId: row.message_id, error: result.error } })
       recordEvent({ type: 'error', level: 'error', title: 'WhatsApp: клиент остался без ответа после повторов', payload: { messageId: row.message_id } })
       continue
     }

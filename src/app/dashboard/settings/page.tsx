@@ -3,6 +3,7 @@ import { getWhatsappSettings } from '@/actions/whatsapp-settings'
 import { getInstagramStatus } from '@/actions/instagram-settings'
 import { SmilekitBotSettingsClient } from '@/components/bot/SmilekitBotSettingsClient'
 import { SmilekitBotApiError } from '@/components/bot/SmilekitBotApiError'
+import BotHealthPanel from '@/components/whatsapp/BotHealthPanel'
 import WhatsappSettingsClient from '@/components/whatsapp/WhatsappSettingsClient'
 import InstagramSettingsClient from '@/components/instagram/InstagramSettingsClient'
 import SettingsTabs from '@/components/settings/SettingsTabs'
@@ -49,7 +50,7 @@ export default async function SettingsPage() {
             ? <SmilekitBotSettingsClient settings={bot.data} />
             : <SmilekitBotApiError error={bot.error} />
       }
-      whatsapp={whatsapp ? <WhatsappSettingsClient initialConfig={whatsapp} /> : <NoAccess />}
+      whatsapp={whatsapp ? <div className="mx-auto max-w-4xl p-4 pb-0 md:p-8 md:pb-0"><BotHealthPanel /><WhatsappSettingsClient initialConfig={whatsapp} /></div> : <NoAccess />}
       instagram={instagram ? <InstagramSettingsClient initialIntegration={instagram} /> : <NoAccess />}
     />
   )

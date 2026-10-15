@@ -2,6 +2,7 @@
 
 import { describe, expect, it, vi, beforeEach } from 'vitest'
 
+vi.mock('@/lib/bot-log', () => ({ logBotEvent: vi.fn() }))
 vi.mock('@/lib/instagram/config', () => ({ getInstagramBotSettings: vi.fn() }))
 vi.mock('@/lib/instagram/messaging', () => ({
   replyToInstagramComment: vi.fn(),

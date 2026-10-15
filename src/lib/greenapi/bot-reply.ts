@@ -41,7 +41,8 @@ import {
 import { createLimiter } from '@/lib/concurrency-limit'
 import { WHATSAPP_INTEGRATION_NAMES } from '@/lib/integration-names'
 import { matchedFragment, trace } from '@/lib/greenapi/trace'
-import { isWaEnginePhone, runWaEngineForInbound, type WaCard } from '@/lib/greenapi/wa-engine'
+import { isWaEnginePhone, runWaEngineForInbound, type WaCard, type WaInboundMessage } from '@/lib/greenapi/wa-engine'
+import { logBotEvent } from '@/lib/bot-log'
 
 export interface InboundGreenApiMessage {
   providerMessageId: string
@@ -1245,6 +1246,28 @@ export async function waEngineGate(
 /** Сколько времени клиент прежнего бота считается «уже видевшим презентацию». */
 const WA_SEED_HISTORY_WINDOW_MS = 72 * 3600_000
 
+/** Что известно о чате из прежнего бота: видел ли клиент презентацию, есть ли заказ. */
+async function buildWaSeed(
+  supabase: ReturnType<typeof createAdminClient>,
+  chatId: string
+): Promise<{ hasHistory: boolean; orderPlaced: boolean }> {
+  const [{ data: oldBotRows }, orderPlaced] = await Promise.all([
+    supabase
+      .from('chat_messages')
+      .select('id')
+      .eq('chat_id', chatId)
+      .eq('sender', 'bot')
+      .not('amo_message_id', 'like', 'ga:wa:%')
+      .not('amo_message_id', 'like', 'ga:claim:%')
+      // Только недавняя переписка: кто писал неделю назад и снова пришёл по
+      // рекламе, тот новый контакт и получает презентацию заново.
+      .gte('created_at', new Date(Date.now() - WA_SEED_HISTORY_WINDOW_MS).toISOString())
+      .limit(1),
+    hasPlacedOrder(supabase, chatId),
+  ])
+  return { hasHistory: Boolean(oldBotRows?.length), orderPlaced }
+}
+
 const WA_PAYMENT_LABEL: Record<string, string> = {
   full: 'полная оплата по QR',
   cod: 'при получении 💵',
@@ -1981,12 +2004,16 @@ async function processInboundGreenApiMessageNow(
       { onConflict: 'amo_message_id', ignoreDuplicates: true }
     )
     .select('id')
+  if (!insertError) {
+    logBotEvent({ chatId: input.chatId, event: 'inbound', details: { messageId: input.providerMessageId, type: input.messageType ?? 'text', text: input.text, duplicate: !inserted?.length } })
+  }
   if (insertError) {
     // Сообщение не сохранилось — но лид всё равно должен появиться в CRM,
     // иначе обращение пропадёт бесследно (так и вышло 14.09, когда имя
     // таблицы разошлось с базой). Дальше по скрипту не идём: без истории
     // бот отвечать не должен.
     console.error('greenapi bot-reply: insert failed', insertError.message)
+    logBotEvent({ chatId: input.chatId, event: 'inbound_save_failed', level: 'error', details: { error: insertError.message } })
     await createLeadFromInbound(input, opts)
     return
   }
@@ -2048,6 +2075,7 @@ async function processInboundGreenApiMessageNow(
   if (!opts.dryRun && isWaEnginePhone(input.chatId)) {
     if (!(await waEngineGate(supabase, input.chatId))) {
       trace('stop', input.chatId, { why: 'новая логика: бот выключен, чат ведёт или уже получил менеджер, либо номер в стоп-листе' })
+      logBotEvent({ chatId: input.chatId, event: 'gate_blocked', details: { why: 'бот выключен, чат у менеджера, передан или номер в стоп-листе' } })
       // Как и в прежнем сценарии: чек из чата менеджера всё равно попадает в учёт.
       if (IMAGE_TYPES.has(input.messageType ?? '') && input.mediaUrl && (await isManagerControllingChat(supabase, input.chatId))) {
         await recordReceiptFromManagedChat(supabase, input, externalKey)
@@ -2058,20 +2086,7 @@ async function processInboundGreenApiMessageNow(
     trace('branch', input.chatId, { branch: 'новая логика', why: 'номер включён в GREENAPI_WA_ENGINE_PHONES' })
     // Чат мог начаться ещё при прежнем боте — тогда презентацию и материалы
     // клиент уже видел. Свои сообщения движка (ga:wa:*) сюда не считаем.
-    const [{ data: oldBotRows }, orderPlaced] = await Promise.all([
-      supabase
-        .from('chat_messages')
-        .select('id')
-        .eq('chat_id', input.chatId)
-        .eq('sender', 'bot')
-        .not('amo_message_id', 'like', 'ga:wa:%')
-        .not('amo_message_id', 'like', 'ga:claim:%')
-        // Только недавняя переписка: кто писал неделю назад и снова пришёл по
-        // рекламе, тот новый контакт и получает презентацию заново.
-        .gte('created_at', new Date(Date.now() - WA_SEED_HISTORY_WINDOW_MS).toISOString())
-        .limit(1),
-      hasPlacedOrder(supabase, input.chatId),
-    ])
+    const seed = await buildWaSeed(supabase, input.chatId)
     await runWaEngineForInbound(
       supabase,
       input.chatId,
@@ -2081,7 +2096,7 @@ async function processInboundGreenApiMessageNow(
         text: voiceUnreadable ? '' : input.text,
         mediaUrl: input.mediaUrl ?? null,
       },
-      { hasHistory: Boolean(oldBotRows?.length), orderPlaced },
+      seed,
       {
         gate: (chatId) => waEngineGate(supabase, chatId),
         deliverCard: (card) => deliverWaEngineCard(supabase, card, input.authorName),
@@ -2881,4 +2896,29 @@ async function generateAndSendGreenApiReply(
       console.error('greenapi bot-reply: stage advance failed', stageAction, result.error)
     }
   }
+}
+
+/**
+ * Восстановление после сбоя: отвечает в чат, где последнее слово осталось за
+ * клиентом. Берёт все его сообщения после последнего ответа и отдаёт движку
+ * одной репликой. Движок сам решает, что написать (или промолчать, если
+ * отвечать не на что). Возвращает false, если бот в чате сейчас молчит.
+ */
+export async function recoverWaChat(
+  chatId: string,
+  pending: { id: string; text: string; mediaUrl: string | null }
+): Promise<boolean> {
+  const supabase = createAdminClient()
+  if (!(await waEngineGate(supabase, chatId))) return false
+  const message: WaInboundMessage = {
+    id: pending.id,
+    kind: pending.mediaUrl ? 'image' : 'text',
+    text: pending.text,
+    mediaUrl: pending.mediaUrl,
+  }
+  await runWaEngineForInbound(supabase, chatId, message, await buildWaSeed(supabase, chatId), {
+    gate: (id) => waEngineGate(supabase, id),
+    deliverCard: (card) => deliverWaEngineCard(supabase, card, null),
+  })
+  return true
 }

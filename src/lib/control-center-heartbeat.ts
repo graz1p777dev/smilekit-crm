@@ -3,6 +3,7 @@
 // (src/instrumentation.ts): setInterval, защита от повторного старта флагом
 // started, timer.unref() чтобы не держать процесс живым.
 
+import { memorySnapshot } from '@/lib/greenapi/watchdog'
 import { fetchPromptIfChanged, getRemotePrompt, sendHeartbeat } from '@/lib/control-center'
 
 const HEARTBEAT_INTERVAL_MS = 120_000
@@ -18,6 +19,7 @@ async function beat(): Promise<void> {
     gitSha: process.env.RAILWAY_GIT_COMMIT_SHA || 'unknown',
     environment: process.env.RAILWAY_ENVIRONMENT_NAME || 'unknown',
     deploySource: process.env.RAILWAY_GIT_COMMIT_SHA ? 'github' : 'unknown',
+    details: memorySnapshot(),
     security: { envPresent: Object.keys(process.env) },
     promptVersionId: getRemotePrompt()?.versionId,
   })

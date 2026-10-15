@@ -21,6 +21,7 @@ import { AI_IMPROVISED_DISCOUNT } from '@/lib/greenapi/bot-reply'
 import { DEFAULT_PRODUCT_INFO } from '@/lib/greenapi/default-templates'
 import { getInstagramBotSettings } from '@/lib/instagram/config'
 import { sendInstagramMessage, fetchInstagramUserProfile } from '@/lib/instagram/messaging'
+import { logBotEvent } from '@/lib/bot-log'
 import { DM_AI_FAILURE_REPLY, INSTAGRAM_GREETING } from '@/lib/instagram/texts'
 import {
   storeInboundMessage,
@@ -197,6 +198,7 @@ export async function handleInstagramInboundMessage(message: ParsedIncomingMessa
         text,
         status: 'window_closed',
       })
+      logBotEvent({ channel: 'instagram', chatId: message.senderIgsid, event: 'window_closed', level: 'warn', details: { mid: message.mid } })
       return
     }
     try {
@@ -207,8 +209,10 @@ export async function handleInstagramInboundMessage(message: ParsedIncomingMessa
         text,
         status: 'sent',
       })
+      logBotEvent({ channel: 'instagram', chatId: message.senderIgsid, event: 'sent', details: { mid: sent.messageId, text } })
     } catch (error) {
       console.error('instagram dm-bot: send failed', error)
+      logBotEvent({ channel: 'instagram', chatId: message.senderIgsid, event: 'send_failed', level: 'error', details: { mid: message.mid, error: error instanceof Error ? error.message : String(error) } })
       await storeOutboundMessage({
         mid: `ig:failed:${message.mid}:${index}`,
         recipientIgsid: message.senderIgsid,

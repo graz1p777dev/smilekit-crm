@@ -17,6 +17,7 @@
 import { getInstagramBotSettings } from '@/lib/instagram/config'
 import { InstagramApiError } from '@/lib/instagram/errors'
 import { replyToInstagramComment, sendInstagramPrivateReply } from '@/lib/instagram/messaging'
+import { logBotEvent } from '@/lib/bot-log'
 import { commentReplyFor, INSTAGRAM_GREETING, SENT_TO_DM_REPLY } from '@/lib/instagram/texts'
 import { claimComment, markCommentReplied, type ParsedIncomingComment } from '@/lib/instagram/webhook'
 
@@ -50,6 +51,7 @@ export async function handleInstagramComment(comment: ParsedIncomingComment): Pr
   } catch (error) {
     // Не фатально: публичный ответ ниже всё равно уйдёт по теме комментария.
     console.error('instagram comments: private reply skipped', error)
+    logBotEvent({ channel: 'instagram', chatId: comment.authorIgsid, event: 'private_reply_failed', level: 'warn', details: { commentId: comment.commentId, error: error instanceof Error ? error.message : String(error) } })
   }
 
   const replyText = privateReplySent ? SENT_TO_DM_REPLY : commentReplyFor(comment.text)
@@ -58,8 +60,10 @@ export async function handleInstagramComment(comment: ParsedIncomingComment): Pr
   } catch (error) {
     const message = error instanceof InstagramApiError ? error.message : String(error)
     await markCommentReplied(comment.commentId, { status: 'failed', error: message, privateReplySent })
+    logBotEvent({ channel: 'instagram', chatId: comment.authorIgsid, event: 'comment_reply_failed', level: 'error', details: { commentId: comment.commentId, error: message } })
     return
   }
 
   await markCommentReplied(comment.commentId, { replyText, privateReplySent, status: 'replied' })
+  logBotEvent({ channel: 'instagram', chatId: comment.authorIgsid, event: 'comment_replied', details: { commentId: comment.commentId, privateReplySent } })
 }

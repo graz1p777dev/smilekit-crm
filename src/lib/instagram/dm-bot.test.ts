@@ -9,6 +9,7 @@ vi.mock('@/lib/smilekit-bot-api', () => ({
   BOT_TIMEOUTS_MS: { lab: 1000 },
   smilekitBotFetch: vi.fn(),
 }))
+vi.mock('@/lib/bot-log', () => ({ logBotEvent: vi.fn() }))
 vi.mock('@/lib/instagram/config', () => ({ getInstagramBotSettings: vi.fn() }))
 vi.mock('@/lib/instagram/messaging', () => ({
   sendInstagramMessage: vi.fn(),

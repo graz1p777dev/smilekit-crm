@@ -24,6 +24,7 @@
 import { createAdminClient } from '@/lib/supabase/admin'
 import { sendGreenApiMessage } from '@/lib/greenapi/client'
 import { runWaEngineTick } from '@/lib/greenapi/wa-engine'
+import { runBotWatchdog } from '@/lib/greenapi/watchdog'
 import {
   canSendGreenApiBotReply,
   CITY_WAIT_ANCHOR_ID_PREFIX,
@@ -306,6 +307,7 @@ async function runOnce(opts: FollowupRunOptions = {}): Promise<void> {
       deliverCard: (card) => deliverWaEngineCard(supabase, card),
     }).catch((error) => console.error('wa-engine tick failed', error))
   }
+  if (!opts.dryRun && !opts.onlyChatId) await runBotWatchdog().catch((error) => console.error('bot watchdog failed', error))
   await processCityWaitStage(supabase, opts)
   if (IDLE_NUDGES_ENABLED) await processIdleNudgeStage(supabase, opts)
   else if (opts.includeDisabledStages) {
