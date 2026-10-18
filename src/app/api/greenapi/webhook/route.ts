@@ -12,7 +12,9 @@ import { checkRateLimit, getClientIp } from '@/lib/rate-limit'
 // ответов подряд вместо одного цельного (тот же приём, что в Telegram-боте,
 // см. DEBOUNCE_SECONDS в smilekit_bot/__main__.py). Только текстовые
 // сообщения без вложений — голосовые/фото обрабатываются сразу, как раньше.
-const TEXT_DEBOUNCE_MS = 20_000
+// По просьбе владельца (18.10): бот отвечает сразу. Было 20 с — ждать, пока клиент
+// допишет мысль, дольше не нужно; 2 с хватает склеить сообщения, отправленные подряд.
+const TEXT_DEBOUNCE_MS = 2_000
 
 interface PendingTextBatch {
   texts: string[]

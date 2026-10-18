@@ -1105,7 +1105,7 @@ export async function sendResultsPhotoOnly(
         console.error('greenapi bot-reply: city-timeout photo send failed', error)
       }
     }
-    await new Promise((resolve) => setTimeout(resolve, 700))
+    await new Promise((resolve) => setTimeout(resolve, 300))
   }
 
   // Живой баг (05.10): этот путь (город молчит 5 минут) слал только фото
@@ -2227,7 +2227,8 @@ async function processInboundGreenApiMessageNow(
   await scheduleGreenApiReply(input, opts)
 }
 
-const DEBOUNCE_MS = 8_000
+// 18.10: вебхук уже склеивает сообщения (2 с), здесь остаётся короткая страховка.
+const DEBOUNCE_MS = 1_000
 
 interface PendingGreenApiReplyBatch {
   texts: string[]
@@ -2698,12 +2699,8 @@ async function generateAndSendGreenApiReply(
     stageAction,
   }))
 
-  // Живой баг: самое первое «Здравствуйте» уходило мгновенно — читалось как
-  // автоответчик, а не как человек. 10 секунд — та же пауза, что делает
-  // менеджер, прежде чем открыть чат и начать печатать.
-  if (replies[0] === T.productInfo) {
-    await new Promise((resolve) => setTimeout(resolve, 10_000))
-  }
+  // Пауза 10 с перед первым «Здравствуйте» убрана по просьбе владельца (18.10):
+  // бот должен отвечать моментально.
 
   for (let index = 0; index < replies.length; index++) {
     if (!(await canSendGreenApiBotReply(supabase, input.chatId, opts))) return
@@ -2841,11 +2838,11 @@ async function generateAndSendGreenApiReply(
             console.error('greenapi bot-reply: result photo send failed', error)
           }
         }
-        await new Promise((resolve) => setTimeout(resolve, 700))
+        await new Promise((resolve) => setTimeout(resolve, 300))
       }
     }
     if (index < replies.length - 1) {
-      await new Promise((resolve) => setTimeout(resolve, 900 + Math.random() * 500))
+      await new Promise((resolve) => setTimeout(resolve, 400 + Math.random() * 300))
     }
   }
 
