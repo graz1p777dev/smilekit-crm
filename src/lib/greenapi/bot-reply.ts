@@ -2346,6 +2346,26 @@ async function generateAndSendGreenApiReply(
     batchSize,
   }))
 
+  // «Только первичный этап» (решение владельца 18.10): бот ведёт клиента от
+  // приветствия до блока результата (доставка, фото, голосовое). Всё, что не
+  // является первым контактом или ответом про город/доставку, — заказ,
+  // вопросы, торг, жалобы — сразу уходит менеджеру: карточка в группу «Передача
+  // от бота», дальше бот в чате молчит. Выключатель: GREENAPI_PRIMARY_ONLY=0.
+  if (
+    process.env.GREENAPI_PRIMARY_ONLY !== '0' &&
+    !isAiFirstPhone(input.chatId) &&
+    history.length > 0 &&
+    // Намерение заказать — тоже передача: оформляет менеджер, а не чек-лист с QR.
+    (!wantsResultsBlock || (ORDER_INTENT.test(input.text) && !FUTURE_ORDER_QUESTION.test(input.text)))
+  ) {
+    trace('handoff', input.chatId, {
+      why: 'первичный этап пройден или вопрос вне него — по правилу владельца дальше ведёт менеджер',
+    })
+    logBotEvent({ chatId: input.chatId, event: 'handoff_primary_only', details: { text: input.text } })
+    await handOffToManager(supabase, input, opts)
+    return
+  }
+
   // Тексты, редактируемые из CRM («Настройки бота» → «Шаблоны») — пустая
   // строка в настройках означает «не переопределено», используем дефолт.
   const botConfig = await getWhatsappBotConfig()
