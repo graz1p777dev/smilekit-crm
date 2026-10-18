@@ -12,7 +12,7 @@ function fakeDb(rows: unknown[]) {
     select: () => builder,
     gte: () => builder,
     order: () => builder,
-    limit: () => Promise.resolve({ data: rows, error: null }),
+    range: () => Promise.resolve({ data: rows, error: null }),
   }
   return { from: () => builder } as never
 }

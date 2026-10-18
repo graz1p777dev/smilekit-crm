@@ -45,17 +45,26 @@ export async function findUnansweredChats(
   const hours = opts.hours ?? RECOVERY_WINDOW_HOURS
   const minAgeMs = (opts.minAgeMin ?? 3) * 60_000
   const since = new Date(Date.now() - hours * 3600_000).toISOString()
-  const { data, error } = await supabase
-    .from('chat_messages')
-    .select('id, chat_id, direction, text, created_at')
-    .gte('created_at', since)
-    .order('created_at', { ascending: true })
-    .order('id', { ascending: true })
-    .limit(6000)
-  if (error) throw new Error(error.message)
+  // PostgREST отдаёт максимум 1000 строк за запрос (PGRST_DB_MAX_ROWS), поэтому
+  // читаем страницами: иначе при потоке сообщений самые свежие обрезались бы.
+  const PAGE = 1000
+  const MAX_PAGES = 10
+  const data: Row[] = []
+  for (let page = 0; page < MAX_PAGES; page++) {
+    const { data: chunk, error } = await supabase
+      .from('chat_messages')
+      .select('id, chat_id, direction, text, created_at')
+      .gte('created_at', since)
+      .order('created_at', { ascending: true })
+      .order('id', { ascending: true })
+      .range(page * PAGE, page * PAGE + PAGE - 1)
+    if (error) throw new Error(error.message)
+    data.push(...((chunk ?? []) as Row[]))
+    if (!chunk || chunk.length < PAGE) break
+  }
 
   const byChat = new Map<string, Row[]>()
-  for (const row of (data ?? []) as Row[]) {
+  for (const row of data) {
     if (!/^\d+$/.test(row.chat_id) || !isWaEnginePhone(row.chat_id)) continue
     // Служебные якоря бота (direction=out, текст в квадратных скобках) — не ответ.
     if (row.direction === 'out' && (row.text ?? '').startsWith('[')) continue
