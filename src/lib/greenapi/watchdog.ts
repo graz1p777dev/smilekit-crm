@@ -24,6 +24,8 @@ let lastMemoryAlert = 0
 let lastPurge = 0
 let lastUnansweredCheck = 0
 let lastGreenApiCheck = 0
+let greenApiBadChecks = 0
+const GREEN_API_BAD_CHECKS_TO_ALERT = 3
 
 export function memorySnapshot(): { rssMb: number; heapMb: number } {
   const usage = process.memoryUsage()
@@ -49,9 +51,21 @@ export async function runBotWatchdog(): Promise<void> {
   if (now - lastGreenApiCheck > UNANSWERED_CHECK_EVERY_MS) {
     lastGreenApiCheck = now
     const state = await getGreenApiState().catch(() => 'недоступен')
-    if (state !== 'authorized') {
-      logBotEvent({ channel: 'system', event: 'green_api_state', level: 'error', details: { state } })
-      sendCriticalAlert('green-api', 'Green API: WhatsApp не авторизован', [`Состояние инстанса: ${state}. Бот не сможет писать клиентам.`])
+    // Один таймаут или «starting» — перебой на стороне Green API, не повод будить
+    // людей. Оповещаем, если плохо несколько проверок подряд.
+    const healthy = state === 'authorized' || state === 'starting'
+    const unreachable = state === 'недоступен'
+    if (healthy && !unreachable) greenApiBadChecks = 0
+    else greenApiBadChecks += 1
+    if (!healthy || unreachable) {
+      logBotEvent({ channel: 'system', event: 'green_api_state', level: 'warn', details: { state, badInRow: greenApiBadChecks } })
+      if (greenApiBadChecks >= GREEN_API_BAD_CHECKS_TO_ALERT) {
+        sendCriticalAlert(
+          unreachable ? 'green-api-unreachable' : 'green-api-state',
+          unreachable ? 'Green API не отвечает' : 'Green API: WhatsApp не авторизован',
+          [`Состояние инстанса: ${state} (${greenApiBadChecks} проверок подряд). Бот может не писать клиентам.`]
+        )
+      }
     }
   }
 

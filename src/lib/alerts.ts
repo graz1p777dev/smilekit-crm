@@ -4,13 +4,16 @@
 //  • WhatsApp-группа менеджеров («Передача от бота», запасной вариант —
 //    группа доставки) через Green API.
 // Каналы независимы: если упал Green API, Telegram всё равно дойдёт.
-// Один и тот же сигнал не чаще раза в 30 минут. Ничего не бросает наружу.
+// Один и тот же сигнал — не чаще раза в сутки (решение владельца 20.10), даже после
+// перезапуска сервиса: прошлые оповещения читаются из журнала. Другой сигнал
+// (другой key) уходит сразу. Ничего не бросает наружу.
 
 import { getWhatsappBotConfig } from '@/lib/greenapi/config'
 import { sendGreenApiDeliveryGroup } from '@/lib/greenapi/client'
 import { logBotEvent } from '@/lib/bot-log'
+import { createAdminClient } from '@/lib/supabase/admin'
 
-const COOLDOWN_MS = 30 * 60_000
+const COOLDOWN_MS = 24 * 60 * 60_000
 const lastSent = new Map<string, number>()
 
 async function sendTelegram(text: string): Promise<boolean> {
@@ -31,6 +34,22 @@ async function sendWhatsAppGroup(text: string): Promise<boolean> {
   return sendGreenApiDeliveryGroup(config.handoffGroupId ?? config.deliveryGroupId, text)
 }
 
+/** Был ли такой сигнал уже отправлен за последние сутки (переживает перезапуск). */
+async function alreadySentToday(key: string): Promise<boolean> {
+  try {
+    const { data } = await createAdminClient()
+      .from('bot_event_log')
+      .select('id')
+      .eq('event', 'critical_alert')
+      .eq('details->>key', key)
+      .gte('created_at', new Date(Date.now() - COOLDOWN_MS).toISOString())
+      .limit(1)
+    return Boolean(data?.length)
+  } catch {
+    return false
+  }
+}
+
 /** key — вид сигнала для подавления повторов; text — что увидят люди. */
 export function sendCriticalAlert(key: string, title: string, lines: string[] = []): void {
   const now = Date.now()
@@ -38,6 +57,7 @@ export function sendCriticalAlert(key: string, title: string, lines: string[] = 
   lastSent.set(key, now)
   const text = [`🚨 SmileKit: ${title}`, ...lines, `Время: ${new Date().toLocaleString('ru-RU', { timeZone: 'Asia/Bishkek' })}`].join('\n')
   void (async () => {
+    if (await alreadySentToday(key)) return
     const results = await Promise.allSettled([sendTelegram(text), sendWhatsAppGroup(text)])
     const sent = results.map((r) => r.status === 'fulfilled' && r.value)
     logBotEvent({
