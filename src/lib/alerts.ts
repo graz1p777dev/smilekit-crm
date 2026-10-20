@@ -51,6 +51,15 @@ async function alreadySentToday(key: string): Promise<boolean> {
 }
 
 /** key — вид сигнала для подавления повторов; text — что увидят люди. */
+/**
+ * Сигналы о проблемах самого WhatsApp (Green API) в WhatsApp-группу не шлём:
+ * канал сломан, сообщение либо не дойдёт, либо придёт с опозданием и только
+ * запутает. Для них — только Telegram.
+ */
+function isWhatsAppProblem(key: string): boolean {
+  return key.startsWith('green-api')
+}
+
 export function sendCriticalAlert(key: string, title: string, lines: string[] = []): void {
   const now = Date.now()
   if (now - (lastSent.get(key) ?? 0) < COOLDOWN_MS) return
@@ -58,7 +67,10 @@ export function sendCriticalAlert(key: string, title: string, lines: string[] = 
   const text = [`🚨 SmileKit: ${title}`, ...lines, `Время: ${new Date().toLocaleString('ru-RU', { timeZone: 'Asia/Bishkek' })}`].join('\n')
   void (async () => {
     if (await alreadySentToday(key)) return
-    const results = await Promise.allSettled([sendTelegram(text), sendWhatsAppGroup(text)])
+    const results = await Promise.allSettled([
+      sendTelegram(text),
+      isWhatsAppProblem(key) ? Promise.resolve(false) : sendWhatsAppGroup(text),
+    ])
     const sent = results.map((r) => r.status === 'fulfilled' && r.value)
     logBotEvent({
       channel: 'system',
