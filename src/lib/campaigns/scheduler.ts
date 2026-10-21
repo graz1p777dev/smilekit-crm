@@ -1,4 +1,4 @@
-import { sendGreenApiMessage, sendGreenApiVoice, toGreenApiChatId } from '@/lib/greenapi/client'
+import { sendGreenApiFileByUrl, sendGreenApiMessage, sendGreenApiVoice, toGreenApiChatId } from '@/lib/greenapi/client'
 import { smilekitBotFetch } from '@/lib/smilekit-bot-api'
 import { createAdminClient } from '@/lib/supabase/admin'
 import { runDueRecurringCampaigns } from './recurring'
@@ -26,7 +26,9 @@ let started = false
 
 // voice_id помечен необязательным намеренно: пока миграция 042 не применена,
 // такой колонки в базе нет и в строке её просто не будет.
-type Campaign = { id: string; message: string | null; voice_id?: string | null }
+// image_url — рассылка с картинкой (текст уходит подписью к ней), см. миграцию
+// 20261021120000_campaign_image.sql.
+type Campaign = { id: string; message: string | null; voice_id?: string | null; image_url?: string | null }
 type Recipient = {
   id: number
   channel: 'telegram' | 'whatsapp' | 'instagram'
@@ -92,6 +94,11 @@ async function send(recipient: Recipient, campaign: Campaign): Promise<string | 
       // Текст рядом с голосовым шлём, только если менеджер его написал:
       // подпись-заглушка клиенту не нужна.
       if (campaign.message?.trim()) await sendGreenApiMessage(chatId, campaign.message.trim())
+      return sent.idMessage ?? null
+    }
+    if (campaign.image_url) {
+      const fileName = campaign.image_url.split('/').pop() || 'image.jpg'
+      const sent = await sendGreenApiFileByUrl({ chatId, urlFile: campaign.image_url, fileName, caption: text })
       return sent.idMessage ?? null
     }
     const sent = await sendGreenApiMessage(chatId, text)
