@@ -18,7 +18,6 @@ import { createAdminClient } from '@/lib/supabase/admin'
 import { upsertDealFromInbound } from '@/lib/deals/auto-create'
 import { smilekitBotFetch, BOT_TIMEOUTS_MS } from '@/lib/smilekit-bot-api'
 import { AI_IMPROVISED_DISCOUNT } from '@/lib/greenapi/bot-reply'
-import { DEFAULT_PRODUCT_INFO } from '@/lib/greenapi/default-templates'
 import { getInstagramBotSettings } from '@/lib/instagram/config'
 import { sendInstagramMessage, fetchInstagramUserProfile } from '@/lib/instagram/messaging'
 import { logBotEvent } from '@/lib/bot-log'
@@ -139,7 +138,7 @@ async function generateReply(message: string, history: HistoryItem[]): Promise<s
   const clientAskedAboutPrice = /цена|цену|стоит|стоимост|скидк|дорого|сом/i.test(message)
   const historyMentionsPrice = history.some((item) => item.content.toLowerCase().includes('сом'))
   if (!clientAskedAboutPrice && !historyMentionsPrice && parts.some((part) => AI_IMPROVISED_DISCOUNT.test(part))) {
-    return [DEFAULT_PRODUCT_INFO]
+    return [INSTAGRAM_GREETING]
   }
   return parts
 }

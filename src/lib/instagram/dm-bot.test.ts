@@ -193,7 +193,7 @@ describe('handleInstagramInboundMessage', () => {
     await handleInstagramInboundMessage({ ...message, text: 'Здравствуйте' })
     expect(sendInstagramMessage).toHaveBeenCalledWith({
       recipientId: 'u1',
-      text: expect.stringContaining('14 отбеливающих полосок'),
+      text: INSTAGRAM_GREETING,
     })
   })
 
